@@ -7,6 +7,9 @@ export const useCanvasStore = create((set) => ({
   previewHtml: null,
   setPreviewHtml: (html) => set({ previewHtml: html, activeTab: 'preview' }),
 
+  generatedCode: null,
+  setGeneratedCode: (language, code) => set({ generatedCode: { language, code }, activeTab: 'diff' }),
+
   tasks: [
     { id: 1, title: '设计页面 UI', assignee: 'agent_designer', status: 'todo' },
     { id: 2, title: '实现前端组件', assignee: 'agent_frontend', status: 'todo' },

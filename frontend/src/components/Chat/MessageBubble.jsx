@@ -49,14 +49,17 @@ export default function MessageBubble({ message }) {
   }
 
   const renderText = (t) => {
-    const parts = t.split(/(```[\s\S]*?```|\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\])/g)
+    // Strip thinking tags
+    let clean = t.replace(/\[thinking\][\s\S]*?\[\/thinking\]/g, '')
+    // Strip code blocks (code is sent to canvas panel)
+    clean = clean.replace(/```[\s\S]*?```/g, '')
+    clean = clean.trim()
+
+    if (!clean) return null
+
+    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\])/g)
     return parts.map((part, i) => {
-      if (part.startsWith('```')) {
-        const match = part.match(/```(\w*)\n([\s\S]*?)```/)
-        if (match) {
-          return <CodeCard key={i} language={match[1] || 'text'} code={match[2]} />
-        }
-      }
+      if (!part) return null
       const mockupMatch = part.match(/\[mockup:(\w+)\]/)
       if (mockupMatch) {
         return <MockupCard key={i} type={mockupMatch[1]} />

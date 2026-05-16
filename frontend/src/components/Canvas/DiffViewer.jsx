@@ -1,58 +1,91 @@
-import React, { useState } from 'react'
+import React from 'react'
+import { useCanvasStore } from '../../stores/canvasStore'
 
-const MOCK_DIFF = [
-  { type: 'context', text: 'import React from "react";' },
-  { type: 'context', text: '' },
-  { type: 'removed', text: 'const App = () => {' },
-  { type: 'added', text: 'const App = () => {' },
-  { type: 'context', text: '  const [todos, setTodos] = useState([]);' },
-  { type: 'added', text: '  const [filter, setFilter] = useState("all");' },
-  { type: 'context', text: '' },
-  { type: 'context', text: '  return (' },
-  { type: 'removed', text: '    <div className="app">' },
-  { type: 'added', text: '    <div className="todo-app">' },
-  { type: 'added', text: '      <FilterBar onChange={setFilter} />' },
-  { type: 'context', text: '      {todos.map(t => <TodoItem key={t.id} {...t} />)}' },
-  { type: 'context', text: '    </div>' },
-  { type: 'context', text: '  );' },
-  { type: 'context', text: '};' },
-]
+function highlightCode(code, language) {
+  if (!code) return ''
 
-const FILES = ['App.jsx', 'api.js', 'TodoItem.jsx']
+  // Simple syntax highlighting
+  let html = code
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+
+  // HTML tags
+  html = html.replace(/(&lt;\/?)([\w-]+)/g, '$1<span style="color:#ef4444">$2</span>')
+  html = html.replace(/([\w-]+)(=)/g, '<span style="color:#f59e0b">$1</span>$2')
+  html = html.replace(/(".*?")/g, '<span style="color:#10b981">$1</span>')
+
+  // CSS properties
+  html = html.replace(/([\w-]+)(\s*:)/g, '<span style="color:#22d3ee">$1</span>$2')
+
+  // JS keywords
+  const keywords = ['function', 'const', 'let', 'var', 'return', 'if', 'else', 'for', 'while', 'class', 'import', 'export', 'from', 'async', 'await', 'new', 'this']
+  keywords.forEach(kw => {
+    html = html.replace(new RegExp(`\\b(${kw})\\b`, 'g'), `<span style="color:#c084fc">$1</span>`)
+  })
+
+  // Strings
+  html = html.replace(/('.*?')/g, '<span style="color:#10b981">$1</span>')
+
+  // Comments
+  html = html.replace(/(\/\/.*$)/gm, '<span style="color:#64748b">$1</span>')
+  html = html.replace(/(\/\*[\s\S]*?\*\/)/g, '<span style="color:#64748b">$1</span>')
+
+  return html
+}
 
 export default function DiffViewer() {
-  const [activeFile, setActiveFile] = useState(0)
+  const generatedCode = useCanvasStore((s) => s.generatedCode)
+
+  if (!generatedCode) {
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        height: '100%', color: 'var(--text-muted)', gap: 12,
+      }}>
+        <div style={{ fontSize: 40, opacity: 0.4 }}>{'{ }'}</div>
+        <div style={{ fontSize: 13 }}>Agent 生成的代码会显示在这里</div>
+      </div>
+    )
+  }
+
+  const { language, code } = generatedCode
+  const lines = code.split('\n')
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
-        {FILES.map((f, i) => (
-          <button
-            key={f}
-            onClick={() => setActiveFile(i)}
-            style={{
-              padding: '6px 12px',
-              background: activeFile === i ? 'rgba(99,102,241,0.2)' : 'transparent',
-              border: `1px solid ${activeFile === i ? 'rgba(99,102,241,0.4)' : 'rgba(255,255,255,0.1)'}`,
-              borderRadius: 6,
-              color: activeFile === i ? '#6366f1' : '#94a3b8',
-              cursor: 'pointer',
-              fontSize: 12,
-              fontFamily: 'monospace',
-            }}
-          >
-            {f}
-          </button>
-        ))}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
+        padding: '8px 12px', background: 'var(--bg-tertiary)', borderRadius: 8,
+      }}>
+        <span style={{
+          padding: '3px 10px', background: 'rgba(99,102,241,0.2)',
+          border: '1px solid rgba(99,102,241,0.4)', borderRadius: 6,
+          color: '#6366f1', fontSize: 12, fontFamily: 'monospace',
+        }}>
+          {language}
+        </span>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {lines.length} 行
+        </span>
       </div>
 
-      <div className="diff-viewer">
-        {MOCK_DIFF.map((line, i) => (
-          <div key={i} className={`diff-line ${line.type}`}>
-            <span style={{ display: 'inline-block', width: 24, color: '#64748b', userSelect: 'none' }}>
-              {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
+      <div className="diff-viewer" style={{ maxHeight: 'calc(100vh - 200px)', overflow: 'auto' }}>
+        {lines.map((line, i) => (
+          <div key={i} style={{
+            display: 'flex', padding: '1px 0', lineHeight: 1.6,
+          }}>
+            <span style={{
+              display: 'inline-block', width: 40, textAlign: 'right',
+              paddingRight: 12, color: '#475569', userSelect: 'none',
+              fontSize: 12, flexShrink: 0,
+            }}>
+              {i + 1}
             </span>
-            {line.text || ' '}
+            <span
+              style={{ flex: 1, fontSize: 13 }}
+              dangerouslySetInnerHTML={{ __html: highlightCode(line, language) || '&nbsp;' }}
+            />
           </div>
         ))}
       </div>

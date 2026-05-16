@@ -14,6 +14,7 @@ export const useChatStore = create((set, get) => ({
   conversations: INITIAL_CONVERSATIONS,
   activeConversationId: 'conv_pm',
   typingAgents: {},  // { conversationId: Set<agentId> }
+  thinkingAgents: {}, // { [convId]: { [agentId]: "thinking text" } }
   allRead: {},       // { conversationId: boolean }
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
@@ -24,6 +25,17 @@ export const useChatStore = create((set, get) => ({
       if (isTyping) current.add(agentId)
       else current.delete(agentId)
       return { typingAgents: { ...state.typingAgents, [conversationId]: current } }
+    }),
+
+  setThinking: (conversationId, agentId, text) =>
+    set((state) => {
+      const convThinking = { ...(state.thinkingAgents[conversationId] || {}) }
+      if (text) {
+        convThinking[agentId] = text
+      } else {
+        delete convThinking[agentId]
+      }
+      return { thinkingAgents: { ...state.thinkingAgents, [conversationId]: convThinking } }
     }),
 
   markRead: (conversationId) =>

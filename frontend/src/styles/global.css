@@ -674,3 +674,18 @@ body {
 .chat-header .subtitle {
   transition: color 0.2s;
 }
+
+/* Thinking spinner */
+.thinking-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(99, 102, 241, 0.3);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

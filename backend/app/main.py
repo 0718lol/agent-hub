@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import asyncio
 from pydantic import BaseModel
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -187,7 +188,10 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
 
 
 async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
+
     full_text = ""
+    buffer = ""
+    last_thinking_broadcast = ""
 
     # Broadcast typing start
     await manager.broadcast(conversation_id, {
@@ -199,21 +203,70 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
 
     try:
         async for chunk in agent.stream_reply(user_text):
-            full_text += chunk
-            await manager.broadcast(conversation_id, {
-                "type": "message",
-                "conversation_id": conversation_id,
-                "sender": agent.agent_id,
-                "content": {"text": full_text},
-                "stream": True,
-            })
+            buffer += chunk
+
+            # Extract and broadcast thinking blocks
+            while True:
+                think_match = re.search(r'\[thinking\](.*?)\[/thinking\]', buffer, re.DOTALL)
+                if not think_match:
+                    break
+                think_text = think_match.group(1).strip()
+                if think_text and think_text != last_thinking_broadcast:
+                    last_thinking_broadcast = think_text
+                    await manager.broadcast(conversation_id, {
+                        "type": "thinking",
+                        "conversation_id": conversation_id,
+                        "agent_id": agent.agent_id,
+                        "text": think_text,
+                    })
+                buffer = buffer[:think_match.start()] + buffer[think_match.end():]
+
+            # Extract and broadcast code blocks
+            code_match = re.search(r'```(\w*)\n(.*?)```', buffer, re.DOTALL)
+            if code_match:
+                lang = code_match.group(1) or "html"
+                code = code_match.group(2).strip()
+                await manager.broadcast(conversation_id, {
+                    "type": "code",
+                    "conversation_id": conversation_id,
+                    "agent_id": agent.agent_id,
+                    "language": lang,
+                    "code": code,
+                })
+                buffer = buffer[:code_match.start()] + buffer[code_match.end():]
+
+            # Broadcast remaining text (summary) as streaming message
+            summary = buffer.strip()
+            if summary:
+                await manager.broadcast(conversation_id, {
+                    "type": "message",
+                    "conversation_id": conversation_id,
+                    "sender": agent.agent_id,
+                    "content": {"text": summary},
+                    "stream": True,
+                })
+
+        # Final text is whatever remains in buffer (summary only)
+        full_text = buffer.strip()
+
     except Exception as e:
         if not full_text:
             full_text = f"[Agent 回复出错: {type(e).__name__}: {str(e)[:200]}]"
         else:
             full_text += f"\n[出错: {str(e)[:100]}]"
 
+    if not full_text:
+        full_text = "（已生成代码，请查看右侧面板）"
+
     save_message(conversation_id, agent.agent_id, {"text": full_text}, streaming=False)
+
+    # Broadcast thinking stop
+    await manager.broadcast(conversation_id, {
+        "type": "thinking",
+        "conversation_id": conversation_id,
+        "agent_id": agent.agent_id,
+        "text": "",  # empty = stop thinking
+    })
 
     # Broadcast typing stop
     await manager.broadcast(conversation_id, {

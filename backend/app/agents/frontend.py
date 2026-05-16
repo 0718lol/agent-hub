@@ -249,14 +249,17 @@ class FrontendAgent(BaseAgent):
     system_prompt = (
         "你是 AgentHub 的前端工程师，头像是🎨。你性格活泼，爱用 emoji。"
         "你擅长 React、CSS、HTML，能写出漂亮的页面。"
-        "\n\n规则："
-        "\n- 当用户要求你写页面、组件、界面时，先简短说明你的设计思路，然后输出完整的可运行 HTML 代码（用 ```html 代码块包裹）。"
-        "\n- HTML 必须是自包含的（inline CSS + JS，不依赖外部资源），可以直接在 iframe 中渲染。"
-        "\n- 代码块之后，输出 [preview:promo] 或 [preview:login] 或 [preview:todo] 来触发右侧面板预览（根据页面类型选择）。"
-        "\n- 如果是营销/宣传/落地页，用 [preview:promo]"
-        "\n- 如果是登录/注册页，用 [preview:login]"
-        "\n- 如果是 todo/列表/管理类，用 [preview:todo]"
-        "\n- 回复要活泼有趣，适当用 emoji。"
+        "\n\n输出格式规则（必须严格遵守）："
+        "\n1. 用 [thinking]...[/thinking] 标签包裹你的思考过程，可以有多个："
+        "\n   [thinking]分析用户需求：需要什么类型的页面...[/thinking]"
+        "\n   [thinking]设计方案：配色、布局、关键元素...[/thinking]"
+        "\n2. 然后输出一段简短的摘要（2-4句话），说明你做了什么、页面包含哪些模块。不要输出代码。"
+        "\n3. 最后输出预览标记：[preview:promo] 或 [preview:login] 或 [preview:todo]"
+        "\n   - 营销/宣传/落地页/巧乐兹 → [preview:promo]"
+        "\n   - 登录/注册页 → [preview:login]"
+        "\n   - todo/列表/管理类 → [preview:todo]"
+        "\n\n绝对不要在回复中输出代码块。代码会自动发送到右侧面板。"
+        "\n回复要活泼有趣，适当用 emoji。"
     )
 
     def _generate_reply(self, message: str, context: list = None) -> str:
@@ -275,29 +278,32 @@ class FrontendAgent(BaseAgent):
 
     def _promo_reply(self, message: str) -> str:
         return (
+            "[thinking]分析需求：用户需要巧乐兹冰淇淋的营销宣传页面，需要品牌展示和产品推荐[/thinking]"
+            "[thinking]设计方案：深色背景+橙色渐变配色，突出巧克力甜蜜感，包含Hero区、卖点、商品、评价四个模块[/thinking]"
             "巧乐兹宣传页搞定！🍦 给你写了个完整的营销落地页，右侧面板可以直接预览效果～\n\n"
             "页面包含：\n"
             "1. Hero 大图区 — 橙色渐变背景 + 品牌 slogan\n"
             "2. 卖点展示 — 巧克力脆层 / 新鲜奶源 / 多种口味 / 极速冷链\n"
             "3. 人气商品 — 经典 / 草莓 / 抹茶 / 芒果四款推荐\n"
             "4. 用户评价 — 真实口碑展示\n\n"
-            "```html\n" + PREVIEW_HTML["promo"] + "\n```\n\n"
-            "[preview:promo]\n\n"
-            "配色用了深色背景 + 橙色渐变，突出巧克力和甜蜜感 🍫 右侧预览面板可以直接交互～"
+            "配色用了深色背景 + 橙色渐变，突出巧克力和甜蜜感 🍫 右侧预览面板可以直接交互～\n\n"
+            "[preview:promo]"
         )
 
     def _login_reply(self) -> str:
         return (
+            "[thinking]分析需求：用户需要一个登录页面，要求简约大气[/thinking]"
+            "[thinking]设计方案：毛玻璃卡片风格，渐变按钮，社交登录选项[/thinking]"
             "登录页搞定啦！✨ 毛玻璃风格 + 渐变按钮，简约大气\n\n"
-            "```html\n" + PREVIEW_HTML["login"] + "\n```\n\n"
-            "[preview:login]\n\n"
-            "右侧预览面板可以直接看到效果 🔥"
+            "包含邮箱密码登录、社交登录按钮、注册链接，右侧预览面板可以直接看到效果 🔥\n\n"
+            "[preview:login]"
         )
 
     def _code_reply(self) -> str:
         return (
+            "[thinking]分析需求：用户需要一个 Todo 组件，带基本的增删改查功能[/thinking]"
+            "[thinking]设计方案：暗色主题，勾选删除计数，简洁交互[/thinking]"
             "搞定！给你写了个 Todo 组件 ✨ 带勾选、删除、计数功能\n\n"
-            "```html\n" + PREVIEW_HTML["todo"] + "\n```\n\n"
-            "[preview:todo]\n\n"
-            "右侧预览面板可以交互试试 🚀"
+            "右侧预览面板可以交互试试 🚀\n\n"
+            "[preview:todo]"
         )

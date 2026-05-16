@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
+import { useCanvasStore } from '../../stores/canvasStore'
 import MessageBubble from '../Chat/MessageBubble'
 import InputBar from '../Chat/InputBar'
 import { wsClient } from '../../utils/websocket'
@@ -13,13 +14,18 @@ export default function ChatPanel() {
   const loadMessages = useChatStore((s) => s.loadMessages)
   const setAgentStatus = useAgentStore((s) => s.setAgentStatus)
   const setTyping = useChatStore((s) => s.setTyping)
+  const setThinking = useChatStore((s) => s.setThinking)
   const markRead = useChatStore((s) => s.markRead)
   const typingAgents = useChatStore((s) => s.typingAgents)
+  const thinkingAgents = useChatStore((s) => s.thinkingAgents)
   const messagesRef = useRef(null)
 
   const conv = conversations.find((c) => c.id === activeId)
+  const setGeneratedCode = useCanvasStore((s) => s.setGeneratedCode)
   const typingSet = typingAgents[activeId] || new Set()
   const typingAgentIds = [...typingSet]
+  const thinkingMap = thinkingAgents[activeId] || {}
+  const thinkingEntries = Object.entries(thinkingMap)
 
   useEffect(() => {
     loadMessages(activeId)
@@ -39,6 +45,16 @@ export default function ChatPanel() {
 
       if (data.type === 'typing') {
         setTyping(activeId, data.agent_id, data.is_typing)
+        return
+      }
+
+      if (data.type === 'thinking') {
+        setThinking(activeId, data.agent_id, data.text)
+        return
+      }
+
+      if (data.type === 'code') {
+        setGeneratedCode(data.language, data.code)
         return
       }
 
@@ -159,6 +175,33 @@ export default function ChatPanel() {
           </div>
         )}
       </div>
+
+      {/* Thinking bubbles */}
+      {thinkingEntries.length > 0 && (
+        <div style={{ padding: '8px 24px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {thinkingEntries.map(([agentId, text]) => {
+            const agent = useAgentStore.getState().agents.find(a => a.agent_id === agentId)
+            return (
+              <div key={agentId} style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+                padding: '10px 14px', borderRadius: 12,
+                background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)',
+              }}>
+                <span style={{ fontSize: 18, flexShrink: 0 }}>{agent?.avatar || '🤖'}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: '#6366f1', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="thinking-spinner" />
+                    {agent?.name || agentId} 正在思考...
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-word' }}>
+                    {text}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       <InputBar onSend={handleSend} />
     </div>
