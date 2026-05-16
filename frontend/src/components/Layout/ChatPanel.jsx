@@ -111,10 +111,9 @@ export default function ChatPanel() {
           <div className="title">{conv.name}</div>
           <div className="subtitle">
             {typingAgentIds.length > 0
-              ? `${typingAgentIds.map(id => {
-                  const a = useAgentStore.getState().agents.find(ag => ag.agent_id === id)
-                  return a?.name || id
-                }).join('、')} 正在输入...`
+              ? typingAgentIds.length === 1
+                ? `${useAgentStore.getState().agents.find(a => a.agent_id === typingAgentIds[0])?.name || typingAgentIds[0]} 正在输入...`
+                : `${typingAgentIds.length}人正在输入...`
               : conv.type === 'group' ? `${conv.agents?.length || 0} 个 Agent` : ''
             }
           </div>
@@ -135,13 +134,27 @@ export default function ChatPanel() {
         {/* Typing indicator bubble */}
         {typingAgentIds.length > 0 && (
           <div className="message-row">
-            <div className="msg-avatar">
-              {useAgentStore.getState().agents.find(a => a.agent_id === typingAgentIds[0])?.avatar || '🤖'}
+            <div className="msg-avatar" style={{ position: 'relative' }}>
+              {typingAgentIds.slice(0, 3).map((id, i) => {
+                const agent = useAgentStore.getState().agents.find(a => a.agent_id === id)
+                return (
+                  <span key={id} style={{
+                    position: i === 0 ? 'relative' : 'absolute',
+                    left: i > 0 ? `${-8 * i}px` : undefined,
+                    fontSize: i > 0 ? '12px' : undefined,
+                  }}>{agent?.avatar || '🤖'}</span>
+                )
+              })}
             </div>
             <div className="message-bubble typing-bubble">
               <span className="typing-dot" />
               <span className="typing-dot" />
               <span className="typing-dot" />
+              {typingAgentIds.length > 1 && (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>
+                  {typingAgentIds.length}人
+                </span>
+              )}
             </div>
           </div>
         )}
