@@ -1,9 +1,12 @@
 import json
+from pydantic import BaseModel
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.websocket import manager
 from app.core.database import init_db, save_message, get_messages, get_conversations, clear_messages
+from app.core.config import settings
+from app.core.llm_client import llm_client
 from app.routers import agents as agents_router
 from app.agents.pm import PMAgent
 from app.agents.frontend import FrontendAgent
@@ -34,6 +37,44 @@ AGENTS = {
 app.include_router(agents_router.router, prefix="/api")
 
 init_db()
+
+# Initialize LLM client from config
+if settings.llm_api_key:
+    llm_client.configure(
+        provider=settings.llm_provider,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+    )
+
+
+class LLMSettings(BaseModel):
+    provider: str = "openai"
+    api_key: str = ""
+    base_url: str = ""
+    model: str = ""
+
+
+@app.get("/api/settings/llm")
+async def get_llm_settings():
+    return {
+        "provider": llm_client.provider,
+        "api_key_set": bool(llm_client.api_key),
+        "base_url": llm_client.base_url,
+        "model": llm_client.model,
+        "configured": llm_client.is_configured(),
+    }
+
+
+@app.post("/api/settings/llm")
+async def update_llm_settings(s: LLMSettings):
+    llm_client.configure(
+        provider=s.provider,
+        api_key=s.api_key,
+        base_url=s.base_url,
+        model=s.model,
+    )
+    return {"status": "ok", "configured": llm_client.is_configured()}
 
 
 @app.get("/")

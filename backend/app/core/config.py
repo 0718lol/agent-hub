@@ -7,6 +7,12 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # LLM config
+    llm_provider: str = "openai"   # openai | anthropic
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+    llm_model: str = ""
+
     class Config:
         env_prefix = "AGENTHUB_"
 
