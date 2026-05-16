@@ -70,7 +70,7 @@ async def get_llm_settings():
 async def update_llm_settings(s: LLMSettings):
     llm_client.configure(
         provider=s.provider,
-        api_key=s.api_key,
+        api_key=s.api_key if s.api_key else llm_client.api_key,
         base_url=s.base_url,
         model=s.model,
     )
