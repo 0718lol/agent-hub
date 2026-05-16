@@ -30,6 +30,13 @@ export const useCanvasStore = create((set) => ({
       tasks: [...state.tasks, { ...task, id: Date.now() }],
     })),
 
+  updateTaskByAgent: (agentId, status) =>
+    set((state) => ({
+      tasks: state.tasks.map((t) =>
+        t.assignee === agentId ? { ...t, status } : t
+      ),
+    })),
+
   dagNodes: [
     { id: 'user', label: '用户', icon: '👤', x: 200, y: 30, status: 'idle' },
     { id: 'agent_pm', label: 'PM', icon: '📋', x: 200, y: 130, status: 'idle' },

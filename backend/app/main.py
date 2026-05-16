@@ -190,9 +190,10 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 is_group = not target_agent
                 pm = AGENTS.get("agent_pm")
                 assigned_agent_ids = []
+                pm_response = ""
 
                 if pm:
-                    assigned_agent_ids = await _stream_agent_reply(conversation_id, pm, text, stop_event)
+                    assigned_agent_ids, pm_response = await _stream_agent_reply(conversation_id, pm, text, stop_event)
 
                 if is_group and not stop_event.is_set():
                     # Determine which agents to run
@@ -204,8 +205,9 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                         agents_to_run = [AGENTS["agent_frontend"], AGENTS["agent_backend"]]
 
                     if agents_to_run:
+                        # Pass PM's task breakdown as context to other agents
                         await asyncio.gather(*[
-                            _stream_agent_reply(conversation_id, agent, text, stop_event)
+                            _stream_agent_reply(conversation_id, agent, text, stop_event, context=pm_response)
                             for agent in agents_to_run
                         ])
 
@@ -221,24 +223,35 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
         manager.disconnect(websocket, conversation_id)
 
 
-async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_event: asyncio.Event = None) -> list[str]:
-    """Stream agent reply. Returns list of assigned agent IDs (from [assign:...] tags)."""
+async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_event: asyncio.Event = None, context: str = "") -> tuple[list[str], str]:
+    """Stream agent reply. Returns (assigned_agent_ids, response_text)."""
 
     full_text = ""
     buffer = ""
     last_thinking_broadcast = ""
     assigned_agents = []
 
-    # Broadcast typing start
+    # If context provided (PM's task breakdown), prepend to user_text for the agent
+    effective_text = user_text
+    if context:
+        effective_text = f"PM 的任务拆解：\n{context}\n\n用户原始需求：{user_text}"
+
+    # Broadcast typing start + task status
     await manager.broadcast(conversation_id, {
         "type": "typing",
         "conversation_id": conversation_id,
         "agent_id": agent.agent_id,
         "is_typing": True,
     })
+    await manager.broadcast(conversation_id, {
+        "type": "task_status",
+        "conversation_id": conversation_id,
+        "agent_id": agent.agent_id,
+        "status": "doing",
+    })
 
     try:
-        async for chunk in agent.stream_reply(user_text):
+        async for chunk in agent.stream_reply(effective_text):
             # Check stop signal
             if stop_event and stop_event.is_set():
                 break
@@ -323,12 +336,18 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
         "text": "",
     })
 
-    # Broadcast typing stop
+    # Broadcast typing stop + task done
     await manager.broadcast(conversation_id, {
         "type": "typing",
         "conversation_id": conversation_id,
         "agent_id": agent.agent_id,
         "is_typing": False,
+    })
+    await manager.broadcast(conversation_id, {
+        "type": "task_status",
+        "conversation_id": conversation_id,
+        "agent_id": agent.agent_id,
+        "status": "done",
     })
 
     await manager.broadcast(conversation_id, {
@@ -339,4 +358,4 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
         "stream": False,
     })
 
-    return assigned_agents
+    return assigned_agents, full_text

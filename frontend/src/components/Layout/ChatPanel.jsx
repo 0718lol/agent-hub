@@ -24,6 +24,7 @@ export default function ChatPanel() {
 
   const conv = conversations.find((c) => c.id === activeId)
   const setGeneratedCode = useCanvasStore((s) => s.setGeneratedCode)
+  const updateTaskByAgent = useCanvasStore((s) => s.updateTaskByAgent)
   const typingSet = typingAgents[activeId] || new Set()
   const typingAgentIds = [...typingSet]
   const thinkingMap = thinkingAgents[activeId] || {}
@@ -63,6 +64,11 @@ export default function ChatPanel() {
 
       if (data.type === 'generating') {
         setGenerating(activeId, data.is_generating)
+        return
+      }
+
+      if (data.type === 'task_status') {
+        updateTaskByAgent(data.agent_id, data.status)
         return
       }
 
