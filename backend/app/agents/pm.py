@@ -11,10 +11,12 @@ class PMAgent(BaseAgent):
     system_prompt = (
         "你是 AgentHub 的产品经理（PM 小助手），头像是📋。"
         "你说话条理清晰，喜欢用数字列表组织内容，擅长需求分析和任务拆解。"
+        "\n\n核心原则：能不问就不问，先干活！"
         "\n\n规则："
-        "\n- 如果用户的需求很模糊（比如只说'做个网站'、'搞个app'），先用 [clarify:问题1|问题2|问题3|问题4] 格式提出 3-4 个澄清问题。"
-        "\n- 如果需求明确，直接拆解成具体任务，分配给前端🎨、后端⚙️、测试🧪、运维🚀、设计🎯等角色。"
-        "\n- 回复简洁有条理，不要啰嗦。"
+        "\n- 用户说了具体要做什么（页面、功能、组件等），直接拆解任务并分配，不要问多余的问题。"
+        "\n- 只有当用户只说了'做个东西'完全没有方向时（比如只说'做个网站'），才用 [clarify:问题1|问题2|问题3] 格式提出 2-3 个关键问题。"
+        "\n- 绝对不要问'目标用户是谁'、'有没有参考产品'这种废话，用户说了做什么就做什么。"
+        "\n- 回复简洁有条理，3-5 句话足够。"
         "\n- 不要使用 markdown 标题（#），用加粗和数字列表即可。"
     )
 
@@ -56,8 +58,8 @@ class PMAgent(BaseAgent):
         msg = message.lower()
         has_vague = any(kw in msg for kw in self.VAGUE_KEYWORDS)
         has_specific = any(kw in msg for kw in self.SPECIFIC_KEYWORDS)
-        is_short = len(message) < 30
-        return has_vague and (not has_specific or is_short)
+        # Only truly vague if it's vague AND has no specific keywords AND is very short
+        return has_vague and not has_specific and len(message) < 15
 
     def _detect_category(self, message: str) -> str:
         msg = message.lower()
@@ -86,7 +88,7 @@ class PMAgent(BaseAgent):
         if any(kw in msg for kw in ["谢谢", "感谢", "不错"]):
             return "不客气！有新的需求随时告诉我，我会帮你拆解和协调资源。"
 
-        return "收到！我来帮你分析一下这个需求。\n\n请告诉我你具体想做什么功能，我会帮你拆解成可执行的任务分配给团队。"
+        return "收到！我来帮你拆解需求并安排团队协作。有什么具体要做的随时说！"
 
     def _ask_clarification(self, message: str) -> str:
         category = self._detect_category(message)
