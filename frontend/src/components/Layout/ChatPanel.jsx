@@ -10,10 +10,15 @@ export default function ChatPanel() {
   const conversations = useChatStore((s) => s.conversations)
   const addMessage = useChatStore((s) => s.addMessage)
   const updateLastAgentMessage = useChatStore((s) => s.updateLastAgentMessage)
+  const loadMessages = useChatStore((s) => s.loadMessages)
   const setAgentStatus = useAgentStore((s) => s.setAgentStatus)
   const messagesRef = useRef(null)
 
   const conv = conversations.find((c) => c.id === activeId)
+
+  useEffect(() => {
+    loadMessages(activeId)
+  }, [activeId])
 
   useEffect(() => {
     wsClient.connect(activeId)

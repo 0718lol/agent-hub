@@ -3,6 +3,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.websocket import manager
+from app.core.database import init_db, save_message, get_messages, get_conversations, clear_messages
 from app.routers import agents as agents_router
 from app.agents.pm import PMAgent
 from app.agents.frontend import FrontendAgent
@@ -32,6 +33,8 @@ AGENTS = {
 
 app.include_router(agents_router.router, prefix="/api")
 
+init_db()
+
 
 @app.get("/")
 async def root():
@@ -41,6 +44,22 @@ async def root():
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "agents": list(AGENTS.keys())}
+
+
+@app.get("/api/conversations")
+async def list_conversations():
+    return get_conversations()
+
+
+@app.get("/api/conversations/{conversation_id}/messages")
+async def list_messages(conversation_id: str, limit: int = 100):
+    return get_messages(conversation_id, limit)
+
+
+@app.delete("/api/conversations/{conversation_id}/messages")
+async def delete_messages(conversation_id: str):
+    clear_messages(conversation_id)
+    return {"status": "cleared"}
 
 
 @app.websocket("/ws/{conversation_id}")
@@ -55,6 +74,8 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             content = msg.get("content", {})
             text = content.get("text", "")
             target_agent = content.get("target_agent")
+
+            save_message(conversation_id, sender, content, streaming=False)
 
             await manager.broadcast(conversation_id, {
                 "type": "message",
@@ -88,6 +109,8 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
             "content": {"text": full_text},
             "stream": True,
         })
+
+    save_message(conversation_id, agent.agent_id, {"text": full_text}, streaming=False)
 
     await manager.broadcast(conversation_id, {
         "type": "message",

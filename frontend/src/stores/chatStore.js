@@ -1,69 +1,13 @@
 import { create } from 'zustand'
 
 const INITIAL_CONVERSATIONS = [
-  {
-    id: 'conv_pm',
-    type: 'single',
-    agentId: 'agent_pm',
-    name: 'PM 小助手',
-    avatar: '📋',
-    messages: [],
-    preview: '需求分析与任务拆解',
-  },
-  {
-    id: 'conv_frontend',
-    type: 'single',
-    agentId: 'agent_frontend',
-    name: '前端工程师',
-    avatar: '🎨',
-    messages: [],
-    preview: 'React 组件与样式开发',
-  },
-  {
-    id: 'conv_backend',
-    type: 'single',
-    agentId: 'agent_backend',
-    name: '后端工程师',
-    avatar: '⚙️',
-    messages: [],
-    preview: 'API 接口与数据模型',
-  },
-  {
-    id: 'conv_tester',
-    type: 'single',
-    agentId: 'agent_tester',
-    name: '测试工程师',
-    avatar: '🧪',
-    messages: [],
-    preview: '测试用例与 Bug 分析',
-  },
-  {
-    id: 'conv_devops',
-    type: 'single',
-    agentId: 'agent_devops',
-    name: '运维工程师',
-    avatar: '🚀',
-    messages: [],
-    preview: 'Docker 部署与 CI/CD',
-  },
-  {
-    id: 'conv_designer',
-    type: 'single',
-    agentId: 'agent_designer',
-    name: '设计顾问',
-    avatar: '🎯',
-    messages: [],
-    preview: 'UI/UX 设计建议',
-  },
-  {
-    id: 'conv_group_demo',
-    type: 'group',
-    name: 'Demo 项目群',
-    avatar: '💬',
-    agents: ['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer'],
-    messages: [],
-    preview: '多 Agent 协作演示',
-  },
+  { id: 'conv_pm', type: 'single', agentId: 'agent_pm', name: 'PM 小助手', avatar: '📋', messages: [], preview: '需求分析与任务拆解' },
+  { id: 'conv_frontend', type: 'single', agentId: 'agent_frontend', name: '前端工程师', avatar: '🎨', messages: [], preview: 'React 组件与样式开发' },
+  { id: 'conv_backend', type: 'single', agentId: 'agent_backend', name: '后端工程师', avatar: '⚙️', messages: [], preview: 'API 接口与数据模型' },
+  { id: 'conv_tester', type: 'single', agentId: 'agent_tester', name: '测试工程师', avatar: '🧪', messages: [], preview: '测试用例与 Bug 分析' },
+  { id: 'conv_devops', type: 'single', agentId: 'agent_devops', name: '运维工程师', avatar: '🚀', messages: [], preview: 'Docker 部署与 CI/CD' },
+  { id: 'conv_designer', type: 'single', agentId: 'agent_designer', name: '设计顾问', avatar: '🎯', messages: [], preview: 'UI/UX 设计建议' },
+  { id: 'conv_group_demo', type: 'group', name: 'Demo 项目群', avatar: '💬', agents: ['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer'], messages: [], preview: '多 Agent 协作演示' },
 ]
 
 export const useChatStore = create((set, get) => ({
@@ -71,6 +15,22 @@ export const useChatStore = create((set, get) => ({
   activeConversationId: 'conv_pm',
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
+
+  loadMessages: async (conversationId) => {
+    try {
+      const resp = await fetch(`/api/conversations/${conversationId}/messages`)
+      const messages = await resp.json()
+      set((state) => ({
+        conversations: state.conversations.map((conv) =>
+          conv.id === conversationId
+            ? { ...conv, messages, preview: messages.length > 0 ? messages[messages.length - 1].content?.text?.slice(0, 30) : conv.preview }
+            : conv
+        ),
+      }))
+    } catch (e) {
+      console.error('Failed to load messages:', e)
+    }
+  },
 
   addMessage: (conversationId, message) =>
     set((state) => ({
