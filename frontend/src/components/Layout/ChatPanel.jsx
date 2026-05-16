@@ -15,6 +15,8 @@ export default function ChatPanel() {
   const setAgentStatus = useAgentStore((s) => s.setAgentStatus)
   const setTyping = useChatStore((s) => s.setTyping)
   const setThinking = useChatStore((s) => s.setThinking)
+  const setGenerating = useChatStore((s) => s.setGenerating)
+  const generatingConvs = useChatStore((s) => s.generatingConvs)
   const markRead = useChatStore((s) => s.markRead)
   const typingAgents = useChatStore((s) => s.typingAgents)
   const thinkingAgents = useChatStore((s) => s.thinkingAgents)
@@ -26,6 +28,7 @@ export default function ChatPanel() {
   const typingAgentIds = [...typingSet]
   const thinkingMap = thinkingAgents[activeId] || {}
   const thinkingEntries = Object.entries(thinkingMap)
+  const isGenerating = generatingConvs.has(activeId)
 
   useEffect(() => {
     loadMessages(activeId)
@@ -55,6 +58,11 @@ export default function ChatPanel() {
 
       if (data.type === 'code') {
         setGeneratedCode(data.language, data.code)
+        return
+      }
+
+      if (data.type === 'generating') {
+        setGenerating(activeId, data.is_generating)
         return
       }
 
@@ -115,6 +123,10 @@ export default function ChatPanel() {
       sender: 'user',
       content: { text, target_agent: targetAgent },
     })
+  }
+
+  const handleStop = () => {
+    wsClient.send({ type: 'stop', conversation_id: activeId })
   }
 
   if (!conv) return <div className="chat-panel"><div className="empty-state"><div className="icon">💬</div><div className="text">选择一个会话开始</div></div></div>
@@ -203,7 +215,7 @@ export default function ChatPanel() {
         </div>
       )}
 
-      <InputBar onSend={handleSend} />
+      <InputBar onSend={handleSend} isGenerating={isGenerating} onStop={handleStop} />
     </div>
   )
 }

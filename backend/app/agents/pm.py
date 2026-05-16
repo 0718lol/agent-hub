@@ -18,6 +18,8 @@ class PMAgent(BaseAgent):
         "\n- 绝对不要问'目标用户是谁'、'有没有参考产品'这种废话，用户说了做什么就做什么。"
         "\n- 回复简洁有条理，3-5 句话足够。"
         "\n- 不要使用 markdown 标题（#），用加粗和数字列表即可。"
+        "\n- 任务分配后，必须在末尾输出分配标记：[assign:agent_frontend] [assign:agent_backend] 等，让系统自动启动对应 agent。"
+        "\n- 根据任务内容选择合适的 agent：前端页面→agent_frontend，后端接口→agent_backend，测试→agent_tester，部署→agent_devops，设计→agent_designer。"
     )
 
     VAGUE_KEYWORDS = ["做个", "搞个", "写个", "弄个", "开发一个", "做一个", "来个", "整一个"]
@@ -120,6 +122,7 @@ class PMAgent(BaseAgent):
             "4. 🧪 **测试工程师** — 编写测试用例\n"
             "5. 🚀 **运维工程师** — 配置部署方案\n\n"
             "任务已分配，各 Agent 即将开始工作！"
+            "[assign:agent_frontend][assign:agent_backend]"
         )
 
     def _decompose_task(self, message: str) -> str:
@@ -133,5 +136,6 @@ class PMAgent(BaseAgent):
             "3. ⚙️ **后端开发** — 实现 API 接口和数据模型\n"
             "4. 🧪 **测试验证** — 编写测试用例并验证功能\n"
             "5. 🚀 **部署上线** — 配置部署方案并上线\n\n"
-            "我会把任务分配给对应的工程师，大家开始协作吧！"
+            "任务已分配，各 Agent 即将开始工作！"
+            "[assign:agent_frontend][assign:agent_backend]"
         )

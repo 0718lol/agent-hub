@@ -15,6 +15,7 @@ export const useChatStore = create((set, get) => ({
   activeConversationId: 'conv_pm',
   typingAgents: {},  // { conversationId: Set<agentId> }
   thinkingAgents: {}, // { [convId]: { [agentId]: "thinking text" } }
+  generatingConvs: new Set(), // Set<conversationId>
   allRead: {},       // { conversationId: boolean }
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
@@ -36,6 +37,14 @@ export const useChatStore = create((set, get) => ({
         delete convThinking[agentId]
       }
       return { thinkingAgents: { ...state.thinkingAgents, [conversationId]: convThinking } }
+    }),
+
+  setGenerating: (conversationId, isGenerating) =>
+    set((state) => {
+      const next = new Set(state.generatingConvs)
+      if (isGenerating) next.add(conversationId)
+      else next.delete(conversationId)
+      return { generatingConvs: next }
     }),
 
   markRead: (conversationId) =>

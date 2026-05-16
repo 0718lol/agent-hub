@@ -39,6 +39,9 @@ AGENTS = {
     "agent_designer": DesignerAgent(),
 }
 
+# Stop events per conversation — set to cancel ongoing generation
+_stop_events: dict[str, asyncio.Event] = {}
+
 app.include_router(agents_router.router, prefix="/api")
 
 init_db()
@@ -143,6 +146,13 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             text = content.get("text", "")
             target_agent = content.get("target_agent")
 
+            # Handle stop generation
+            if msg_type == "stop":
+                event = _stop_events.get(conversation_id)
+                if event:
+                    event.set()
+                continue
+
             # Handle read receipt
             if msg_type == "read":
                 await manager.broadcast(conversation_id, {
@@ -166,32 +176,58 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 agent = AGENTS[target_agent]
                 await _stream_agent_reply(conversation_id, agent, text)
             elif sender == "user":
-                # Group chat: PM replies first, then 2 other agents concurrently
+                # Create stop event for this generation
+                stop_event = asyncio.Event()
+                _stop_events[conversation_id] = stop_event
+
+                # Broadcast generating start
+                await manager.broadcast(conversation_id, {
+                    "type": "generating",
+                    "conversation_id": conversation_id,
+                    "is_generating": True,
+                })
+
                 is_group = not target_agent
                 pm = AGENTS.get("agent_pm")
-                if pm:
-                    await _stream_agent_reply(conversation_id, pm, text)
+                assigned_agent_ids = []
 
-                if is_group:
-                    # After PM, frontend + backend reply concurrently
-                    followups = [
-                        AGENTS["agent_frontend"],
-                        AGENTS["agent_backend"],
-                    ]
-                    await asyncio.gather(*[
-                        _stream_agent_reply(conversation_id, agent, text)
-                        for agent in followups
-                    ])
+                if pm:
+                    assigned_agent_ids = await _stream_agent_reply(conversation_id, pm, text, stop_event)
+
+                if is_group and not stop_event.is_set():
+                    # Determine which agents to run
+                    if assigned_agent_ids:
+                        # PM assigned specific agents
+                        agents_to_run = [AGENTS[aid] for aid in assigned_agent_ids if aid in AGENTS and aid != "agent_pm"]
+                    else:
+                        # Default: frontend + backend
+                        agents_to_run = [AGENTS["agent_frontend"], AGENTS["agent_backend"]]
+
+                    if agents_to_run:
+                        await asyncio.gather(*[
+                            _stream_agent_reply(conversation_id, agent, text, stop_event)
+                            for agent in agents_to_run
+                        ])
+
+                # Clean up stop event and broadcast generating end
+                _stop_events.pop(conversation_id, None)
+                await manager.broadcast(conversation_id, {
+                    "type": "generating",
+                    "conversation_id": conversation_id,
+                    "is_generating": False,
+                })
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, conversation_id)
 
 
-async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
+async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_event: asyncio.Event = None) -> list[str]:
+    """Stream agent reply. Returns list of assigned agent IDs (from [assign:...] tags)."""
 
     full_text = ""
     buffer = ""
     last_thinking_broadcast = ""
+    assigned_agents = []
 
     # Broadcast typing start
     await manager.broadcast(conversation_id, {
@@ -203,6 +239,10 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
 
     try:
         async for chunk in agent.stream_reply(user_text):
+            # Check stop signal
+            if stop_event and stop_event.is_set():
+                break
+
             buffer += chunk
 
             # Extract and broadcast thinking blocks
@@ -220,6 +260,19 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
                         "text": think_text,
                     })
                 buffer = buffer[:think_match.start()] + buffer[think_match.end():]
+
+            # Extract assign tags
+            while True:
+                assign_match = re.search(r'\[assign:(\w+)\]', buffer)
+                if not assign_match:
+                    break
+                agent_id = assign_match.group(1)
+                if agent_id not in assigned_agents:
+                    assigned_agents.append(agent_id)
+                buffer = buffer[:assign_match.start()] + buffer[assign_match.end():]
+
+            # Extract options tags (keep in message for frontend to render)
+            # Don't strip [options:...] — let frontend handle it
 
             # Extract and broadcast code blocks
             code_match = re.search(r'```(\w*)\n(.*?)```', buffer, re.DOTALL)
@@ -255,8 +308,10 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
         else:
             full_text += f"\n[出错: {str(e)[:100]}]"
 
+    stopped = stop_event and stop_event.is_set()
+
     if not full_text:
-        full_text = "（已生成代码，请查看右侧面板）"
+        full_text = "（已停止生成）" if stopped else "（已生成代码，请查看右侧面板）"
 
     save_message(conversation_id, agent.agent_id, {"text": full_text}, streaming=False)
 
@@ -265,7 +320,7 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
         "type": "thinking",
         "conversation_id": conversation_id,
         "agent_id": agent.agent_id,
-        "text": "",  # empty = stop thinking
+        "text": "",
     })
 
     # Broadcast typing stop
@@ -283,3 +338,5 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
         "content": {"text": full_text},
         "stream": False,
     })
+
+    return assigned_agents

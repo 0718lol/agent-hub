@@ -48,16 +48,32 @@ export default function MessageBubble({ message }) {
     })
   }
 
+  const handleOptionClick = (option) => {
+    addMessage(activeId, {
+      sender: 'user',
+      content: { text: option },
+      streaming: false,
+    })
+    wsClient.send({
+      type: 'message',
+      conversation_id: activeId,
+      sender: 'user',
+      content: { text: option },
+    })
+  }
+
   const renderText = (t) => {
     // Strip thinking tags
     let clean = t.replace(/\[thinking\][\s\S]*?\[\/thinking\]/g, '')
     // Strip code blocks (code is sent to canvas panel)
     clean = clean.replace(/```[\s\S]*?```/g, '')
+    // Strip assign tags
+    clean = clean.replace(/\[assign:\w+\]/g, '')
     clean = clean.trim()
 
     if (!clean) return null
 
-    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\])/g)
+    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[options:[^\]]+\])/g)
     return parts.map((part, i) => {
       if (!part) return null
       const mockupMatch = part.match(/\[mockup:(\w+)\]/)
@@ -81,6 +97,30 @@ export default function MessageBubble({ message }) {
       if (clarifyMatch) {
         const questions = clarifyMatch[1].split('|')
         return <ClarificationCard key={i} questions={questions} onSubmit={handleClarifySubmit} />
+      }
+      const optionsMatch = part.match(/\[options:([^\]]+)\]/)
+      if (optionsMatch) {
+        const options = optionsMatch[1].split('|')
+        return (
+          <div key={i} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '8px 0' }}>
+            {options.map((opt, j) => (
+              <button
+                key={j}
+                onClick={() => handleOptionClick(opt)}
+                style={{
+                  padding: '8px 16px', borderRadius: 20,
+                  background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+                  color: '#818cf8', fontSize: 13, cursor: 'pointer',
+                  transition: 'all 0.2s',
+                }}
+                onMouseOver={(e) => { e.target.style.background = 'rgba(99,102,241,0.2)' }}
+                onMouseOut={(e) => { e.target.style.background = 'rgba(99,102,241,0.1)' }}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        )
       }
       return <span key={i}>{part}</span>
     })

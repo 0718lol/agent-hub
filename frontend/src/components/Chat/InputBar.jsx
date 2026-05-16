@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 
-export default function InputBar({ onSend }) {
+export default function InputBar({ onSend, isGenerating, onStop }) {
   const [text, setText] = useState('')
   const textareaRef = useRef(null)
 
@@ -13,7 +13,7 @@ export default function InputBar({ onSend }) {
 
   const handleSend = () => {
     const trimmed = text.trim()
-    if (!trimmed) return
+    if (!trimmed || isGenerating) return
     onSend(trimmed)
     setText('')
   }
@@ -23,6 +23,30 @@ export default function InputBar({ onSend }) {
       e.preventDefault()
       handleSend()
     }
+  }
+
+  if (isGenerating) {
+    return (
+      <div className="input-bar">
+        <div className="input-wrapper" style={{ borderColor: 'rgba(239,68,68,0.3)' }}>
+          <textarea
+            value=""
+            readOnly
+            placeholder="Agent 正在工作中..."
+            rows={1}
+            style={{ opacity: 0.5, cursor: 'not-allowed' }}
+          />
+          <button
+            className="send-btn"
+            onClick={onStop}
+            style={{ background: '#ef4444' }}
+            title="停止生成"
+          >
+            ■
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
