@@ -1,5 +1,6 @@
 import json
 import os
+import asyncio
 from pydantic import BaseModel
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -164,10 +165,22 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 agent = AGENTS[target_agent]
                 await _stream_agent_reply(conversation_id, agent, text)
             elif sender == "user":
-                for agent_id, agent in AGENTS.items():
-                    if agent_id == "agent_pm":
-                        await _stream_agent_reply(conversation_id, agent, text)
-                        break
+                # Group chat: PM replies first, then 2 other agents concurrently
+                is_group = not target_agent
+                pm = AGENTS.get("agent_pm")
+                if pm:
+                    await _stream_agent_reply(conversation_id, pm, text)
+
+                if is_group:
+                    # After PM, frontend + backend reply concurrently
+                    followups = [
+                        AGENTS["agent_frontend"],
+                        AGENTS["agent_backend"],
+                    ]
+                    await asyncio.gather(*[
+                        _stream_agent_reply(conversation_id, agent, text)
+                        for agent in followups
+                    ])
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, conversation_id)
