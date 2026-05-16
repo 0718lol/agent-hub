@@ -33,6 +33,14 @@ const MOCKUPS = {
       { type: 'products', items: ['耳机 ¥299', '键盘 ¥599', '鼠标 ¥199', '显示器 ¥2499'] },
     ],
   },
+  promo: {
+    title: '营销落地页',
+    sections: [
+      { type: 'hero', label: '🍦 巧乐兹 — 一口甜蜜', sub: '经典巧克力脆层 × 绵密冰淇淋', color: '#f97316' },
+      { type: 'cards', items: ['🍫 浓郁巧克力', '🥛 新鲜奶源', '✨ 多种口味', '🎉 限时优惠'] },
+      { type: 'button', label: '立即尝鲜 →' },
+    ],
+  },
 }
 
 export default function MockupCard({ type = 'todo' }) {
@@ -83,6 +91,21 @@ function renderSection(section, index, y, width) {
         <g key={index}>
           <rect x={padding} y={y} width={contentWidth} height={32} rx="6" fill={section.color} opacity="0.15" />
           <text x={padding + 12} y={y + 22} fill={section.color} fontSize="14" fontWeight="600">{section.label}</text>
+        </g>
+      )
+
+    case 'hero':
+      return (
+        <g key={index}>
+          <defs>
+            <linearGradient id={`heroGrad-${index}`} x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor={section.color} stopOpacity="0.3" />
+              <stop offset="100%" stopColor={section.color} stopOpacity="0.05" />
+            </linearGradient>
+          </defs>
+          <rect x={padding} y={y} width={contentWidth} height={70} rx="10" fill={`url(#heroGrad-${index})`} />
+          <text x={width / 2} y={y + 28} fill={section.color} fontSize="15" fontWeight="700" textAnchor="middle">{section.label}</text>
+          <text x={width / 2} y={y + 48} fill="#94a3b8" fontSize="11" textAnchor="middle">{section.sub}</text>
         </g>
       )
 
