@@ -7,3 +7,4 @@ dist/
 .vite/
 *.egg-info/
 *.db
+llm_config.json

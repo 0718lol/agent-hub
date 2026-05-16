@@ -1,4 +1,5 @@
 import json
+import os
 from pydantic import BaseModel
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,8 @@ from app.core.database import init_db, save_message, get_messages, get_conversat
 from app.core.config import settings
 from app.core.llm_client import llm_client
 from app.routers import agents as agents_router
+
+LLM_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "llm_config.json")
 from app.agents.pm import PMAgent
 from app.agents.frontend import FrontendAgent
 from app.agents.backend_agent import BackendAgent
@@ -38,14 +41,34 @@ app.include_router(agents_router.router, prefix="/api")
 
 init_db()
 
-# Initialize LLM client from config
-if settings.llm_api_key:
-    llm_client.configure(
-        provider=settings.llm_provider,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        model=settings.llm_model,
-    )
+
+def _load_llm_config():
+    try:
+        if os.path.exists(LLM_CONFIG_PATH):
+            with open(LLM_CONFIG_PATH, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            llm_client.configure(
+                provider=cfg.get("provider", "openai"),
+                api_key=cfg.get("api_key", ""),
+                base_url=cfg.get("base_url", ""),
+                model=cfg.get("model", ""),
+            )
+    except Exception:
+        pass
+
+
+def _save_llm_config():
+    os.makedirs(os.path.dirname(LLM_CONFIG_PATH), exist_ok=True)
+    with open(LLM_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump({
+            "provider": llm_client.provider,
+            "api_key": llm_client.api_key,
+            "base_url": llm_client.base_url,
+            "model": llm_client.model,
+        }, f, ensure_ascii=False, indent=2)
+
+
+_load_llm_config()
 
 
 class LLMSettings(BaseModel):
@@ -74,6 +97,7 @@ async def update_llm_settings(s: LLMSettings):
         base_url=s.base_url,
         model=s.model,
     )
+    _save_llm_config()
     return {"status": "ok", "configured": llm_client.is_configured()}
 
 
@@ -141,15 +165,21 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
 
 async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
     full_text = ""
-    async for chunk in agent.stream_reply(user_text):
-        full_text += chunk
-        await manager.broadcast(conversation_id, {
-            "type": "message",
-            "conversation_id": conversation_id,
-            "sender": agent.agent_id,
-            "content": {"text": full_text},
-            "stream": True,
-        })
+    try:
+        async for chunk in agent.stream_reply(user_text):
+            full_text += chunk
+            await manager.broadcast(conversation_id, {
+                "type": "message",
+                "conversation_id": conversation_id,
+                "sender": agent.agent_id,
+                "content": {"text": full_text},
+                "stream": True,
+            })
+    except Exception as e:
+        if not full_text:
+            full_text = f"[Agent 回复出错: {type(e).__name__}: {str(e)[:200]}]"
+        else:
+            full_text += f"\n[出错: {str(e)[:100]}]"
 
     save_message(conversation_id, agent.agent_id, {"text": full_text}, streaming=False)
 
