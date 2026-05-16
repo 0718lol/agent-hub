@@ -41,7 +41,7 @@ export default function SettingsPanel({ onClose }) {
   }
 
   const presets = [
-    { label: '小米 MiLM', provider: 'openai', base_url: 'https://api.milm.mi.com/v1', model: 'milm-large' },
+    { label: '小米 MiLM', provider: 'openai', base_url: 'https://token-plan-cn.xiaomimimo.com/v1', model: 'mimo-v2.5' },
     { label: 'DeepSeek', provider: 'openai', base_url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { label: '通义千问', provider: 'openai', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo' },
     { label: 'OpenAI', provider: 'openai', base_url: 'https://api.openai.com/v1', model: 'gpt-4o' },
