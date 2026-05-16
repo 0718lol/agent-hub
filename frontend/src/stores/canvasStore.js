@@ -4,6 +4,9 @@ export const useCanvasStore = create((set) => ({
   activeTab: 'dag',
   setActiveTab: (tab) => set({ activeTab: tab }),
 
+  previewHtml: null,
+  setPreviewHtml: (html) => set({ previewHtml: html, activeTab: 'preview' }),
+
   tasks: [
     { id: 1, title: '设计页面 UI', assignee: 'agent_designer', status: 'todo' },
     { id: 2, title: '实现前端组件', assignee: 'agent_frontend', status: 'todo' },

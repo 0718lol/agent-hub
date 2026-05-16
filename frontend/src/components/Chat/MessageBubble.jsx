@@ -1,9 +1,11 @@
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import { useAgentStore } from '../../stores/agentStore'
 import { useChatStore } from '../../stores/chatStore'
+import { useCanvasStore } from '../../stores/canvasStore'
 import CodeCard from './CodeCard'
 import MockupCard from './MockupCard'
 import ClarificationCard from './ClarificationCard'
+import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import { wsClient } from '../../utils/websocket'
 
 export default function MessageBubble({ message }) {
@@ -14,6 +16,18 @@ export default function MessageBubble({ message }) {
   const agent = agents.find((a) => a.agent_id === message.sender)
   const avatar = isUser ? '👤' : agent?.avatar || '🤖'
   const text = message.content?.text || ''
+  const setPreviewHtml = useCanvasStore((s) => s.setPreviewHtml)
+  const previewHandled = useRef(false)
+
+  useEffect(() => {
+    if (!message.streaming && !previewHandled.current) {
+      const m = text.match(/\[preview:(\w+)\]/)
+      if (m && PREVIEW_HTML[m[1]]) {
+        previewHandled.current = true
+        setPreviewHtml(PREVIEW_HTML[m[1]])
+      }
+    }
+  }, [message.streaming, text])
 
   const handleClarifySubmit = (qaList) => {
     const answerText = qaList.map((qa) => `**${qa.question}**\n${qa.answer}`).join('\n\n')
@@ -34,7 +48,7 @@ export default function MessageBubble({ message }) {
   }
 
   const renderText = (t) => {
-    const parts = t.split(/(```[\s\S]*?```|\[mockup:\w+\]|\[clarify:[^\]]+\])/g)
+    const parts = t.split(/(```[\s\S]*?```|\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\])/g)
     return parts.map((part, i) => {
       if (part.startsWith('```')) {
         const match = part.match(/```(\w*)\n([\s\S]*?)```/)
@@ -45,6 +59,19 @@ export default function MessageBubble({ message }) {
       const mockupMatch = part.match(/\[mockup:(\w+)\]/)
       if (mockupMatch) {
         return <MockupCard key={i} type={mockupMatch[1]} />
+      }
+      const previewMatch = part.match(/\[preview:(\w+)\]/)
+      if (previewMatch) {
+        return (
+          <div key={i} style={{
+            margin: '8px 0', padding: '10px 14px',
+            background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
+            borderRadius: 8, fontSize: 13, color: '#10b981',
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            ↗ 预览已更新到右侧面板
+          </div>
+        )
       }
       const clarifyMatch = part.match(/\[clarify:([^\]]+)\]/)
       if (clarifyMatch) {
