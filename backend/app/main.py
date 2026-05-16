@@ -135,10 +135,20 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             data = await websocket.receive_text()
             msg = json.loads(data)
 
+            msg_type = msg.get("type", "message")
             sender = msg.get("sender", "user")
             content = msg.get("content", {})
             text = content.get("text", "")
             target_agent = content.get("target_agent")
+
+            # Handle read receipt
+            if msg_type == "read":
+                await manager.broadcast(conversation_id, {
+                    "type": "read",
+                    "conversation_id": conversation_id,
+                    "reader": "user",
+                })
+                continue
 
             save_message(conversation_id, sender, content, streaming=False)
 
@@ -165,6 +175,15 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
 
 async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
     full_text = ""
+
+    # Broadcast typing start
+    await manager.broadcast(conversation_id, {
+        "type": "typing",
+        "conversation_id": conversation_id,
+        "agent_id": agent.agent_id,
+        "is_typing": True,
+    })
+
     try:
         async for chunk in agent.stream_reply(user_text):
             full_text += chunk
@@ -182,6 +201,14 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str):
             full_text += f"\n[出错: {str(e)[:100]}]"
 
     save_message(conversation_id, agent.agent_id, {"text": full_text}, streaming=False)
+
+    # Broadcast typing stop
+    await manager.broadcast(conversation_id, {
+        "type": "typing",
+        "conversation_id": conversation_id,
+        "agent_id": agent.agent_id,
+        "is_typing": False,
+    })
 
     await manager.broadcast(conversation_id, {
         "type": "message",

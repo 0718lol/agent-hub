@@ -12,6 +12,7 @@ export default function MessageBubble({ message }) {
   const agents = useAgentStore((s) => s.agents)
   const activeId = useChatStore((s) => s.activeConversationId)
   const addMessage = useChatStore((s) => s.addMessage)
+  const allRead = useChatStore((s) => s.allRead)
   const isUser = message.sender === 'user'
   const agent = agents.find((a) => a.agent_id === message.sender)
   const avatar = isUser ? '👤' : agent?.avatar || '🤖'
@@ -82,12 +83,23 @@ export default function MessageBubble({ message }) {
     })
   }
 
+  const isRead = allRead[activeId]
+
   return (
     <div className={`message-row ${isUser ? 'user' : ''}`}>
       <div className="msg-avatar">{avatar}</div>
       <div className="message-bubble">
         {renderText(text)}
         {message.streaming && <span className="streaming-cursor" />}
+        {isUser && !message.streaming && (
+          <div className="read-status">
+            {isRead ? (
+              <span className="read-check read">✓✓</span>
+            ) : (
+              <span className="read-check">✓</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

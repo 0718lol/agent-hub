@@ -13,8 +13,28 @@ const INITIAL_CONVERSATIONS = [
 export const useChatStore = create((set, get) => ({
   conversations: INITIAL_CONVERSATIONS,
   activeConversationId: 'conv_pm',
+  typingAgents: {},  // { conversationId: Set<agentId> }
+  allRead: {},       // { conversationId: boolean }
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
+
+  setTyping: (conversationId, agentId, isTyping) =>
+    set((state) => {
+      const current = new Set(state.typingAgents[conversationId] || [])
+      if (isTyping) current.add(agentId)
+      else current.delete(agentId)
+      return { typingAgents: { ...state.typingAgents, [conversationId]: current } }
+    }),
+
+  markRead: (conversationId) =>
+    set((state) => ({
+      allRead: { ...state.allRead, [conversationId]: true },
+    })),
+
+  markSent: (conversationId) =>
+    set((state) => ({
+      allRead: { ...state.allRead, [conversationId]: false },
+    })),
 
   loadMessages: async (conversationId) => {
     try {
