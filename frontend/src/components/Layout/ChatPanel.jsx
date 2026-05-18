@@ -45,6 +45,7 @@ export default function ChatPanel() {
     wsClient.connect(activeId)
 
     const unsub = wsClient.onMessage((data) => {
+      console.log('WS Received message:', data)
       if (data.conversation_id !== activeId) return
 
       if (data.type === 'typing') {
@@ -58,7 +59,18 @@ export default function ChatPanel() {
       }
 
       if (data.type === 'code') {
+        const setGeneratedCode = useCanvasStore.getState().setGeneratedCode
+        const setPreviewHtml = useCanvasStore.getState().setPreviewHtml
         setGeneratedCode(data.language, data.code)
+        if (data.language === 'html') {
+          setPreviewHtml(data.code)
+        }
+        return
+      }
+
+      if (data.type === 'preview') {
+        const setPreviewHtml = useCanvasStore.getState().setPreviewHtml
+        setPreviewHtml(data.html)
         return
       }
 
@@ -68,7 +80,26 @@ export default function ChatPanel() {
       }
 
       if (data.type === 'task_status') {
+        const updateTaskByAgent = useCanvasStore.getState().updateTaskByAgent
+        const setNodeStatus = useCanvasStore.getState().setNodeStatus
         updateTaskByAgent(data.agent_id, data.status)
+        
+        // Map "doing" to "working" for DAG Nodes
+        const nodeStatus = data.status === 'doing' ? 'working' : data.status
+        setNodeStatus(data.agent_id, nodeStatus)
+        return
+      }
+
+      if (data.type === 'deploy_status') {
+        const { status, log, url } = data
+        const appendDeployLog = useCanvasStore.getState().appendDeployLog
+        const finishDeploy = useCanvasStore.getState().finishDeploy
+        const startDeploy = useCanvasStore.getState().startDeploy
+        
+        if (log) appendDeployLog(log)
+        if (status === 'success' && url) {
+          finishDeploy(url)
+        }
         return
       }
 

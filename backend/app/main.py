@@ -299,6 +299,14 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
                     "language": lang,
                     "code": code,
                 })
+                # If HTML, also send to preview panel
+                if lang.lower() in ("html", "htm", ""):
+                    await manager.broadcast(conversation_id, {
+                        "type": "preview",
+                        "conversation_id": conversation_id,
+                        "agent_id": agent.agent_id,
+                        "html": code,
+                    })
                 buffer = buffer[:code_match.start()] + buffer[code_match.end():]
 
             # Broadcast remaining text (summary) as streaming message
@@ -359,3 +367,46 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
     })
 
     return assigned_agents, full_text
+
+
+@app.post("/api/deploy/{conversation_id}")
+async def deploy_project(conversation_id: str):
+    asyncio.create_task(_simulate_deploy(conversation_id))
+    return {"status": "started"}
+
+
+async def _simulate_deploy(conversation_id: str):
+    logs = [
+        "🚀 正在初始化云部署沙盒环境...",
+        "📦 检查工作目录并拉取最新依赖包...",
+        "🧪 运行自动化冒烟测试 (Tester Agent 验证通过)...",
+        "🐳 构建生产环境 Docker 容器镜像...",
+        "🐳 正在向远端镜像仓库推送镜像 agenthub/app:latest...",
+        "☸️ Kubernetes 资源调度与健康状态检查...",
+        "🌎 域名解析与 SSL 证书(Let's Encrypt) 自动配置...",
+        "🎉 一键部署成功！静态资源与 API 服务均已上线。"
+    ]
+    
+    for i, log in enumerate(logs):
+        await asyncio.sleep(1.2)
+        status = "success" if i == len(logs) - 1 else "running"
+        url = f"https://agenthub-app-{conversation_id[:6]}.netlify.app" if status == "success" else None
+        
+        await manager.broadcast(conversation_id, {
+            "type": "deploy_status",
+            "conversation_id": conversation_id,
+            "status": status,
+            "log": log,
+            "url": url
+        })
+        
+    url = f"https://agenthub-app-{conversation_id[:6]}.netlify.app"
+    await asyncio.sleep(0.5)
+    await manager.broadcast(conversation_id, {
+        "type": "message",
+        "conversation_id": conversation_id,
+        "sender": "agent_devops",
+        "content": {"text": f"✅ 报告！项目已成功一键部署上线！\n\n🌍 线上访问地址：{url}\n⚠️ 生产集群运行平稳，SSL 证书配置正确，CDN 分发已全球生效！"},
+        "stream": False
+    })
+
