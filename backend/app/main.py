@@ -201,8 +201,8 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                         # PM assigned specific agents
                         agents_to_run = [AGENTS[aid] for aid in assigned_agent_ids if aid in AGENTS and aid != "agent_pm"]
                     else:
-                        # Default: frontend + backend
-                        agents_to_run = [AGENTS["agent_frontend"], AGENTS["agent_backend"]]
+                        # Default: designer + frontend + backend
+                        agents_to_run = [AGENTS["agent_designer"], AGENTS["agent_frontend"], AGENTS["agent_backend"]]
 
                     if agents_to_run:
                         # Pass PM's task breakdown as context to other agents
