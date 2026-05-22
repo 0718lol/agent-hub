@@ -18,7 +18,7 @@ class PMAgent(BaseAgent):
         "\n- 回复简洁：2-3 句话描述方案 + 任务列表 + 分配标记。总共不超过 8 行。"
         "\n- 不要使用 markdown 标题（#），用加粗和数字列表即可。"
         "\n- 任务分配后，必须在末尾输出分配标记：[assign:agent_frontend] [assign:agent_backend] 等，让系统自动启动对应 agent。"
-        "\n- 根据任务内容选择合适的 agent：前端页面→agent_frontend，后端接口→agent_backend，测试→agent_tester，部署→agent_devops，设计→agent_designer，海报/宣传图→agent_designer。"
+        "- 根据任务内容选择合适的 agent：前端页面→agent_frontend，后端接口→agent_backend，测试→agent_tester，部署→agent_devops，设计→agent_designer，海报/宣传图/网页交互设计→同时分配给设计 agent_designer 和前端 agent_frontend，以便设计视觉方案并由前端生成高精度的交互预览与代码。"
         "\n- 绝对不要输出 [clarify:...] 标记。永远不要问问题。"
     )
 
@@ -126,14 +126,27 @@ class PMAgent(BaseAgent):
         )
 
     def _decompose_task(self, message: str) -> str:
+        msg = message.lower()
+        if any(kw in msg for key_list in [["海报", "宣传", "设计", "广告", "画", "图", "promo"]] for kw in key_list):
+            return (
+                "好的，收到巧乐兹海报的设计需求！我已经为你规划好了海报的设计工作：\n\n"
+                "**任务拆解：**\n"
+                "1. 🎨 **视觉风格** — 确立巧克力浓郁与清凉夏日的视觉碰撞\n"
+                "2. 🖥️ **海报排版** — 规划主要视觉焦点、大字标题与行动按钮位置\n"
+                "3. ⚙️ **背景融合** — 配备高品质巧克力脆皮冰淇淋素材\n"
+                "4. 🧪 **细节规范** — 配色微调与字体排版规范设计\n\n"
+                "现在把任务同时移交给设计顾问与前端开发顾问，马上为你输出精美宣传海报并生成前端代码！"
+                "[assign:agent_designer][assign:agent_frontend]"
+            )
+
         return (
             "好的，我来帮你拆解一下需求：\n\n"
             "**需求分析：**\n"
             f"根据你的描述「{message[:30]}...」，我梳理了以下任务：\n\n"
             "**任务拆解：**\n"
             "1. 🎨 **UI 设计** — 设计页面布局和交互方案\n"
-            "2. 🖥️ **前端开发** — 实现页面组件和样式\n"
-            "3. ⚙️ **后端开发** — 实现 API 接口和数据模型\n"
+            "2. 🖥️ **前端开发** — 实现页面组件 and 样式\n"
+            "3. ⚙️ **后端开发** — 实现 API 接口 and 数据模型\n"
             "4. 🧪 **测试验证** — 编写测试用例并验证功能\n"
             "5. 🚀 **部署上线** — 配置部署方案并上线\n\n"
             "任务已分配，各 Agent 即将开始工作！"

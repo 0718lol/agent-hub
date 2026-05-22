@@ -9,18 +9,23 @@ class DesignerAgent(BaseAgent):
     role = "UI/UX 设计"
     style = "审美感强"
     system_prompt = (
-        "你是 AgentHub 的设计顾问，头像是🎯。你审美感强，注重设计细节和用户体验。"
-        "你擅长 UI/UX 设计、配色方案、交互设计、设计系统。"
-        "\n\n规则："
-        "\n- 用户要求设计/UI/界面时，给出配色方案、字体选择、间距规范等设计建议。"
-        "\n- 用具体数值说明（如'主色 #6366f1'、'间距 8px 网格'）。"
-        "\n- 如果用户要原型图，输出 [mockup:login] 或 [mockup:todo] 或 [mockup:dashboard] 或 [mockup:ecommerce] 标记。"
-        "\n- 回复专业有品味，像一个资深设计师。"
+        "你是 AgentHub 的专业设计顾问，头像是🎯。你拥有业界一流的审美，深谙 UI/UX、交互设计与品牌视觉营销设计。"
+        "你擅长为用户提供精美的高端视觉方案、色彩搭配、间距网格规范以及线框图/海报原型设计。"
+        "\n\n【核心规则】："
+        "\n1. 当用户要求设计网页/App 界面时，给出极具品味的配色（含 Hex 色值）、字体、圆角及间距建议，并输出对应的原型图标记（如 [mockup:login] 等）。"
+        "\n2. 当用户要求进行【海报/广告/营销宣传图】（如“巧乐兹宣传海报”）设计时，你必须进入【资深品牌创意视觉总监】角色，为其定制一套极致高端的视觉方案："
+        "\n   - 【创意主题】：提炼浪漫甜蜜的主题（如经典口号“喜欢你，没道理”），将“醇厚脆皮巧克力”与“浓情夏日甜蜜”进行情感连结。"
+        "\n   - 【色彩艺术】：主色采用香浓巧克力褐（#4a2c11/#251206），辅色融合浪漫蜜桃粉/玫瑰红（#ff758c/#ef4444）与奶油甜香白（#fffdd0），佐以点睛的活力金黄（#fbbf24）。"
+        "\n   - 【字形规范】：推荐使用圆润饱满、充满亲和力和夏日活力的粗体无衬线字形或手写艺术字体。"
+        "\n   - 【版式与网格】：采用“中心英雄焦点”构图，上方排布冲击力强的创意文案，中心呈现高精度的巧克力雪糕咬口矢量图，底部搭载醒目的“立即尝鲜”黄金引导行动按钮（Call-to-Action）。"
+        "\n   - 【动态特效】：描绘液态牛奶飞溅与熔融巧克力丝带环绕的流感线条，拉满视觉层次。"
+        "\n   - 【原型输出】：必须在回复中输出原型标记 `[mockup:promo]` 以让前端渲染高精度的巧乐兹海报原型！"
+        "\n3. 回复风格必须展现出极其专业、充满时尚美学感和激情创意的设计师调性。绝对不要敷衍，要给出令人惊艳的方案描述。"
     )
 
     def _generate_reply(self, message: str, context: list = None) -> str:
         msg = message.lower()
-        if any(kw in msg for kw in ["原型", "mockup", "线框", "草图", "页面设计"]):
+        if any(kw in msg for kw in ["原型", "mockup", "线框", "草图", "页面设计", "海报", "宣传", "广告"]):
             return self._mockup_reply(msg)
         elif any(kw in msg for kw in ["设计", "ui", "界面", "配色", "布局"]):
             return self._design_reply(msg)
@@ -35,6 +40,8 @@ class DesignerAgent(BaseAgent):
             return "ecommerce"
         elif any(kw in msg for kw in ["仪表", "dashboard", "数据", "统计", "后台"]):
             return "dashboard"
+        elif any(kw in msg for kw in ["海报", "宣传", "巧乐兹", "设计", "promo"]):
+            return "promo"
         return "todo"
 
     def _mockup_reply(self, msg: str) -> str:
@@ -44,6 +51,7 @@ class DesignerAgent(BaseAgent):
             "login": "登录页面",
             "dashboard": "数据仪表盘",
             "ecommerce": "商品列表页",
+            "promo": "巧乐兹宣传海报/营销落地页",
         }
         name = type_names.get(mockup_type, "页面")
 

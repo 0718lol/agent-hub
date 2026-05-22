@@ -264,17 +264,15 @@ class FrontendAgent(BaseAgent):
 
     def _generate_reply(self, message: str, context: list = None) -> str:
         msg = message.lower()
-        if any(kw in msg for kw in ["组件", "页面", "界面", "ui", "样式", "布局", "设计稿"]):
-            return self._code_reply()
-        elif any(kw in msg for kw in ["宣传", "广告", "营销", "推广", "落地页", "landing"]):
+        if any(kw in msg for kw in ["宣传", "广告", "营销", "推广", "落地页", "landing", "海报", "promo"]):
             return self._promo_reply(message)
-        elif any(kw in msg for kw in ["登录", "注册", "login"]):
+        elif any(kw in msg for kw in ["登录", "注册", "login", "signin", "signup"]):
             return self._login_reply()
         elif any(kw in msg for kw in ["bug", "报错", "问题", "修复"]):
             return "让我看看 👀 嗯找到问题了！是 CSS 层级的问题，已经修复了 ✅ 加了个 z-index 就搞定了～"
         elif any(kw in msg for kw in ["谢谢", "感谢", "不错"]):
             return "哈哈不客气！有前端需求随时找我，写 UI 我最在行了 💪✨"
-        return "收到！前端这边我来搞定 🎨 有什么具体的设计要求吗？比如配色、布局风格之类的～"
+        return self._code_reply()
 
     def _promo_reply(self, message: str) -> str:
         return (

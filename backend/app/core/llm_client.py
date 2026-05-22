@@ -4,26 +4,43 @@ from typing import AsyncGenerator
 
 
 class LLMClient:
-    """Unified LLM client supporting OpenAI-compatible and Anthropic API formats."""
+    """Unified LLM client supporting OpenAI-compatible, Anthropic, Claude Code SDK, and OpenCode formats."""
 
     def __init__(self):
         self.provider: str = "openai"
         self.api_key: str = ""
         self.base_url: str = ""
         self.model: str = ""
+        self.temperature: float = 0.5
+        self.max_tokens: int = 8192
 
-    def configure(self, provider: str, api_key: str, base_url: str, model: str):
+    def configure(self, provider: str, api_key: str, base_url: str, model: str,
+                  temperature: float = None, max_tokens: int = None):
         self.provider = provider
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
+        if temperature is not None:
+            self.temperature = temperature
+        if max_tokens is not None:
+            self.max_tokens = max_tokens
 
     def is_configured(self) -> bool:
+        if self.provider == "opencode":
+            return True
+        if self.provider == "claude_code":
+            return bool(self.api_key)
         return bool(self.api_key and self.base_url and self.model)
 
     async def chat_stream(self, messages: list[dict], system: str = "") -> AsyncGenerator[str, None]:
         try:
-            if self.provider == "anthropic":
+            if self.provider == "opencode":
+                async for chunk in self._opencode_stream(messages, system):
+                    yield chunk
+            elif self.provider == "claude_code":
+                async for chunk in self._claude_code_stream(messages, system):
+                    yield chunk
+            elif self.provider == "anthropic":
                 async for chunk in self._anthropic_stream(messages, system):
                     yield chunk
             else:
@@ -46,7 +63,8 @@ class LLMClient:
             "model": self.model,
             "messages": payload_messages,
             "stream": True,
-            "max_tokens": 2048,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
         }
 
         headers = {
@@ -54,7 +72,7 @@ class LLMClient:
             "Content-Type": "application/json; charset=utf-8",
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=180.0) as client:
             async with client.stream("POST", url, json=payload, headers=headers) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
@@ -86,9 +104,10 @@ class LLMClient:
 
         payload = {
             "model": self.model,
-            "max_tokens": 2048,
+            "max_tokens": self.max_tokens,
             "messages": messages,
             "stream": True,
+            "temperature": self.temperature,
         }
         if system:
             payload["system"] = system
@@ -99,7 +118,7 @@ class LLMClient:
             "Content-Type": "application/json; charset=utf-8",
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=180.0) as client:
             async with client.stream("POST", url, json=payload, headers=headers) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
@@ -117,6 +136,25 @@ class LLMClient:
                                 yield text
                     except (json.JSONDecodeError, KeyError):
                         continue
+
+
+    async def _claude_code_stream(self, messages: list[dict], system: str) -> AsyncGenerator[str, None]:
+        from app.core.claude_code_client import claude_code_stream
+        async for chunk in claude_code_stream(
+            messages=messages,
+            system=system,
+            api_key=self.api_key,
+            model=self.model,
+        ):
+            yield chunk
+
+    async def _opencode_stream(self, messages: list[dict], system: str) -> AsyncGenerator[str, None]:
+        from app.core.opencode_client import opencode_stream
+        async for chunk in opencode_stream(
+            messages=messages,
+            system=system,
+        ):
+            yield chunk
 
 
 llm_client = LLMClient()

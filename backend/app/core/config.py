@@ -1,7 +1,9 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="AGENTHUB_")
+
     app_name: str = "AgentHub"
     debug: bool = True
     host: str = "0.0.0.0"
@@ -12,9 +14,6 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_model: str = ""
-
-    class Config:
-        env_prefix = "AGENTHUB_"
 
 
 settings = Settings()

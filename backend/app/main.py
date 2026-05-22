@@ -7,9 +7,14 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.websocket import manager
-from app.core.database import init_db, save_message, get_messages, get_conversations, clear_messages
+from app.core.database import (
+    init_db, save_message, get_messages, get_conversations, clear_messages,
+    save_custom_agent, get_custom_agents, delete_custom_agent, create_conversation,
+)
 from app.core.config import settings
 from app.core.llm_client import llm_client
+from app.core.quality_gate import quality_gate
+from app.core.prompt_engine import prompt_engine
 from app.routers import agents as agents_router
 
 LLM_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "llm_config.json")
@@ -19,6 +24,8 @@ from app.agents.backend_agent import BackendAgent
 from app.agents.tester import TesterAgent
 from app.agents.devops import DevopsAgent
 from app.agents.designer import DesignerAgent
+from app.agents.builder import AgentBuilderAgent
+from app.agents.custom import CustomAgent, AVAILABLE_TOOLS
 
 app = FastAPI(title="AgentHub API")
 
@@ -37,6 +44,7 @@ AGENTS = {
     "agent_tester": TesterAgent(),
     "agent_devops": DevopsAgent(),
     "agent_designer": DesignerAgent(),
+    "agent_builder": AgentBuilderAgent(),
 }
 
 # Stop events per conversation — set to cancel ongoing generation
@@ -45,6 +53,25 @@ _stop_events: dict[str, asyncio.Event] = {}
 app.include_router(agents_router.router, prefix="/api")
 
 init_db()
+
+
+def _load_custom_agents():
+    """Load user-created custom agents from DB into AGENTS dict."""
+    for agent_data in get_custom_agents():
+        aid = agent_data["agent_id"]
+        if aid not in AGENTS:
+            AGENTS[aid] = CustomAgent(
+                agent_id=aid,
+                name=agent_data["name"],
+                avatar=agent_data["avatar"],
+                role=agent_data["role"],
+                style=agent_data["style"],
+                system_prompt=agent_data["system_prompt"],
+                tools=agent_data["tools"],
+            )
+
+
+_load_custom_agents()
 
 
 def _load_llm_config():
@@ -57,6 +84,8 @@ def _load_llm_config():
                 api_key=cfg.get("api_key", ""),
                 base_url=cfg.get("base_url", ""),
                 model=cfg.get("model", ""),
+                temperature=cfg.get("temperature"),
+                max_tokens=cfg.get("max_tokens"),
             )
     except Exception:
         pass
@@ -70,6 +99,8 @@ def _save_llm_config():
             "api_key": llm_client.api_key,
             "base_url": llm_client.base_url,
             "model": llm_client.model,
+            "temperature": llm_client.temperature,
+            "max_tokens": llm_client.max_tokens,
         }, f, ensure_ascii=False, indent=2)
 
 
@@ -81,6 +112,8 @@ class LLMSettings(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
+    temperature: float = None
+    max_tokens: int = None
 
 
 @app.get("/api/settings/llm")
@@ -90,6 +123,8 @@ async def get_llm_settings():
         "api_key_set": bool(llm_client.api_key),
         "base_url": llm_client.base_url,
         "model": llm_client.model,
+        "temperature": llm_client.temperature,
+        "max_tokens": llm_client.max_tokens,
         "configured": llm_client.is_configured(),
     }
 
@@ -101,6 +136,8 @@ async def update_llm_settings(s: LLMSettings):
         api_key=s.api_key if s.api_key else llm_client.api_key,
         base_url=s.base_url,
         model=s.model,
+        temperature=s.temperature,
+        max_tokens=s.max_tokens,
     )
     _save_llm_config()
     return {"status": "ok", "configured": llm_client.is_configured()}
@@ -174,7 +211,30 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
 
             if target_agent and target_agent in AGENTS:
                 agent = AGENTS[target_agent]
-                await _stream_agent_reply(conversation_id, agent, text)
+                stop_event = asyncio.Event()
+                _stop_events[conversation_id] = stop_event
+                await manager.broadcast(conversation_id, {
+                    "type": "generating",
+                    "conversation_id": conversation_id,
+                    "is_generating": True,
+                })
+                assigned_agent_ids, pm_response = await _stream_agent_reply(conversation_id, agent, text, stop_event)
+
+                # If the agent (e.g. PM) assigned downstream agents, trigger them
+                if assigned_agent_ids and not stop_event.is_set():
+                    agents_to_run = [AGENTS[aid] for aid in assigned_agent_ids if aid in AGENTS and aid != target_agent]
+                    if agents_to_run:
+                        await asyncio.gather(*[
+                            _stream_agent_reply(conversation_id, a, text, stop_event, context=pm_response)
+                            for a in agents_to_run
+                        ])
+
+                _stop_events.pop(conversation_id, None)
+                await manager.broadcast(conversation_id, {
+                    "type": "generating",
+                    "conversation_id": conversation_id,
+                    "is_generating": False,
+                })
             elif sender == "user":
                 # Create stop event for this generation
                 stop_event = asyncio.Event()
@@ -227,6 +287,7 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
     """Stream agent reply. Returns (assigned_agent_ids, response_text)."""
 
     full_text = ""
+    raw_text = ""
     buffer = ""
     last_thinking_broadcast = ""
     assigned_agents = []
@@ -235,6 +296,9 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
     effective_text = user_text
     if context:
         effective_text = f"PM 的任务拆解：\n{context}\n\n用户原始需求：{user_text}"
+
+    # Fetch conversation history for multi-turn context
+    history = get_messages(conversation_id, limit=20)
 
     # Broadcast typing start + task status
     await manager.broadcast(conversation_id, {
@@ -251,90 +315,208 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
     })
 
     try:
-        async for chunk in agent.stream_reply(effective_text):
-            # Check stop signal
-            if stop_event and stop_event.is_set():
-                break
+        # ---- Best-of-N: parallel multi-candidate generation ----
+        if quality_gate.enabled and quality_gate.best_of_n > 1 and agent.agent_id not in ("agent_builder", "agent_pm"):
+            await manager.broadcast(conversation_id, {
+                "type": "message",
+                "conversation_id": conversation_id,
+                "sender": agent.agent_id,
+                "content": {"text": f"⚡ 正在并行生成 {quality_gate.best_of_n} 个候选方案，择优输出..."},
+                "stream": True,
+            })
 
-            buffer += chunk
-
-            # Extract and broadcast thinking blocks
-            while True:
-                think_match = re.search(r'\[thinking\](.*?)\[/thinking\]', buffer, re.DOTALL)
-                if not think_match:
-                    break
-                think_text = think_match.group(1).strip()
-                if think_text and think_text != last_thinking_broadcast:
-                    last_thinking_broadcast = think_text
-                    await manager.broadcast(conversation_id, {
-                        "type": "thinking",
-                        "conversation_id": conversation_id,
-                        "agent_id": agent.agent_id,
-                        "text": think_text,
-                    })
-                buffer = buffer[:think_match.start()] + buffer[think_match.end():]
-
-            # Extract assign tags
-            while True:
-                assign_match = re.search(r'\[assign:(\w+)\]', buffer)
-                if not assign_match:
-                    break
-                agent_id = assign_match.group(1)
-                if agent_id not in assigned_agents:
-                    assigned_agents.append(agent_id)
-                buffer = buffer[:assign_match.start()] + buffer[assign_match.end():]
-
-            # Extract options tags (keep in message for frontend to render)
-            # Don't strip [options:...] — let frontend handle it
-
-            # Extract and broadcast code blocks
-            code_match = re.search(r'```(\w*)\n(.*?)```', buffer, re.DOTALL)
-            if code_match:
-                lang = code_match.group(1) or "html"
-                code = code_match.group(2).strip()
-                await manager.broadcast(conversation_id, {
-                    "type": "code",
-                    "conversation_id": conversation_id,
-                    "agent_id": agent.agent_id,
-                    "language": lang,
-                    "code": code,
-                })
-                # If HTML, also send to preview panel
-                if lang.lower() in ("html", "htm", ""):
-                    await manager.broadcast(conversation_id, {
-                        "type": "preview",
-                        "conversation_id": conversation_id,
-                        "agent_id": agent.agent_id,
-                        "html": code,
-                    })
-                buffer = buffer[:code_match.start()] + buffer[code_match.end():]
-
-            # Broadcast remaining text (summary) as streaming message
-            summary = buffer.strip()
-            if summary:
+            async def _on_progress(idx, status):
                 await manager.broadcast(conversation_id, {
                     "type": "message",
                     "conversation_id": conversation_id,
                     "sender": agent.agent_id,
-                    "content": {"text": summary},
+                    "content": {"text": f"🏆 {status}"},
                     "stream": True,
                 })
+
+            best_output, best_report, candidates_summary = await quality_gate.best_of_n_generate(
+                agent, effective_text,
+                agent_id=agent.agent_id,
+                history=history,
+                on_progress=_on_progress,
+            )
+
+            raw_text = best_output
+            buffer = best_output
+            full_text = best_output.strip()
+
+            # Broadcast candidates comparison
+            await manager.broadcast(conversation_id, {
+                "type": "candidates_report",
+                "conversation_id": conversation_id,
+                "agent_id": agent.agent_id,
+                "candidates": candidates_summary,
+            })
+
+        # ---- Standard streaming mode (skip if best-of-n already ran) ----
+        _use_stream = not (quality_gate.enabled and quality_gate.best_of_n > 1
+                           and agent.agent_id not in ("agent_builder", "agent_pm"))
+        if _use_stream:
+            async for chunk in agent.stream_reply(effective_text, history=history):
+                # Check stop signal
+                if stop_event and stop_event.is_set():
+                    break
+
+                raw_text += chunk
+                buffer += chunk
+
+                # Extract and broadcast thinking blocks
+                while True:
+                    think_match = re.search(r'\[thinking\](.*?)\[/thinking\]', buffer, re.DOTALL)
+                    if not think_match:
+                        break
+                    think_text = think_match.group(1).strip()
+                    if think_text and think_text != last_thinking_broadcast:
+                        last_thinking_broadcast = think_text
+                        await manager.broadcast(conversation_id, {
+                            "type": "thinking",
+                            "conversation_id": conversation_id,
+                            "agent_id": agent.agent_id,
+                            "text": think_text,
+                        })
+                    buffer = buffer[:think_match.start()] + buffer[think_match.end():]
+
+                # Extract assign tags
+                while True:
+                    assign_match = re.search(r'\[assign:(\w+)\]', buffer)
+                    if not assign_match:
+                        break
+                    agent_id = assign_match.group(1)
+                    if agent_id not in assigned_agents:
+                        assigned_agents.append(agent_id)
+                    buffer = buffer[:assign_match.start()] + buffer[assign_match.end():]
+
+                # Extract options tags (keep in message for frontend to render)
+                # Don't strip [options:...] — let frontend handle it
+
+                # Extract [create_agent:{json}] tags
+                while True:
+                    ca_match = re.search(r'\[create_agent:(.*?)\]', buffer, re.DOTALL)
+                    if not ca_match:
+                        break
+                    try:
+                        agent_config = json.loads(ca_match.group(1))
+                        _register_custom_agent(agent_config)
+                        # Notify frontend about the new agent
+                        await manager.broadcast(conversation_id, {
+                            "type": "agent_created",
+                            "conversation_id": conversation_id,
+                            "agent": agent_config,
+                        })
+                    except (json.JSONDecodeError, Exception):
+                        pass
+                    buffer = buffer[:ca_match.start()] + buffer[ca_match.end():]
+
+                # Extract [delete_agent:agent_id] tags
+                while True:
+                    da_match = re.search(r'\[delete_agent:(agent_custom_\w+)\]', buffer)
+                    if not da_match:
+                        break
+                    del_id = da_match.group(1)
+                    _remove_custom_agent(del_id)
+                    await manager.broadcast(conversation_id, {
+                        "type": "agent_deleted",
+                        "conversation_id": conversation_id,
+                        "agent_id": del_id,
+                    })
+                    buffer = buffer[:da_match.start()] + buffer[da_match.end():]
+
+                # Extract and broadcast code blocks
+                while True:
+                    code_match = re.search(r'```(\w*)\n(.*?)```', buffer, re.DOTALL)
+                    if not code_match:
+                        break
+                    lang = code_match.group(1) or "html"
+                    code = code_match.group(2).strip()
+                    await manager.broadcast(conversation_id, {
+                        "type": "code",
+                        "conversation_id": conversation_id,
+                        "agent_id": agent.agent_id,
+                        "language": lang,
+                        "code": code,
+                    })
+                    # If HTML, also send to preview panel
+                    if lang.lower() in ("html", "htm", ""):
+                        await manager.broadcast(conversation_id, {
+                            "type": "preview",
+                            "conversation_id": conversation_id,
+                            "agent_id": agent.agent_id,
+                            "html": code,
+                        })
+                    buffer = buffer[:code_match.start()] + buffer[code_match.end():]
+
+                # Broadcast remaining text (summary) as streaming message
+                summary = buffer.strip()
+                if summary:
+                    await manager.broadcast(conversation_id, {
+                        "type": "message",
+                        "conversation_id": conversation_id,
+                        "sender": agent.agent_id,
+                        "content": {"text": summary},
+                        "stream": True,
+                    })
 
         # Final text is whatever remains in buffer (summary only)
         full_text = buffer.strip()
 
     except Exception as e:
+        err_msg = f"[Agent 回复出错: {type(e).__name__}: {str(e)[:200]}]"
         if not full_text:
-            full_text = f"[Agent 回复出错: {type(e).__name__}: {str(e)[:200]}]"
+            full_text = err_msg
         else:
             full_text += f"\n[出错: {str(e)[:100]}]"
+        raw_text += f"\n{err_msg}"
 
     stopped = stop_event and stop_event.is_set()
 
     if not full_text:
         full_text = "（已停止生成）" if stopped else "（已生成代码，请查看右侧面板）"
 
-    save_message(conversation_id, agent.agent_id, {"text": full_text}, streaming=False)
+    if not raw_text:
+        raw_text = full_text
+
+    # ---- Quality Gate: evaluate and optionally auto-retry ----
+    if not stopped and quality_gate.enabled and agent.agent_id not in ("agent_builder", "agent_pm"):
+        report = quality_gate.evaluate(raw_text, agent.agent_id)
+        if not report.passed and quality_gate.max_retries > 0:
+            # Auto-retry: re-generate with quality feedback
+            feedback = report.feedback_text()
+            retry_msg = (
+                f"{effective_text}\n\n"
+                f"【质量检查未通过，请修复后重新输出】：\n{feedback}"
+            )
+            retry_output = ""
+            async for chunk in agent.stream_reply(retry_msg, history=history):
+                if stop_event and stop_event.is_set():
+                    break
+                retry_output += chunk
+                # Broadcast retry streaming
+                await manager.broadcast(conversation_id, {
+                    "type": "message",
+                    "conversation_id": conversation_id,
+                    "sender": agent.agent_id,
+                    "content": {"text": "[质量优化中...] " + retry_output.strip()[:100]},
+                    "stream": True,
+                })
+            if retry_output.strip():
+                raw_text = retry_output
+                full_text = retry_output.strip()
+                report = quality_gate.evaluate(raw_text, agent.agent_id)
+
+        # Broadcast quality report to frontend
+        await manager.broadcast(conversation_id, {
+            "type": "quality_report",
+            "conversation_id": conversation_id,
+            "agent_id": agent.agent_id,
+            "report": report.to_dict(),
+        })
+
+    save_message(conversation_id, agent.agent_id, {"text": raw_text}, streaming=False)
 
     # Broadcast thinking stop
     await manager.broadcast(conversation_id, {
@@ -367,6 +549,175 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
     })
 
     return assigned_agents, full_text
+
+
+def _register_custom_agent(config: dict):
+    """Create a custom agent from config, save to DB, register in AGENTS, create conversation."""
+    aid = config.get("agent_id", "")
+    name = config.get("name", "自定义助手")
+    avatar = config.get("avatar", "🤖")
+    role = config.get("role", "智能助手")
+    style = config.get("style", "友好专业")
+    system_prompt = config.get("system_prompt", f"你是{name}，角色是{role}。")
+    tools = config.get("tools", [])
+
+    # Save to database
+    save_custom_agent(aid, name, avatar, role, style, system_prompt, tools)
+
+    # Instantiate and register
+    AGENTS[aid] = CustomAgent(
+        agent_id=aid, name=name, avatar=avatar,
+        role=role, style=style, system_prompt=system_prompt, tools=tools,
+    )
+
+    # Create a conversation for this agent
+    conv_id = f"conv_{aid}"
+    create_conversation(conv_id, "single", name, avatar, agent_id=aid, preview=role)
+
+
+def _remove_custom_agent(agent_id: str):
+    """Delete a custom agent from DB, AGENTS dict, and its conversation."""
+    AGENTS.pop(agent_id, None)
+    delete_custom_agent(agent_id)
+
+
+# ---- Custom Agent REST API ----
+
+class CustomAgentCreate(BaseModel):
+    name: str
+    avatar: str = "🤖"
+    role: str = ""
+    style: str = ""
+    system_prompt: str
+    tools: list[str] = []
+
+
+@app.get("/api/agents/custom")
+async def list_custom_agents():
+    return get_custom_agents()
+
+
+@app.post("/api/agents/custom")
+async def create_custom_agent(body: CustomAgentCreate):
+    import uuid
+    agent_id = f"agent_custom_{uuid.uuid4().hex[:8]}"
+    config = {
+        "agent_id": agent_id,
+        "name": body.name,
+        "avatar": body.avatar,
+        "role": body.role,
+        "style": body.style,
+        "system_prompt": body.system_prompt,
+        "tools": body.tools,
+    }
+    _register_custom_agent(config)
+    return {"status": "created", "agent": config}
+
+
+@app.delete("/api/agents/custom/{agent_id}")
+async def remove_custom_agent(agent_id: str):
+    _remove_custom_agent(agent_id)
+    return {"status": "deleted", "agent_id": agent_id}
+
+
+@app.get("/api/tools")
+async def list_available_tools():
+    return [
+        {"id": tid, "name": t["name"], "icon": t["icon"], "description": t["description"]}
+        for tid, t in AVAILABLE_TOOLS.items()
+    ]
+
+
+# ---- Quality Gate API ----
+
+class QualityGateSettings(BaseModel):
+    enabled: bool = True
+    max_retries: int = 1
+    use_llm_judge: bool = False
+    best_of_n: int = 1  # 1=disabled, 3=generate 3 candidates pick best
+
+
+@app.get("/api/settings/quality")
+async def get_quality_settings():
+    return {
+        "enabled": quality_gate.enabled,
+        "max_retries": quality_gate.max_retries,
+        "use_llm_judge": quality_gate.use_llm_judge,
+        "best_of_n": quality_gate.best_of_n,
+    }
+
+
+@app.post("/api/settings/quality")
+async def update_quality_settings(s: QualityGateSettings):
+    quality_gate.enabled = s.enabled
+    quality_gate.max_retries = s.max_retries
+    quality_gate.use_llm_judge = s.use_llm_judge
+    quality_gate.best_of_n = s.best_of_n
+    return {"status": "ok", "best_of_n": quality_gate.best_of_n}
+
+
+@app.post("/api/quality/evaluate")
+async def evaluate_text(body: dict):
+    """Manual quality evaluation endpoint. Body: {"text": "...", "agent_id": "..."}"""
+    text = body.get("text", "")
+    agent_id = body.get("agent_id", "")
+    if not text:
+        return {"error": "text is required"}
+    report = quality_gate.evaluate(text, agent_id)
+    return report.to_dict()
+
+
+@app.get("/api/quality/standards")
+async def list_quality_standards():
+    from app.core.quality_standards import STANDARDS
+    return {
+        k: {"name": v["name"], "pass_threshold": v["pass_threshold"],
+             "rules_count": len(v["rules"])}
+        for k, v in STANDARDS.items()
+    }
+
+
+# ---- Prompt Engine API ----
+
+@app.get("/api/prompt/layers")
+async def list_prompt_layers():
+    """List all prompt layers with their status."""
+    return prompt_engine.get_layers_info()
+
+
+@app.post("/api/prompt/layers/{layer_id}")
+async def toggle_prompt_layer(layer_id: str, body: dict):
+    """Enable/disable a prompt layer. Body: {"enabled": true/false}"""
+    enabled = body.get("enabled", True)
+    prompt_engine.set_layer_enabled(layer_id, enabled)
+    return {"status": "ok", "layer_id": layer_id, "enabled": enabled}
+
+
+@app.post("/api/prompt/preview")
+async def preview_prompt(body: dict):
+    """Preview the assembled prompt for a given agent and context.
+    Body: {"agent_id": "...", "message": "...", "task_type": "code|html|api|document"}
+    """
+    agent_id = body.get("agent_id", "agent_frontend")
+    message = body.get("message", "")
+    task_type = body.get("task_type")
+
+    agent = AGENTS.get(agent_id)
+    if not agent:
+        return {"error": f"Agent {agent_id} not found"}
+
+    if not task_type and message:
+        task_type = prompt_engine.detect_task_type(message, agent_id)
+
+    ctx = {"task_type": task_type}
+    assembled = prompt_engine.build(agent, ctx)
+    return {
+        "agent_id": agent_id,
+        "task_type": task_type,
+        "assembled_prompt": assembled,
+        "char_count": len(assembled),
+        "estimated_tokens": len(assembled) // 3,
+    }
 
 
 @app.post("/api/deploy/{conversation_id}")

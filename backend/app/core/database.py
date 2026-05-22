@@ -42,6 +42,17 @@ def init_db():
         );
 
         CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
+
+        CREATE TABLE IF NOT EXISTS custom_agents (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            avatar TEXT DEFAULT '🤖',
+            role TEXT DEFAULT '',
+            style TEXT DEFAULT '',
+            system_prompt TEXT NOT NULL,
+            tools TEXT DEFAULT '[]',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
     ''')
 
     default_convs = [
@@ -51,6 +62,7 @@ def init_db():
         ('conv_tester', 'single', '测试工程师', '🧪', 'agent_tester', None, '测试用例与 Bug 分析'),
         ('conv_devops', 'single', '运维工程师', '🚀', 'agent_devops', None, 'Docker 部署与 CI/CD'),
         ('conv_designer', 'single', '设计顾问', '🎯', 'agent_designer', None, 'UI/UX 设计建议'),
+        ('conv_builder', 'single', 'Agent 工坊', '🔧', 'agent_builder', None, '对话式创建自定义 Agent'),
         ('conv_group_demo', 'group', 'Demo 项目群', '💬', None,
          json.dumps(['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer']),
          '多 Agent 协作演示'),
@@ -112,5 +124,59 @@ def get_conversations():
 def clear_messages(conversation_id: str):
     conn = get_db()
     conn.execute('DELETE FROM messages WHERE conversation_id = ?', (conversation_id,))
+    conn.commit()
+    conn.close()
+
+
+# ---- Custom Agents CRUD ----
+
+def save_custom_agent(agent_id: str, name: str, avatar: str, role: str,
+                      style: str, system_prompt: str, tools: list[str]):
+    conn = get_db()
+    conn.execute(
+        'INSERT OR REPLACE INTO custom_agents (id, name, avatar, role, style, system_prompt, tools) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (agent_id, name, avatar, role, style, system_prompt, json.dumps(tools, ensure_ascii=False))
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_custom_agents() -> list[dict]:
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM custom_agents ORDER BY created_at ASC').fetchall()
+    conn.close()
+    return [
+        {
+            'agent_id': row['id'],
+            'name': row['name'],
+            'avatar': row['avatar'],
+            'role': row['role'],
+            'style': row['style'],
+            'system_prompt': row['system_prompt'],
+            'tools': json.loads(row['tools']),
+            'created_at': row['created_at'],
+            'custom': True,
+        }
+        for row in rows
+    ]
+
+
+def delete_custom_agent(agent_id: str):
+    conn = get_db()
+    conn.execute('DELETE FROM custom_agents WHERE id = ?', (agent_id,))
+    conn.execute('DELETE FROM conversations WHERE agent_id = ?', (agent_id,))
+    conn.execute('DELETE FROM messages WHERE conversation_id = ?', (f'conv_{agent_id}',))
+    conn.commit()
+    conn.close()
+
+
+def create_conversation(conv_id: str, conv_type: str, name: str, avatar: str,
+                        agent_id: str = None, agents: list[str] = None, preview: str = ''):
+    conn = get_db()
+    conn.execute(
+        'INSERT OR IGNORE INTO conversations (id, type, name, avatar, agent_id, agents, preview) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (conv_id, conv_type, name, avatar, agent_id,
+         json.dumps(agents, ensure_ascii=False) if agents else None, preview)
+    )
     conn.commit()
     conn.close()

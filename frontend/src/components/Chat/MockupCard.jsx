@@ -95,6 +95,60 @@ function renderSection(section, index, y, width) {
       )
 
     case 'hero':
+      const isQiaolezi = section.label.includes('巧乐兹')
+      if (isQiaolezi) {
+        return (
+          <g key={index}>
+            <defs>
+              <linearGradient id="qiaoleziGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#4a2c11" />
+                <stop offset="100%" stopColor="#251206" />
+              </linearGradient>
+              <linearGradient id="stickGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#e2b37d" />
+                <stop offset="100%" stopColor="#b68953" />
+              </linearGradient>
+            </defs>
+            {/* Background card with glass effect */}
+            <rect x={padding} y={y} width={contentWidth} height={85} rx="12" fill="rgba(249, 115, 22, 0.05)" stroke="rgba(249, 115, 22, 0.15)" strokeWidth="1.5" />
+            
+            {/* Left side text */}
+            <text x={padding + 12} y={y + 30} fill="#ff9736" fontSize="15" fontWeight="800">{section.label.replace('🍦 ', '')}</text>
+            <text x={padding + 12} y={y + 50} fill="#e2e8f0" fontSize="10" fontWeight="500">{section.sub}</text>
+            <text x={padding + 12} y={y + 68} fill="#94a3b8" fontSize="8">设计顾问 💡 独家高保真视觉渲染</text>
+
+            {/* Right side Qiaolezi Ice Pop Graphic! */}
+            <g transform={`translate(${width - padding - 65}, ${y + 5})`}>
+              {/* Wooden Stick */}
+              <rect x="22" y="55" width="10" height="20" rx="3" fill="url(#stickGrad)" />
+              {/* Shadow */}
+              <rect x="10" y="8" width="34" height="52" rx="10" fill="rgba(0,0,0,0.3)" />
+              {/* Chocolate Ice Pop Body */}
+              <rect x="10" y="5" width="34" height="50" rx="9" fill="url(#qiaoleziGrad)" stroke="#1c0d05" strokeWidth="1" />
+              
+              {/* Bite Mark (reveal creamy vanilla and chocolate core!) */}
+              <path d="M 32 5 Q 40 10 44 20 L 44 5 Z" fill="#1e293b" /> {/* Mask background matching SVG bg */}
+              <path d="M 32 5 Q 36 10 38 15 Q 42 16 44 20" fill="none" stroke="#fffdd0" strokeWidth="2" /> {/* Vanilla Layer */}
+              <circle cx="37" cy="11" r="2.5" fill="#3b2314" /> {/* Chocolate Core */}
+
+              {/* Cookie Crumbles */}
+              <circle cx="16" cy="18" r="1.2" fill="#000" opacity="0.6" />
+              <circle cx="28" cy="22" r="1.5" fill="#000" opacity="0.6" />
+              <circle cx="20" cy="35" r="1" fill="#000" opacity="0.6" />
+              <circle cx="32" cy="32" r="1.3" fill="#000" opacity="0.6" />
+              <circle cx="18" cy="45" r="1.5" fill="#000" opacity="0.6" />
+              <circle cx="26" cy="40" r="1.2" fill="#000" opacity="0.6" />
+
+              {/* Glossy Reflection Highlight */}
+              <path d="M 14 12 L 14 44" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="2.5" strokeLinecap="round" />
+              {/* Qiaolezi iconic red ribbon splash swirl */}
+              <path d="M 10 30 Q 22 25 32 38 Q 40 45 44 35" fill="none" stroke="#ef4444" strokeWidth="2" opacity="0.85" />
+              <path d="M 12 33 Q 22 28 32 41 Q 40 48 44 38" fill="none" stroke="#fbbf24" strokeWidth="1.2" opacity="0.8" />
+            </g>
+          </g>
+        )
+      }
+
       return (
         <g key={index}>
           <defs>

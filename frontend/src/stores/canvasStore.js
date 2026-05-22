@@ -5,10 +5,54 @@ export const useCanvasStore = create((set) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
 
   previewHtml: null,
-  setPreviewHtml: (html) => set({ previewHtml: html, activeTab: 'preview' }),
+  setPreviewHtml: (html) => set({ previewHtml: html }),
 
   generatedCode: null,
-  setGeneratedCode: (language, code) => set({ generatedCode: { language, code }, activeTab: 'diff' }),
+  previousCode: "",
+  setGeneratedCode: (language, code) =>
+    set((state) => {
+      const prev =
+        state.generatedCode && state.generatedCode.language === language
+          ? state.generatedCode.code
+          : "";
+      return {
+        previousCode: prev,
+        generatedCode: { language, code },
+      };
+    }),
+
+  isDeploying: false,
+  deployLogs: [],
+  deployedUrl: "",
+  deployStatus: "idle", // 'idle' | 'running' | 'success' | 'failed'
+
+  startDeploy: () =>
+    set({
+      isDeploying: true,
+      deployStatus: "running",
+      deployLogs: [],
+      deployedUrl: "",
+      activeTab: "deploy",
+    }),
+
+  appendDeployLog: (log) =>
+    set((state) => ({
+      deployLogs: [...state.deployLogs, log],
+    })),
+
+  finishDeploy: (url) =>
+    set({
+      isDeploying: false,
+      deployStatus: "success",
+      deployedUrl: url,
+    }),
+
+  failDeploy: () =>
+    set({
+      isDeploying: false,
+      deployStatus: "failed",
+    }),
+
 
   tasks: [
     { id: 1, title: '设计页面 UI', assignee: 'agent_designer', status: 'todo' },
@@ -31,11 +75,14 @@ export const useCanvasStore = create((set) => ({
     })),
 
   updateTaskByAgent: (agentId, status) =>
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.assignee === agentId ? { ...t, status } : t
-      ),
-    })),
+    set((state) => {
+      console.log(`[Store] Updating task for agent ${agentId} to ${status}`)
+      return {
+        tasks: state.tasks.map((t) =>
+          t.assignee === agentId ? { ...t, status } : t
+        ),
+      }
+    }),
 
   dagNodes: [
     { id: 'user', label: '用户', icon: '👤', x: 200, y: 30, status: 'idle' },
@@ -57,9 +104,12 @@ export const useCanvasStore = create((set) => ({
   ],
 
   setNodeStatus: (nodeId, status) =>
-    set((state) => ({
-      dagNodes: state.dagNodes.map((n) =>
-        n.id === nodeId ? { ...n, status } : n
-      ),
-    })),
+    set((state) => {
+      console.log(`[Store] Updating DAG node ${nodeId} to ${status}`)
+      return {
+        dagNodes: state.dagNodes.map((n) =>
+          n.id === nodeId ? { ...n, status } : n
+        ),
+      }
+    }),
 }))

@@ -5,6 +5,7 @@ import { useCanvasStore } from '../../stores/canvasStore'
 import MessageBubble from '../Chat/MessageBubble'
 import InputBar from '../Chat/InputBar'
 import { wsClient } from '../../utils/websocket'
+import { PREVIEW_HTML } from '../Canvas/previewHtml'
 
 export default function ChatPanel() {
   const activeId = useChatStore((s) => s.activeConversationId)
@@ -34,6 +35,54 @@ export default function ChatPanel() {
   useEffect(() => {
     loadMessages(activeId)
   }, [activeId])
+
+  // Sync canvas code & preview from active conversation messages on change
+  useEffect(() => {
+    if (!conv?.messages) return
+
+    // Find the latest message that contains a code block or preview tag
+    // We scan from end to start (latest first)
+    let foundCode = false
+    let foundPreview = false
+
+    for (let i = conv.messages.length - 1; i >= 0; i--) {
+      const msg = conv.messages[i]
+      if (msg.streaming) continue
+
+      const text = msg.content?.text || ''
+
+      // 1. Check for preview tag
+      const previewMatch = text.match(/\[preview:(\w+)\]/)
+      if (previewMatch && PREVIEW_HTML[previewMatch[1]]) {
+        const code = PREVIEW_HTML[previewMatch[1]]
+        if (!foundCode) {
+          setGeneratedCode('html', code)
+          foundCode = true
+        }
+        if (!foundPreview) {
+          useCanvasStore.getState().setPreviewHtml(code)
+          foundPreview = true
+        }
+      }
+
+      // 2. Check for markdown code blocks
+      const codeMatch = text.match(/```(\w*)\n([\s\S]*?)```/)
+      if (codeMatch) {
+        const lang = codeMatch[1] || 'text'
+        const code = codeMatch[2]
+        if (!foundCode) {
+          setGeneratedCode(lang, code)
+          foundCode = true
+        }
+        if (lang === 'html' && !foundPreview) {
+          useCanvasStore.getState().setPreviewHtml(code)
+          foundPreview = true
+        }
+      }
+
+      if (foundCode && foundPreview) break
+    }
+  }, [conv?.messages, activeId])
 
   // Send read receipt when conversation opens
   useEffect(() => {
@@ -103,6 +152,29 @@ export default function ChatPanel() {
         return
       }
 
+      if (data.type === 'agent_created') {
+        const agent = data.agent
+        if (agent) {
+          const addConversation = useChatStore.getState().addConversation
+          addConversation({
+            id: `conv_${agent.agent_id}`,
+            type: 'single',
+            agentId: agent.agent_id,
+            name: agent.name,
+            avatar: agent.avatar || '🤖',
+            messages: [],
+            preview: agent.role || '自定义 Agent',
+          })
+        }
+        return
+      }
+
+      if (data.type === 'agent_deleted') {
+        const removeConversation = useChatStore.getState().removeConversation
+        removeConversation(`conv_${data.agent_id}`)
+        return
+      }
+
       if (data.type === 'read') {
         markRead(activeId)
         return
@@ -114,9 +186,9 @@ export default function ChatPanel() {
         if (isStreaming) {
           const convNow = useChatStore.getState().conversations.find((c) => c.id === activeId)
           const msgs = convNow?.messages || []
-          const last = msgs[msgs.length - 1]
+          const hasStreaming = msgs.some((m) => m.sender === data.sender && m.streaming)
 
-          if (last && last.sender === data.sender && last.streaming) {
+          if (hasStreaming) {
             updateLastAgentMessage(activeId, data.sender, data.content.text, true)
           } else {
             addMessage(activeId, {
@@ -127,7 +199,19 @@ export default function ChatPanel() {
           }
           setAgentStatus(data.sender, 'working')
         } else {
-          updateLastAgentMessage(activeId, data.sender, data.content.text, false)
+          const convNow = useChatStore.getState().conversations.find((c) => c.id === activeId)
+          const msgs = convNow?.messages || []
+          const hasStreaming = msgs.some((m) => m.sender === data.sender && m.streaming)
+
+          if (hasStreaming) {
+            updateLastAgentMessage(activeId, data.sender, data.content.text, false)
+          } else {
+            addMessage(activeId, {
+              sender: data.sender,
+              content: data.content,
+              streaming: false,
+            })
+          }
           setAgentStatus(data.sender, 'done')
           setTimeout(() => setAgentStatus(data.sender, 'idle'), 2000)
         }

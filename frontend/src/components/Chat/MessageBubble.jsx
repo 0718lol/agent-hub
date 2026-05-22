@@ -18,6 +18,7 @@ export default function MessageBubble({ message }) {
   const avatar = isUser ? '👤' : agent?.avatar || '🤖'
   const text = message.content?.text || ''
   const setPreviewHtml = useCanvasStore((s) => s.setPreviewHtml)
+  const setGeneratedCode = useCanvasStore((s) => s.setGeneratedCode)
   const previewHandled = useRef(false)
 
   useEffect(() => {
@@ -26,6 +27,18 @@ export default function MessageBubble({ message }) {
       if (m && PREVIEW_HTML[m[1]]) {
         previewHandled.current = true
         setPreviewHtml(PREVIEW_HTML[m[1]])
+        setGeneratedCode('html', PREVIEW_HTML[m[1]])
+      } else {
+        const codeMatch = text.match(/```(\w*)\n([\s\S]*?)```/)
+        if (codeMatch) {
+          previewHandled.current = true
+          const lang = codeMatch[1] || 'text'
+          const code = codeMatch[2]
+          setGeneratedCode(lang, code)
+          if (lang === 'html') {
+            setPreviewHtml(code)
+          }
+        }
       }
     }
   }, [message.streaming, text])
@@ -66,14 +79,16 @@ export default function MessageBubble({ message }) {
     // Strip thinking tags
     let clean = t.replace(/\[thinking\][\s\S]*?\[\/thinking\]/g, '')
     // Strip code blocks (code is sent to canvas panel)
-    clean = clean.replace(/```[\s\S]*?```/g, '')
+    if (clean.match(/```[\s\S]*?```/)) {
+      clean = clean.replace(/```[\s\S]*?```/g, '\n[code_generated]\n')
+    }
     // Strip assign tags
     clean = clean.replace(/\[assign:\w+\]/g, '')
     clean = clean.trim()
 
     if (!clean) return null
 
-    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[options:[^\]]+\])/g)
+    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[options:[^\]]+\]|\[code_generated\])/g)
     return parts.map((part, i) => {
       if (!part) return null
       const mockupMatch = part.match(/\[mockup:(\w+)\]/)
@@ -90,6 +105,18 @@ export default function MessageBubble({ message }) {
             display: 'flex', alignItems: 'center', gap: 6,
           }}>
             ↗ 预览已更新到右侧面板
+          </div>
+        )
+      }
+      if (part === '[code_generated]') {
+        return (
+          <div key={i} style={{
+            margin: '8px 0', padding: '10px 14px',
+            background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)',
+            borderRadius: 8, fontSize: 13, color: '#3b82f6',
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            ↗ 代码已更新到右侧面板
           </div>
         )
       }

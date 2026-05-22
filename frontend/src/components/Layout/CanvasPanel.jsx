@@ -4,6 +4,7 @@ import AgentDAG from '../Canvas/AgentDAG'
 import TaskBoard from '../Canvas/TaskBoard'
 import DiffViewer from '../Canvas/DiffViewer'
 import WebPreview from '../Canvas/WebPreview'
+import DeployPanel from '../Canvas/DeployPanel'
 
 export default function CanvasPanel() {
   const activeTab = useCanvasStore((s) => s.activeTab)
@@ -14,6 +15,7 @@ export default function CanvasPanel() {
     { key: 'tasks', label: '任务' },
     { key: 'diff', label: '代码' },
     { key: 'preview', label: '预览' },
+    { key: 'deploy', label: '部署' },
   ]
 
   return (
@@ -34,7 +36,9 @@ export default function CanvasPanel() {
         {activeTab === 'tasks' && <TaskBoard />}
         {activeTab === 'diff' && <DiffViewer />}
         {activeTab === 'preview' && <WebPreview />}
+        {activeTab === 'deploy' && <DeployPanel />}
       </div>
     </div>
   )
 }
+

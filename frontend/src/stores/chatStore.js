@@ -7,6 +7,7 @@ const INITIAL_CONVERSATIONS = [
   { id: 'conv_tester', type: 'single', agentId: 'agent_tester', name: '测试工程师', avatar: '🧪', messages: [], preview: '测试用例与 Bug 分析' },
   { id: 'conv_devops', type: 'single', agentId: 'agent_devops', name: '运维工程师', avatar: '🚀', messages: [], preview: 'Docker 部署与 CI/CD' },
   { id: 'conv_designer', type: 'single', agentId: 'agent_designer', name: '设计顾问', avatar: '🎯', messages: [], preview: 'UI/UX 设计建议' },
+  { id: 'conv_agent_builder', type: 'single', agentId: 'agent_builder', name: '🔧 Agent 工坊', avatar: '🔧', messages: [], preview: '对话式创建自定义 Agent' },
   { id: 'conv_group_demo', type: 'group', name: 'Demo 项目群', avatar: '💬', agents: ['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer'], messages: [], preview: '多 Agent 协作演示' },
 ]
 
@@ -91,12 +92,33 @@ export const useChatStore = create((set, get) => ({
       conversations: state.conversations.map((conv) => {
         if (conv.id !== conversationId) return conv
         const messages = [...conv.messages]
-        const lastIdx = messages.length - 1
-        if (lastIdx >= 0 && messages[lastIdx].sender === senderId && messages[lastIdx].streaming) {
-          messages[lastIdx] = { ...messages[lastIdx], content: { text }, streaming }
+        
+        // Find the index of the latest message from this sender that is streaming
+        let targetIdx = -1
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].sender === senderId && messages[i].streaming) {
+            targetIdx = i
+            break
+          }
+        }
+        
+        if (targetIdx >= 0) {
+          messages[targetIdx] = { ...messages[targetIdx], content: { text }, streaming }
         }
         return { ...conv, messages }
       }),
+    })),
+
+  addConversation: (conv) =>
+    set((state) => {
+      if (state.conversations.find((c) => c.id === conv.id)) return state
+      return { conversations: [...state.conversations, conv] }
+    }),
+
+  removeConversation: (convId) =>
+    set((state) => ({
+      conversations: state.conversations.filter((c) => c.id !== convId),
+      activeConversationId: state.activeConversationId === convId ? 'conv_pm' : state.activeConversationId,
     })),
 
   getActiveConversation: () => {
