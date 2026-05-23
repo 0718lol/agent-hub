@@ -1,0 +1,43 @@
+/* ================================================================
+   Theme: Coze Dark — 极简深色
+   ================================================================ */
+[data-theme="dark"] {
+  --font-ui: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  --bg-primary: #1A1A1B;
+  --bg-secondary: #262627;
+  --bg-tertiary: #2D2D2E;
+  --bg-card: #262627;
+  --bg-card-hover: #2D2D2E;
+  --input-bg: #262627;
+  --text-primary: #E8E9EB;
+  --text-secondary: #9CA3AF;
+  --text-muted: #787B82;
+  --accent: #3C7CFF;
+  --accent-glow: rgba(60, 124, 255, 0.12);
+  --accent-bg: #1A2D4A;
+  --cyan: #3C7CFF;
+  --green: #27C24A;
+  --orange: #FF8F33;
+  --red: #F76560;
+  --border: #383839;
+  --border-light: #2D2D2E;
+
+  --shadow-color: rgba(0, 0, 0, 0.3);
+  --shadow-xs: 0 1px 2px var(--shadow-color);
+  --shadow-sm: 0 1px 3px var(--shadow-color);
+  --shadow-md: 0 4px 12px var(--shadow-color);
+  --shadow-lg: 0 8px 24px var(--shadow-color);
+  --shadow-xl: none;
+
+  --code-bg: #1E1E1F;
+  --code-text: #E8E9EB;
+  --diff-bg: #1E1E1F;
+  --diff-add-bg: rgba(39, 194, 74, 0.1);
+  --diff-remove-bg: rgba(247, 101, 96, 0.1);
+
+  --glass-bg: transparent;
+  --glass-border: var(--border);
+  --glass-blur: 0px;
+}
