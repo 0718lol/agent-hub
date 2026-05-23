@@ -1,25 +1,57 @@
 import { create } from 'zustand'
 
 const INITIAL_CONVERSATIONS = [
-  { id: 'conv_pm', type: 'single', agentId: 'agent_pm', name: 'PM 小助手', avatar: '📋', messages: [], preview: '需求分析与任务拆解' },
-  { id: 'conv_frontend', type: 'single', agentId: 'agent_frontend', name: '前端工程师', avatar: '🎨', messages: [], preview: 'React 组件与样式开发' },
-  { id: 'conv_backend', type: 'single', agentId: 'agent_backend', name: '后端工程师', avatar: '⚙️', messages: [], preview: 'API 接口与数据模型' },
-  { id: 'conv_tester', type: 'single', agentId: 'agent_tester', name: '测试工程师', avatar: '🧪', messages: [], preview: '测试用例与 Bug 分析' },
-  { id: 'conv_devops', type: 'single', agentId: 'agent_devops', name: '运维工程师', avatar: '🚀', messages: [], preview: 'Docker 部署与 CI/CD' },
-  { id: 'conv_designer', type: 'single', agentId: 'agent_designer', name: '设计顾问', avatar: '🎯', messages: [], preview: 'UI/UX 设计建议' },
-  { id: 'conv_agent_builder', type: 'single', agentId: 'agent_builder', name: '🔧 Agent 工坊', avatar: '🔧', messages: [], preview: '对话式创建自定义 Agent' },
-  { id: 'conv_group_demo', type: 'group', name: 'Demo 项目群', avatar: '💬', agents: ['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer'], messages: [], preview: '多 Agent 协作演示' },
+  { id: 'conv_pm', type: 'single', agentId: 'agent_pm', name: 'PM 小助手', avatar: null, role: '需求分析与任务拆解', messages: [], pinned: false, unread: false, updatedAt: Date.now() },
+  { id: 'conv_frontend', type: 'single', agentId: 'agent_frontend', name: '前端工程师', avatar: null, role: 'React 组件与样式开发', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 1000 },
+  { id: 'conv_backend', type: 'single', agentId: 'agent_backend', name: '后端工程师', avatar: null, role: 'API 接口与数据模型', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 2000 },
+  { id: 'conv_tester', type: 'single', agentId: 'agent_tester', name: '测试工程师', avatar: null, role: '测试用例与 Bug 分析', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 3000 },
+  { id: 'conv_devops', type: 'single', agentId: 'agent_devops', name: '运维工程师', avatar: null, role: 'Docker 部署与 CI/CD', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 4000 },
+  { id: 'conv_designer', type: 'single', agentId: 'agent_designer', name: '设计顾问', avatar: null, role: 'UI/UX 设计建议', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 5000 },
+  { id: 'conv_agent_builder', type: 'single', agentId: 'agent_builder', name: 'Agent 工坊', avatar: null, role: '对话式创建自定义 Agent', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 6000 },
+  { id: 'conv_group_demo', type: 'group', name: 'Demo 项目群', avatar: null, agents: ['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer'], messages: [], pinned: false, unread: false, updatedAt: Date.now() - 7000 },
 ]
 
 export const useChatStore = create((set, get) => ({
   conversations: INITIAL_CONVERSATIONS,
   activeConversationId: 'conv_pm',
-  typingAgents: {},  // { conversationId: Set<agentId> }
-  thinkingAgents: {}, // { [convId]: { [agentId]: "thinking text" } }
-  generatingConvs: new Set(), // Set<conversationId>
-  allRead: {},       // { conversationId: boolean }
+  typingAgents: {},
+  thinkingAgents: {},
+  generatingConvs: new Set(),
+  allRead: {},
+  pinnedMessages: {},
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
+
+  togglePin: (conversationId) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === conversationId ? { ...c, pinned: !c.pinned } : c
+      ),
+    })),
+
+  archiveConversation: (conversationId) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === conversationId ? { ...c, archived: true } : c
+      ),
+    })),
+
+  reorderConversations: (fromIndex, toIndex) =>
+    set((state) => {
+      const list = [...state.conversations]
+      const [moved] = list.splice(fromIndex, 1)
+      list.splice(toIndex, 0, moved)
+      return { conversations: list }
+    }),
+
+  togglePinMessage: (conversationId, messageId) =>
+    set((state) => {
+      const current = state.pinnedMessages[conversationId] || []
+      const next = current.includes(messageId)
+        ? current.filter((id) => id !== messageId)
+        : [...current, messageId]
+      return { pinnedMessages: { ...state.pinnedMessages, [conversationId]: next } }
+    }),
 
   setTyping: (conversationId, agentId, isTyping) =>
     set((state) => {
@@ -32,11 +64,8 @@ export const useChatStore = create((set, get) => ({
   setThinking: (conversationId, agentId, text) =>
     set((state) => {
       const convThinking = { ...(state.thinkingAgents[conversationId] || {}) }
-      if (text) {
-        convThinking[agentId] = text
-      } else {
-        delete convThinking[agentId]
-      }
+      if (text) { convThinking[agentId] = text }
+      else { delete convThinking[agentId] }
       return { thinkingAgents: { ...state.thinkingAgents, [conversationId]: convThinking } }
     }),
 
@@ -51,6 +80,9 @@ export const useChatStore = create((set, get) => ({
   markRead: (conversationId) =>
     set((state) => ({
       allRead: { ...state.allRead, [conversationId]: true },
+      conversations: state.conversations.map((c) =>
+        c.id === conversationId ? { ...c, unread: false } : c
+      ),
     })),
 
   markSent: (conversationId) =>
@@ -65,7 +97,7 @@ export const useChatStore = create((set, get) => ({
       set((state) => ({
         conversations: state.conversations.map((conv) =>
           conv.id === conversationId
-            ? { ...conv, messages, preview: messages.length > 0 ? messages[messages.length - 1].content?.text?.slice(0, 30) : conv.preview }
+            ? { ...conv, messages, updatedAt: Date.now() }
             : conv
         ),
       }))
@@ -81,7 +113,8 @@ export const useChatStore = create((set, get) => ({
           ? {
               ...conv,
               messages: [...conv.messages, { ...message, id: Date.now() + Math.random(), timestamp: new Date().toISOString() }],
-              preview: message.content?.text?.slice(0, 30) || conv.preview,
+              updatedAt: Date.now(),
+              unread: message.sender !== 'user' && conversationId !== state.activeConversationId,
             }
           : conv
       ),
@@ -92,8 +125,6 @@ export const useChatStore = create((set, get) => ({
       conversations: state.conversations.map((conv) => {
         if (conv.id !== conversationId) return conv
         const messages = [...conv.messages]
-        
-        // Find the index of the latest message from this sender that is streaming
         let targetIdx = -1
         for (let i = messages.length - 1; i >= 0; i--) {
           if (messages[i].sender === senderId && messages[i].streaming) {
@@ -101,7 +132,6 @@ export const useChatStore = create((set, get) => ({
             break
           }
         }
-        
         if (targetIdx >= 0) {
           messages[targetIdx] = { ...messages[targetIdx], content: { text }, streaming }
         }
@@ -112,7 +142,7 @@ export const useChatStore = create((set, get) => ({
   addConversation: (conv) =>
     set((state) => {
       if (state.conversations.find((c) => c.id === conv.id)) return state
-      return { conversations: [...state.conversations, conv] }
+      return { conversations: [...state.conversations, { ...conv, updatedAt: Date.now(), unread: false, pinned: false }] }
     }),
 
   removeConversation: (convId) =>

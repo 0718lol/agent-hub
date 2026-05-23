@@ -1,5 +1,6 @@
 import React from 'react'
 import { useCanvasStore } from '../../stores/canvasStore'
+import IconAvatar from '../IconAvatar'
 
 export default function AgentDAG() {
   const nodes = useCanvasStore((s) => s.dagNodes)
@@ -35,7 +36,7 @@ export default function AgentDAG() {
           className={`dag-node ${node.status}`}
           style={{ left: node.x, top: node.y }}
         >
-          <div className="node-icon">{node.icon}</div>
+          <div className="node-icon"><IconAvatar iconKey={node.iconKey} size={16} /></div>
           <div className="node-label">{node.label}</div>
         </div>
       ))}

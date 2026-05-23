@@ -27,7 +27,7 @@ export default function Sidebar() {
       <div className="avatar"><IconAvatar agentId={conv.type === 'group' ? 'group' : conv.agentId} size={20} /></div>
       <div className="info">
         <div className="name">{conv.name}</div>
-        <div className="preview">{conv.preview}</div>
+        <div className="preview">{conv.role}</div>
       </div>
     </div>
   )
