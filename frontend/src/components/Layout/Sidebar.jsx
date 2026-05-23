@@ -6,7 +6,7 @@ import SettingsPanel from './SettingsPanel'
 import IconAvatar from '../IconAvatar'
 import AgentSelector from '../Chat/AgentSelector'
 
-export default function Sidebar() {
+export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
   const conversations = useChatStore((s) => s.conversations)
   const activeId = useChatStore((s) => s.activeConversationId)
   const setActive = useChatStore((s) => s.setActiveConversation)
@@ -69,12 +69,17 @@ export default function Sidebar() {
 
   return (
     <>
-      <div className="sidebar">
+      <div className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
         <div className="sidebar-header">
           <span className="sidebar-logo">AgentHub</span>
-          <button className="sidebar-new-btn" onClick={() => setShowNewDialog(true)} title="新建对话">
-            <Plus size={18} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <button className="sidebar-new-btn" onClick={() => setShowNewDialog(true)} title="新建对话">
+              <Plus size={18} />
+            </button>
+            <button className="hamburger-btn" onClick={onClose} title="关闭菜单">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="sidebar-search">

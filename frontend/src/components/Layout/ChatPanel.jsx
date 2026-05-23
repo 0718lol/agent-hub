@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react'
-import { MessageSquare, PanelRightOpen, PanelRightClose } from 'lucide-react'
+import { MessageSquare, PanelRightOpen, PanelRightClose, Menu } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -13,7 +13,7 @@ import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import IconAvatar from '../IconAvatar'
 import ThemeToggle from '../ThemeToggle'
 
-export default function ChatPanel() {
+export default function ChatPanel({ onToggleSidebar }) {
   const activeId = useChatStore((s) => s.activeConversationId)
   const conversations = useChatStore((s) => s.conversations)
   const addMessage = useChatStore((s) => s.addMessage)
@@ -188,6 +188,9 @@ export default function ChatPanel() {
       <div className="chat-panel-inner">
         {/* Header */}
         <div className="chat-header">
+          <button className="hamburger-btn" onClick={onToggleSidebar} title="菜单">
+            <Menu size={18} />
+          </button>
           {isGroup ? (
             <>
               <div className="group-avatar-stack">
