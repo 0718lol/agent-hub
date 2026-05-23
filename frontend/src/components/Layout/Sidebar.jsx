@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
+import { Plus, Settings } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import SettingsPanel from './SettingsPanel'
+import IconAvatar from '../IconAvatar'
 
 export default function Sidebar() {
   const conversations = useChatStore((s) => s.conversations)
@@ -22,7 +24,7 @@ export default function Sidebar() {
       className={`conversation-item ${activeId === conv.id ? 'active' : ''}`}
       onClick={() => setActive(conv.id)}
     >
-      <div className="avatar">{conv.avatar}</div>
+      <div className="avatar"><IconAvatar emoji={conv.avatar} size={20} /></div>
       <div className="info">
         <div className="name">{conv.name}</div>
         <div className="preview">{conv.preview}</div>
@@ -60,9 +62,9 @@ export default function Sidebar() {
             <div
               className={`conversation-item ${activeId === builder.id ? 'active' : ''}`}
               onClick={() => setActive(builder.id)}
-              style={{ borderTop: '1px solid rgba(255,255,255,0.04)', marginTop: 4 }}
+              style={{ borderTop: '1px solid var(--border)', marginTop: 4 }}
             >
-              <div className="avatar" style={{ background: 'rgba(99,102,241,0.15)', borderRadius: 8, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>+</div>
+              <div className="avatar" style={{ background: 'rgba(99,102,241,0.12)' }}><Plus size={18} color="#818cf8" /></div>
               <div className="info">
                 <div className="name" style={{ color: '#a5b4fc' }}>新建 Agent</div>
                 <div className="preview">对话式创建自定义 Agent</div>
@@ -80,9 +82,9 @@ export default function Sidebar() {
         <div
           className="conversation-item"
           onClick={() => setShowSettings(true)}
-          style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+          style={{ marginTop: 'auto', borderTop: '1px solid var(--border)' }}
         >
-          <div className="avatar">⚙️</div>
+          <div className="avatar"><Settings size={20} color="#64748b" /></div>
           <div className="info">
             <div className="name">设置</div>
             <div className="preview">LLM · 质量门 · Prompt</div>

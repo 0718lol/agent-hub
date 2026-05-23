@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { Send, Square } from 'lucide-react'
 
 export default function InputBar({ onSend, isGenerating, onStop }) {
   const [text, setText] = useState('')
@@ -42,7 +43,7 @@ export default function InputBar({ onSend, isGenerating, onStop }) {
             style={{ background: '#ef4444' }}
             title="停止生成"
           >
-            ■
+            <Square size={14} fill="currentColor" />
           </button>
         </div>
       </div>
@@ -61,7 +62,7 @@ export default function InputBar({ onSend, isGenerating, onStop }) {
           rows={1}
         />
         <button className="send-btn" onClick={handleSend} disabled={!text.trim()}>
-          ➤
+          <Send size={17} />
         </button>
       </div>
     </div>

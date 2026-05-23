@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react'
+import { User, Bot } from 'lucide-react'
 import { useAgentStore } from '../../stores/agentStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -7,6 +8,7 @@ import MockupCard from './MockupCard'
 import ClarificationCard from './ClarificationCard'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import { wsClient } from '../../utils/websocket'
+import IconAvatar from '../IconAvatar'
 
 export default function MessageBubble({ message }) {
   const agents = useAgentStore((s) => s.agents)
@@ -15,7 +17,7 @@ export default function MessageBubble({ message }) {
   const allRead = useChatStore((s) => s.allRead)
   const isUser = message.sender === 'user'
   const agent = agents.find((a) => a.agent_id === message.sender)
-  const avatar = isUser ? '👤' : agent?.avatar || '🤖'
+  const avatarEmoji = isUser ? null : agent?.avatar || null
   const text = message.content?.text || ''
   const setPreviewHtml = useCanvasStore((s) => s.setPreviewHtml)
   const setGeneratedCode = useCanvasStore((s) => s.setGeneratedCode)
@@ -157,7 +159,9 @@ export default function MessageBubble({ message }) {
 
   return (
     <div className={`message-row ${isUser ? 'user' : ''}`}>
-      <div className="msg-avatar">{avatar}</div>
+      <div className="msg-avatar">
+        {isUser ? <User size={16} color="#64748b" /> : <IconAvatar emoji={avatarEmoji} size={16} />}
+      </div>
       <div className="message-bubble">
         {renderText(text)}
         {message.streaming && <span className="streaming-cursor" />}

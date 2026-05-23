@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Bot, Target, Ruler, CheckCircle, AlertTriangle } from 'lucide-react'
 
 export default function SettingsPanel({ onClose }) {
   const [tab, setTab] = useState('llm') // 'llm' | 'quality' | 'prompt'
@@ -108,10 +109,16 @@ export default function SettingsPanel({ onClose }) {
     setModel(p.model)
   }
 
+  const tabIcons = {
+    llm: <Bot size={16} />,
+    quality: <Target size={16} />,
+    prompt: <Ruler size={16} />,
+  }
+
   const tabs = [
-    { id: 'llm', label: '🤖 LLM 模型' },
-    { id: 'quality', label: '🎯 质量门' },
-    { id: 'prompt', label: '📐 Prompt 分层' },
+    { id: 'llm', label: 'LLM 模型' },
+    { id: 'quality', label: '质量门' },
+    { id: 'prompt', label: 'Prompt 分层' },
   ]
 
   const labelStyle = {
@@ -175,7 +182,7 @@ export default function SettingsPanel({ onClose }) {
               border: 'none', color: tab === t.id ? 'white' : '#94a3b8',
               cursor: 'pointer', fontWeight: tab === t.id ? 600 : 400,
               transition: 'all 0.2s',
-            }}>{t.label}</button>
+            }}><span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{tabIcons[t.id]}{t.label}</span></button>
           ))}
         </div>
 
@@ -188,7 +195,7 @@ export default function SettingsPanel({ onClose }) {
               border: `1px solid ${configured ? 'rgba(16,185,129,0.2)' : 'rgba(251,191,36,0.2)'}`,
               fontSize: 13, color: configured ? '#10b981' : '#fbbf24',
             }}>
-              {configured ? '✅ 已连接 LLM — Agent 使用真实模型回复' : '⚠️ 未配置 — Agent 使用 Mock 回复'}
+              {configured ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><CheckCircle size={14} color="#10b981" style={{ flexShrink: 0 }} /> 已连接 LLM — Agent 使用真实模型回复</span> : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={14} color="#fbbf24" style={{ flexShrink: 0 }} /> 未配置 — Agent 使用 Mock 回复</span>}
             </div>
 
             {/* Presets */}
@@ -298,7 +305,7 @@ export default function SettingsPanel({ onClose }) {
               </div>
               {bestOfN > 1 && (
                 <div style={{ marginTop: 6, fontSize: 11, color: '#fbbf24' }}>
-                  ⚠️ 将消耗 {bestOfN}x Token，适合高质量关键输出
+                  <AlertTriangle size={12} color="#fbbf24" style={{ verticalAlign: 'middle', marginRight: 2, flexShrink: 0 }} /> 将消耗 {bestOfN}x Token，适合高质量关键输出
                 </div>
               )}
             </div>

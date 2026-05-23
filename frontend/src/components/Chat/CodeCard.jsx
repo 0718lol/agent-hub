@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { Check } from 'lucide-react'
 
 export default function CodeCard({ language, code }) {
   const [copied, setCopied] = useState(false)
@@ -44,7 +45,7 @@ export default function CodeCard({ language, code }) {
             borderRadius: '4px',
           }}
         >
-          {copied ? '已复制 ✓' : '复制'}
+          {copied ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><Check size={12} /> 已复制</span> : '复制'}
         </button>
       </div>
       <pre style={{

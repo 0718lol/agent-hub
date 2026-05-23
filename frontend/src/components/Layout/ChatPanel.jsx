@@ -1,4 +1,5 @@
 import React, { useRef, useEffect } from 'react'
+import { MessageSquare } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -6,6 +7,8 @@ import MessageBubble from '../Chat/MessageBubble'
 import InputBar from '../Chat/InputBar'
 import { wsClient } from '../../utils/websocket'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
+import IconAvatar from '../IconAvatar'
+import ThemeToggle from '../ThemeToggle'
 
 export default function ChatPanel() {
   const activeId = useChatStore((s) => s.activeConversationId)
@@ -161,7 +164,7 @@ export default function ChatPanel() {
             type: 'single',
             agentId: agent.agent_id,
             name: agent.name,
-            avatar: agent.avatar || '🤖',
+            avatar: agent.avatar || null,
             messages: [],
             preview: agent.role || '自定义 Agent',
           })
@@ -250,13 +253,13 @@ export default function ChatPanel() {
     wsClient.send({ type: 'stop', conversation_id: activeId })
   }
 
-  if (!conv) return <div className="chat-panel"><div className="empty-state"><div className="icon">💬</div><div className="text">选择一个会话开始</div></div></div>
+  if (!conv) return <div className="chat-panel"><div className="empty-state"><div className="icon"><MessageSquare size={52} color="var(--text-muted)" opacity={0.4} /></div><div className="text">选择一个会话开始</div></div></div>
 
   return (
     <div className="chat-panel">
       <div className="chat-header">
-        <div className="avatar">{conv.avatar}</div>
-        <div>
+        <div className="avatar"><IconAvatar emoji={conv.avatar} size={20} /></div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div className="title">{conv.name}</div>
           <div className="subtitle">
             {typingAgentIds.length > 0
@@ -267,6 +270,7 @@ export default function ChatPanel() {
             }
           </div>
         </div>
+        <ThemeToggle />
       </div>
 
       <div className="chat-messages" ref={messagesRef}>
@@ -291,7 +295,7 @@ export default function ChatPanel() {
                     position: i === 0 ? 'relative' : 'absolute',
                     left: i > 0 ? `${-8 * i}px` : undefined,
                     fontSize: i > 0 ? '12px' : undefined,
-                  }}>{agent?.avatar || '🤖'}</span>
+                  }}><IconAvatar emoji={agent?.avatar} size={i === 0 ? 16 : 12} /></span>
                 )
               })}
             </div>
@@ -320,7 +324,7 @@ export default function ChatPanel() {
                 padding: '10px 14px', borderRadius: 12,
                 background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)',
               }}>
-                <span style={{ fontSize: 18, flexShrink: 0 }}>{agent?.avatar || '🤖'}</span>
+                <span style={{ fontSize: 18, flexShrink: 0 }}><IconAvatar emoji={agent?.avatar} size={18} /></span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, color: '#6366f1', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span className="thinking-spinner" />

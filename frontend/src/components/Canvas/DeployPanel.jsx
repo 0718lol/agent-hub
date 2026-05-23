@@ -1,4 +1,5 @@
 import React, { useRef, useEffect } from 'react'
+import { Rocket, Cog, Check } from 'lucide-react'
 import { useCanvasStore } from '../../stores/canvasStore'
 import { useChatStore } from '../../stores/chatStore'
 import { PREVIEW_HTML } from './previewHtml'
@@ -53,7 +54,7 @@ export default function DeployPanel() {
         border: '1px solid var(--border)', flexShrink: 0
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 20 }}>🚀</span>
+          <Rocket size={22} color="#f59e0b" />
           <div>
             <div style={{ fontSize: 14, fontWeight: 600 }}>云端部署控制中心</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>提供一键上线及高可靠云原生环境交付</div>
@@ -140,7 +141,7 @@ export default function DeployPanel() {
         }}>
           {deployLogs.length === 0 ? (
             <div style={{ color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8 }}>
-              <span style={{ fontSize: 32, opacity: 0.3 }}>⚙️</span>
+              <Cog size={32} color="var(--text-muted)" opacity={0.3} />
               <span>等待启动部署流程...</span>
             </div>
           ) : (
@@ -207,7 +208,7 @@ export default function DeployPanel() {
                 boxShadow: '0 0 20px rgba(16, 185, 129, 0.3)',
                 animation: 'pulseGlow 2s infinite'
               }}>
-                <span style={{ fontSize: 32, color: '#10b981' }}>✓</span>
+                <Check size={32} color="#10b981" />
               </div>
               <div>
                 <h3 style={{ fontSize: 18, fontWeight: 700, color: '#f8fafc', marginBottom: 4 }}>部署发布成功！</h3>
