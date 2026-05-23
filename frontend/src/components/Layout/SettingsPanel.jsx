@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react'
-import { Bot, Target, Ruler, CheckCircle, AlertTriangle } from 'lucide-react'
+import { Bot, Target, Ruler, CheckCircle, AlertTriangle, Sun, Moon } from 'lucide-react'
+import { useThemeStore } from '../../stores/themeStore'
 
 export default function SettingsPanel({ onClose }) {
   const [tab, setTab] = useState('llm') // 'llm' | 'quality' | 'prompt'
+  const theme = useThemeStore((s) => s.theme)
+  const toggleTheme = useThemeStore((s) => s.toggleTheme)
   const [provider, setProvider] = useState('openai')
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
@@ -171,6 +174,24 @@ export default function SettingsPanel({ onClose }) {
             background: 'none', border: 'none', color: '#64748b',
             fontSize: 20, cursor: 'pointer', padding: '0 4px',
           }}>×</button>
+        </div>
+
+        {/* 主题切换 */}
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '12px 14px', borderRadius: 10, marginBottom: 20,
+          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {theme === 'light' ? <Sun size={16} color="#fbbf24" /> : <Moon size={16} color="#818cf8" />}
+            <div>
+              <div style={{ fontSize: 14, color: '#f8fafc' }}>界面主题</div>
+              <div style={{ fontSize: 12, color: '#64748b' }}>
+                {theme === 'light' ? '浅色模式' : '深色模式'}
+              </div>
+            </div>
+          </div>
+          <ToggleSwitch checked={theme === 'dark'} onChange={() => toggleTheme()} />
         </div>
 
         {/* Tabs */}
