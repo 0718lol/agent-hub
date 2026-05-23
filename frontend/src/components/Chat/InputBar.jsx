@@ -1,22 +1,20 @@
-import React, { useState, useRef, useEffect } from 'react'
-import { Send, Square } from 'lucide-react'
+import React, { useState, useRef } from 'react'
+import { Send, Square, AtSign, Maximize2 } from 'lucide-react'
+import { useAgentStore } from '../../stores/agentStore'
+import AgentSelector from './AgentSelector'
 
-export default function InputBar({ onSend, isGenerating, onStop }) {
+export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
   const [text, setText] = useState('')
+  const [mentionedAgents, setMentionedAgents] = useState([])
+  const [showSelector, setShowSelector] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const textareaRef = useRef(null)
 
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px'
-    }
-  }, [text])
-
   const handleSend = () => {
-    const trimmed = text.trim()
-    if (!trimmed || isGenerating) return
-    onSend(trimmed)
+    if (!text.trim() || isGenerating) return
+    onSend(text.trim(), mentionedAgents)
     setText('')
+    setMentionedAgents([])
   }
 
   const handleKeyDown = (e) => {
@@ -26,23 +24,31 @@ export default function InputBar({ onSend, isGenerating, onStop }) {
     }
   }
 
+  const handleChange = (e) => {
+    const val = e.target.value
+    setText(val)
+    // Detect @ trigger in group mode
+    if (isGroup && val.endsWith('@')) {
+      setShowSelector(true)
+    }
+  }
+
+  const handleToggleAgent = (agentId) => {
+    setMentionedAgents((prev) =>
+      prev.includes(agentId) ? prev.filter((id) => id !== agentId) : [...prev, agentId]
+    )
+  }
+
+  const removeMention = (agentId) => {
+    setMentionedAgents((prev) => prev.filter((id) => id !== agentId))
+  }
+
   if (isGenerating) {
     return (
       <div className="input-bar">
-        <div className="input-wrapper" style={{ borderColor: 'rgba(239,68,68,0.3)' }}>
-          <textarea
-            value=""
-            readOnly
-            placeholder="Agent 正在工作中..."
-            rows={1}
-            style={{ opacity: 0.5, cursor: 'not-allowed' }}
-          />
-          <button
-            className="send-btn"
-            onClick={onStop}
-            style={{ background: '#ef4444' }}
-            title="停止生成"
-          >
+        <div className="input-wrapper" style={{ borderColor: 'var(--red)', opacity: 0.6 }}>
+          <textarea value="" readOnly placeholder="Agent 正在回复..." rows={1} style={{ opacity: 0.5, cursor: 'not-allowed' }} />
+          <button className="stop-btn" onClick={onStop} title="停止生成">
             <Square size={14} fill="currentColor" />
           </button>
         </div>
@@ -53,18 +59,59 @@ export default function InputBar({ onSend, isGenerating, onStop }) {
   return (
     <div className="input-bar">
       <div className="input-wrapper">
+        {isGroup && (
+          <button
+            className="input-btn"
+            onClick={() => setShowSelector(!showSelector)}
+            title="@ 指定 Agent"
+            style={{ color: mentionedAgents.length > 0 ? 'var(--accent)' : undefined }}
+          >
+            <AtSign size={18} />
+          </button>
+        )}
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder="输入消息... (Enter 发送，Shift+Enter 换行)"
-          rows={1}
+          placeholder={isGroup ? '@ 指定 Agent 或输入消息...' : '输入消息...'}
+          rows={expanded ? 4 : 1}
         />
-        <button className="send-btn" onClick={handleSend} disabled={!text.trim()}>
-          <Send size={17} />
-        </button>
+        <div className="input-actions">
+          <button className="input-btn" onClick={() => setExpanded(!expanded)} title={expanded ? '收起' : '展开'}>
+            <Maximize2 size={16} />
+          </button>
+          <button className="send-btn" onClick={handleSend} disabled={!text.trim()}>
+            <Send size={16} />
+          </button>
+        </div>
       </div>
+
+      {/* Mentioned tags */}
+      {mentionedAgents.length > 0 && (
+        <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+          {mentionedAgents.map((id) => {
+            const agent = useAgentStore.getState().agents.find((a) => a.agent_id === id)
+            return (
+              <span key={id} className="at-tag">
+                @{agent?.name || id}
+                <button onClick={() => removeMention(id)}>&times;</button>
+              </span>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Agent Selector for @mention */}
+      {showSelector && (
+        <AgentSelector
+          multiSelect
+          selected={mentionedAgents}
+          onToggle={handleToggleAgent}
+          onClose={() => setShowSelector(false)}
+          onSelect={() => {}}
+        />
+      )}
     </div>
   )
 }
