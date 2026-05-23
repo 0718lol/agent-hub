@@ -1,10 +1,13 @@
 import React, { useRef, useEffect } from 'react'
-import { MessageSquare } from 'lucide-react'
+import { MessageSquare, PanelRightOpen, PanelRightClose } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
 import MessageBubble from '../Chat/MessageBubble'
 import InputBar from '../Chat/InputBar'
+import InlineDAGCard from '../Chat/InlineDAGCard'
+import InlineTaskCard from '../Chat/InlineTaskCard'
+import InlineDeployCard from '../Chat/InlineDeployCard'
 import { wsClient } from '../../utils/websocket'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import IconAvatar from '../IconAvatar'
@@ -24,70 +27,56 @@ export default function ChatPanel() {
   const markRead = useChatStore((s) => s.markRead)
   const typingAgents = useChatStore((s) => s.typingAgents)
   const thinkingAgents = useChatStore((s) => s.thinkingAgents)
+  const pinnedMessages = useChatStore((s) => s.pinnedMessages)
   const messagesRef = useRef(null)
 
-  const conv = conversations.find((c) => c.id === activeId)
+  const slidePanelOpen = useCanvasStore((s) => s.slidePanelOpen)
+  const toggleSlidePanel = useCanvasStore((s) => s.toggleSlidePanel)
   const setGeneratedCode = useCanvasStore((s) => s.setGeneratedCode)
+  const setPreviewHtml = useCanvasStore((s) => s.setPreviewHtml)
   const updateTaskByAgent = useCanvasStore((s) => s.updateTaskByAgent)
+
+  const conv = conversations.find((c) => c.id === activeId)
+  const agents = useAgentStore((s) => s.agents)
   const typingSet = typingAgents[activeId] || new Set()
   const typingAgentIds = [...typingSet]
   const thinkingMap = thinkingAgents[activeId] || {}
   const thinkingEntries = Object.entries(thinkingMap)
   const isGenerating = generatingConvs.has(activeId)
+  const isGroup = conv?.type === 'group'
+  const currentPinned = pinnedMessages[activeId] || []
 
   useEffect(() => {
     loadMessages(activeId)
   }, [activeId])
 
-  // Sync canvas code & preview from active conversation messages on change
+  // Sync canvas code & preview from messages
   useEffect(() => {
     if (!conv?.messages) return
-
-    // Find the latest message that contains a code block or preview tag
-    // We scan from end to start (latest first)
     let foundCode = false
     let foundPreview = false
-
     for (let i = conv.messages.length - 1; i >= 0; i--) {
       const msg = conv.messages[i]
       if (msg.streaming) continue
-
       const text = msg.content?.text || ''
-
-      // 1. Check for preview tag
       const previewMatch = text.match(/\[preview:(\w+)\]/)
       if (previewMatch && PREVIEW_HTML[previewMatch[1]]) {
         const code = PREVIEW_HTML[previewMatch[1]]
-        if (!foundCode) {
-          setGeneratedCode('html', code)
-          foundCode = true
-        }
-        if (!foundPreview) {
-          useCanvasStore.getState().setPreviewHtml(code)
-          foundPreview = true
-        }
+        if (!foundCode) { setGeneratedCode('html', code); foundCode = true }
+        if (!foundPreview) { useCanvasStore.getState().setPreviewHtml(code); foundPreview = true }
       }
-
-      // 2. Check for markdown code blocks
       const codeMatch = text.match(/```(\w*)\n([\s\S]*?)```/)
       if (codeMatch) {
         const lang = codeMatch[1] || 'text'
         const code = codeMatch[2]
-        if (!foundCode) {
-          setGeneratedCode(lang, code)
-          foundCode = true
-        }
-        if (lang === 'html' && !foundPreview) {
-          useCanvasStore.getState().setPreviewHtml(code)
-          foundPreview = true
-        }
+        if (!foundCode) { setGeneratedCode(lang, code); foundCode = true }
+        if (lang === 'html' && !foundPreview) { useCanvasStore.getState().setPreviewHtml(code); foundPreview = true }
       }
-
       if (foundCode && foundPreview) break
     }
   }, [conv?.messages, activeId])
 
-  // Send read receipt when conversation opens
+  // WS connection
   useEffect(() => {
     markRead(activeId)
     wsClient.send({ type: 'read', conversation_id: activeId, sender: 'user' })
@@ -95,252 +84,240 @@ export default function ChatPanel() {
 
   useEffect(() => {
     wsClient.connect(activeId)
-
     const unsub = wsClient.onMessage((data) => {
-      console.log('WS Received message:', data)
       if (data.conversation_id !== activeId) return
-
-      if (data.type === 'typing') {
-        setTyping(activeId, data.agent_id, data.is_typing)
-        return
-      }
-
-      if (data.type === 'thinking') {
-        setThinking(activeId, data.agent_id, data.text)
-        return
-      }
-
+      if (data.type === 'typing') { setTyping(activeId, data.agent_id, data.is_typing); return }
+      if (data.type === 'thinking') { setThinking(activeId, data.agent_id, data.text); return }
       if (data.type === 'code') {
-        const setGeneratedCode = useCanvasStore.getState().setGeneratedCode
-        const setPreviewHtml = useCanvasStore.getState().setPreviewHtml
-        setGeneratedCode(data.language, data.code)
-        if (data.language === 'html') {
-          setPreviewHtml(data.code)
-        }
+        useCanvasStore.getState().setGeneratedCode(data.language, data.code)
+        if (data.language === 'html') useCanvasStore.getState().setPreviewHtml(data.code)
         return
       }
-
-      if (data.type === 'preview') {
-        const setPreviewHtml = useCanvasStore.getState().setPreviewHtml
-        setPreviewHtml(data.html)
-        return
-      }
-
-      if (data.type === 'generating') {
-        setGenerating(activeId, data.is_generating)
-        return
-      }
-
+      if (data.type === 'preview') { useCanvasStore.getState().setPreviewHtml(data.html); return }
+      if (data.type === 'generating') { setGenerating(activeId, data.is_generating); return }
       if (data.type === 'task_status') {
-        const updateTaskByAgent = useCanvasStore.getState().updateTaskByAgent
-        const setNodeStatus = useCanvasStore.getState().setNodeStatus
-        updateTaskByAgent(data.agent_id, data.status)
-        
-        // Map "doing" to "working" for DAG Nodes
-        const nodeStatus = data.status === 'doing' ? 'working' : data.status
-        setNodeStatus(data.agent_id, nodeStatus)
+        useCanvasStore.getState().updateTaskByAgent(data.agent_id, data.status === 'doing' ? 'doing' : data.status)
+        useCanvasStore.getState().setNodeStatus(data.agent_id, data.status === 'doing' ? 'working' : data.status)
         return
       }
-
       if (data.type === 'deploy_status') {
         const { status, log, url } = data
-        const appendDeployLog = useCanvasStore.getState().appendDeployLog
-        const finishDeploy = useCanvasStore.getState().finishDeploy
-        const startDeploy = useCanvasStore.getState().startDeploy
-        
-        if (log) appendDeployLog(log)
-        if (status === 'success' && url) {
-          finishDeploy(url)
-        }
+        if (log) useCanvasStore.getState().appendDeployLog(log)
+        if (status === 'success' && url) useCanvasStore.getState().finishDeploy(url)
+        if (status === 'failed') useCanvasStore.getState().failDeploy()
         return
       }
-
       if (data.type === 'agent_created') {
         const agent = data.agent
         if (agent) {
-          const addConversation = useChatStore.getState().addConversation
-          addConversation({
+          useChatStore.getState().addConversation({
             id: `conv_${agent.agent_id}`,
             type: 'single',
             agentId: agent.agent_id,
             name: agent.name,
-            avatar: agent.avatar || null,
+            avatar: null,
             messages: [],
-            preview: agent.role || '自定义 Agent',
+            pinned: false,
+            unread: false,
+            updatedAt: Date.now(),
           })
         }
         return
       }
-
       if (data.type === 'agent_deleted') {
-        const removeConversation = useChatStore.getState().removeConversation
-        removeConversation(`conv_${data.agent_id}`)
+        useChatStore.getState().removeConversation(`conv_${data.agent_id}`)
         return
       }
-
-      if (data.type === 'read') {
-        markRead(activeId)
-        return
-      }
-
+      if (data.type === 'read') { markRead(activeId); return }
       if (data.type === 'message') {
-        const isStreaming = data.stream
-
-        if (isStreaming) {
+        if (data.stream) {
           const convNow = useChatStore.getState().conversations.find((c) => c.id === activeId)
-          const msgs = convNow?.messages || []
-          const hasStreaming = msgs.some((m) => m.sender === data.sender && m.streaming)
-
-          if (hasStreaming) {
-            updateLastAgentMessage(activeId, data.sender, data.content.text, true)
-          } else {
-            addMessage(activeId, {
-              sender: data.sender,
-              content: data.content,
-              streaming: true,
-            })
-          }
+          const hasStreaming = convNow?.messages?.some((m) => m.sender === data.sender && m.streaming)
+          if (hasStreaming) { updateLastAgentMessage(activeId, data.sender, data.content.text, true) }
+          else { addMessage(activeId, { sender: data.sender, content: data.content, streaming: true }) }
           setAgentStatus(data.sender, 'working')
         } else {
           const convNow = useChatStore.getState().conversations.find((c) => c.id === activeId)
-          const msgs = convNow?.messages || []
-          const hasStreaming = msgs.some((m) => m.sender === data.sender && m.streaming)
-
-          if (hasStreaming) {
-            updateLastAgentMessage(activeId, data.sender, data.content.text, false)
-          } else {
-            addMessage(activeId, {
-              sender: data.sender,
-              content: data.content,
-              streaming: false,
-            })
-          }
+          const hasStreaming = convNow?.messages?.some((m) => m.sender === data.sender && m.streaming)
+          if (hasStreaming) { updateLastAgentMessage(activeId, data.sender, data.content.text, false) }
+          else { addMessage(activeId, { sender: data.sender, content: data.content, streaming: false }) }
           setAgentStatus(data.sender, 'done')
           setTimeout(() => setAgentStatus(data.sender, 'idle'), 2000)
         }
       }
     })
-
-    return () => {
-      unsub()
-      wsClient.disconnect()
-    }
+    return () => { unsub(); wsClient.disconnect() }
   }, [activeId])
 
+  // Auto scroll
   useEffect(() => {
     if (messagesRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight
     }
   }, [conv?.messages])
 
-  const handleSend = (text) => {
-    addMessage(activeId, {
-      sender: 'user',
-      content: { text },
-      streaming: false,
-    })
-
-    const targetAgent = conv?.type === 'single' ? conv.agentId : undefined
+  const handleSend = (text, mentionedAgents) => {
+    addMessage(activeId, { sender: 'user', content: { text }, streaming: false })
+    const targetAgent = !isGroup ? conv?.agentId : undefined
     wsClient.send({
       type: 'message',
       conversation_id: activeId,
       sender: 'user',
-      content: { text, target_agent: targetAgent },
+      content: { text, target_agent: targetAgent, mentioned_agents: mentionedAgents },
     })
   }
 
-  const handleStop = () => {
-    wsClient.send({ type: 'stop', conversation_id: activeId })
-  }
+  const handleStop = () => { wsClient.send({ type: 'stop', conversation_id: activeId }) }
 
-  if (!conv) return <div className="chat-panel"><div className="empty-state"><div className="icon"><MessageSquare size={52} color="var(--text-muted)" opacity={0.4} /></div><div className="text">选择一个会话开始</div></div></div>
+  // Active typing agent for group indicator
+  const activeTypingAgent = typingAgentIds.length > 0
+    ? agents.find((a) => a.agent_id === typingAgentIds[0])
+    : null
+
+  if (!conv) return (
+    <div className="chat-panel">
+      <div className="empty-state">
+        <div className="icon"><MessageSquare size={40} /></div>
+        <div className="text">选择或新建一个会话</div>
+      </div>
+    </div>
+  )
 
   return (
     <div className="chat-panel">
-      <div className="chat-header">
-        <div className="avatar"><IconAvatar agentId={conv.type === 'group' ? 'group' : conv.agentId} size={20} /></div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="title">{conv.name}</div>
-          <div className="subtitle">
-            {typingAgentIds.length > 0
-              ? typingAgentIds.length === 1
-                ? `${useAgentStore.getState().agents.find(a => a.agent_id === typingAgentIds[0])?.name || typingAgentIds[0]} 正在输入...`
-                : `${typingAgentIds.length}人正在输入...`
-              : conv.type === 'group' ? `${conv.agents?.length || 0} 个 Agent` : ''
-            }
-          </div>
-        </div>
-        <ThemeToggle />
-      </div>
-
-      <div className="chat-messages" ref={messagesRef}>
-        {conv.messages.length === 0 && (
-          <div className="empty-state">
-            <div className="icon"><IconAvatar agentId={conv.type === 'group' ? 'group' : conv.agentId} size={36} /></div>
-            <div className="text">发送消息开始对话</div>
-          </div>
-        )}
-        {conv.messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
-
-        {/* Typing indicator bubble */}
-        {typingAgentIds.length > 0 && (
-          <div className="message-row">
-            <div className="msg-avatar" style={{ position: 'relative' }}>
-              {typingAgentIds.slice(0, 3).map((id, i) => {
-                const agent = useAgentStore.getState().agents.find(a => a.agent_id === id)
-                return (
-                  <span key={id} style={{
-                    position: i === 0 ? 'relative' : 'absolute',
-                    left: i > 0 ? `${-8 * i}px` : undefined,
-                    fontSize: i > 0 ? '12px' : undefined,
-                  }}><IconAvatar agentId={id} size={i === 0 ? 16 : 12} /></span>
-                )
-              })}
-            </div>
-            <div className="message-bubble typing-bubble">
-              <span className="typing-dot" />
-              <span className="typing-dot" />
-              <span className="typing-dot" />
-              {typingAgentIds.length > 1 && (
-                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>
-                  {typingAgentIds.length}人
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Thinking bubbles */}
-      {thinkingEntries.length > 0 && (
-        <div style={{ padding: '8px 24px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {thinkingEntries.map(([agentId, text]) => {
-            const agent = useAgentStore.getState().agents.find(a => a.agent_id === agentId)
-            return (
-              <div key={agentId} style={{
-                display: 'flex', alignItems: 'flex-start', gap: 10,
-                padding: '10px 14px', borderRadius: 12,
-                background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)',
-              }}>
-                <span style={{ fontSize: 18, flexShrink: 0 }}><IconAvatar agentId={agentId} size={18} /></span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: '#6366f1', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="thinking-spinner" />
-                    {agent?.name || agentId} 正在思考...
+      <div className="chat-panel-inner">
+        {/* Header */}
+        <div className="chat-header">
+          {isGroup ? (
+            <>
+              <div className="group-avatar-stack">
+                {(conv.agents || []).slice(0, 4).map((agentId) => (
+                  <div key={agentId} className="mini-avatar">
+                    <IconAvatar agentId={agentId} size={10} />
                   </div>
-                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-word' }}>
-                    {text}
-                  </div>
+                ))}
+              </div>
+              <div className="chat-header-info">
+                <div className="chat-header-name">{conv.name}</div>
+                <div className="chat-header-desc">
+                  {conv.agents?.length || 0} 人
+                  {activeTypingAgent && (
+                    <span style={{ color: 'var(--accent)', marginLeft: 8 }}>
+                      · {activeTypingAgent.name} 正在回复...
+                    </span>
+                  )}
                 </div>
               </div>
-            )
-          })}
+            </>
+          ) : (
+            <>
+              <div className="chat-header-avatar">
+                <IconAvatar agentId={conv.agentId} size={20} />
+              </div>
+              <div className="chat-header-info">
+                <div className="chat-header-name">{conv.name}</div>
+                <div className="chat-header-desc">
+                  {agents.find((a) => a.agent_id === conv.agentId)?.role || ''}
+                </div>
+              </div>
+              <span className={`online-dot ${agents.find((a) => a.agent_id === conv.agentId)?.status === 'working' ? 'busy' : 'online'}`} />
+            </>
+          )}
+          <div className="chat-header-actions">
+            {typingAgentIds.length > 0 && !activeTypingAgent && (
+              <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
+            )}
+            <ThemeToggle />
+            <button
+              className="input-btn"
+              onClick={toggleSlidePanel}
+              title={slidePanelOpen ? '关闭面板' : '打开面板'}
+              style={{ color: slidePanelOpen ? 'var(--accent)' : undefined }}
+            >
+              {slidePanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+            </button>
+          </div>
         </div>
-      )}
 
-      <InputBar onSend={handleSend} isGenerating={isGenerating} onStop={handleStop} />
+        {/* Messages */}
+        <div className="chat-messages" ref={messagesRef}>
+          {conv.messages.length === 0 && (
+            <div className="empty-state">
+              <div className="text">发送消息开始对话</div>
+            </div>
+          )}
+          {conv.messages.map((msg) => (
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              isPinned={currentPinned.includes(msg.id)}
+            />
+          ))}
+
+          {/* Typing indicator */}
+          {typingAgentIds.length > 0 && (
+            <div className="message-row">
+              <div className="msg-avatar">
+                {typingAgentIds.length === 1
+                  ? <IconAvatar agentId={typingAgentIds[0]} size={16} />
+                  : <IconAvatar iconKey="group" size={16} />
+                }
+              </div>
+              <div className="message-content">
+                <div className="typing-dots">
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Thinking bubbles */}
+        {thinkingEntries.length > 0 && (
+          <div style={{ padding: '4px var(--space-5) 0', display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+            {thinkingEntries.map(([agentId, text]) => {
+              const agent = agents.find(a => a.agent_id === agentId)
+              return (
+                <div key={agentId} style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 8,
+                  padding: '8px 12px', borderRadius: 'var(--radius-md)',
+                  background: 'var(--accent-bg)', border: '1px solid var(--border)',
+                  fontSize: 'var(--text-xs)',
+                }}>
+                  <IconAvatar agentId={agentId} size={18} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 500, color: 'var(--accent)', marginBottom: 2 }}>
+                      {agent?.name || agentId} 正在思考...
+                    </div>
+                    <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-word' }}>
+                      {text}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Inline cards: DAG + Tasks + Deploy */}
+        {conv.messages.length > 0 && (
+          <div style={{ padding: '0 var(--space-5) var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', flexShrink: 0 }}>
+            <InlineDAGCard />
+            <InlineTaskCard />
+            <InlineDeployCard />
+          </div>
+        )}
+
+        {/* Input */}
+        <InputBar
+          onSend={handleSend}
+          isGenerating={isGenerating}
+          onStop={handleStop}
+          isGroup={isGroup}
+        />
+      </div>
     </div>
   )
 }
