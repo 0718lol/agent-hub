@@ -258,7 +258,7 @@ export default function ChatPanel() {
   return (
     <div className="chat-panel">
       <div className="chat-header">
-        <div className="avatar"><IconAvatar emoji={conv.avatar} size={20} /></div>
+        <div className="avatar"><IconAvatar agentId={conv.type === 'group' ? 'group' : conv.agentId} size={20} /></div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="title">{conv.name}</div>
           <div className="subtitle">
@@ -276,7 +276,7 @@ export default function ChatPanel() {
       <div className="chat-messages" ref={messagesRef}>
         {conv.messages.length === 0 && (
           <div className="empty-state">
-            <div className="icon">{conv.avatar}</div>
+            <div className="icon"><IconAvatar agentId={conv.type === 'group' ? 'group' : conv.agentId} size={36} /></div>
             <div className="text">发送消息开始对话</div>
           </div>
         )}
@@ -295,7 +295,7 @@ export default function ChatPanel() {
                     position: i === 0 ? 'relative' : 'absolute',
                     left: i > 0 ? `${-8 * i}px` : undefined,
                     fontSize: i > 0 ? '12px' : undefined,
-                  }}><IconAvatar emoji={agent?.avatar} size={i === 0 ? 16 : 12} /></span>
+                  }}><IconAvatar agentId={id} size={i === 0 ? 16 : 12} /></span>
                 )
               })}
             </div>
@@ -324,7 +324,7 @@ export default function ChatPanel() {
                 padding: '10px 14px', borderRadius: 12,
                 background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)',
               }}>
-                <span style={{ fontSize: 18, flexShrink: 0 }}><IconAvatar emoji={agent?.avatar} size={18} /></span>
+                <span style={{ fontSize: 18, flexShrink: 0 }}><IconAvatar agentId={agentId} size={18} /></span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, color: '#6366f1', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span className="thinking-spinner" />

@@ -1,23 +1,24 @@
 import React from 'react'
-import { getIconForEmoji } from '../utils/iconMap'
+import { getIconForAgent } from '../utils/iconMap'
+import { Bot } from 'lucide-react'
 
 /**
- * Renders a Lucide SVG icon from an emoji string.
- * Falls back to rendering the emoji as text if no match found.
+ * Agent 头像组件 — 纯 Lucide 线性图标渲染。
+ * @param {{ agentId?: string, iconKey?: string, size?: number, className?: string, style?: object }} props
  */
-export default function IconAvatar({ emoji, size = 20, className = '', style = {} }) {
-  if (!emoji) return null
-  const mapped = getIconForEmoji(emoji)
-  if (!mapped) return <span style={style}>{emoji}</span>
+export default function IconAvatar({ agentId, iconKey, size = 20, className = '', style = {} }) {
+  const { icon: IconComponent, color } =
+    agentId ? getIconForAgent(agentId) :
+    iconKey ? getIconForAgent(iconKey) :
+    { icon: Bot, color: '#6366f1' }
 
-  const { icon: IconComponent, color } = mapped
   return (
     <IconComponent
       size={size}
       color={color}
       className={className}
       style={{ flexShrink: 0, ...style }}
-      strokeWidth={2}
+      strokeWidth={1.8}
     />
   )
 }

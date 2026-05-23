@@ -24,7 +24,7 @@ export default function Sidebar() {
       className={`conversation-item ${activeId === conv.id ? 'active' : ''}`}
       onClick={() => setActive(conv.id)}
     >
-      <div className="avatar"><IconAvatar emoji={conv.avatar} size={20} /></div>
+      <div className="avatar"><IconAvatar agentId={conv.type === 'group' ? 'group' : conv.agentId} size={20} /></div>
       <div className="info">
         <div className="name">{conv.name}</div>
         <div className="preview">{conv.preview}</div>
