@@ -187,68 +187,68 @@ export default function ChatPanel({ onToggleSidebar }) {
 
   return (
     <div className="chat-panel">
-      <div className="chat-panel-inner">
-        {/* Header */}
-        <div className="chat-header">
-          <div className="chat-header-left">
-            <button className="hamburger-btn" onClick={onToggleSidebar} title="菜单">
-              <Menu size={18} />
-            </button>
-            {isGroup ? (
-              <>
-                <div className="group-avatar-stack">
-                  {(conv.agents || []).slice(0, 4).map((agentId) => (
-                    <div key={agentId} className="mini-avatar">
-                      <IconAvatar agentId={agentId} size={10} />
-                    </div>
-                  ))}
-                </div>
-                <div className="chat-header-info">
-                  <div className="chat-header-name">{conv.name}</div>
-                  <div className="chat-header-desc">
-                    {conv.agents?.length || 0} 人
-                    {activeTypingAgent && (
-                      <span style={{ color: 'var(--accent)', marginLeft: 8 }}>
-                        · {activeTypingAgent.name} 正在回复...
-                      </span>
-                    )}
+      {/* Header — 通栏，不受居中宽度限制 */}
+      <div className="chat-header">
+        <div className="chat-header-left">
+          <button className="hamburger-btn" onClick={onToggleSidebar} title="菜单">
+            <Menu size={18} />
+          </button>
+          {isGroup ? (
+            <>
+              <div className="group-avatar-stack">
+                {(conv.agents || []).slice(0, 4).map((agentId) => (
+                  <div key={agentId} className="mini-avatar">
+                    <IconAvatar agentId={agentId} size={10} />
                   </div>
+                ))}
+              </div>
+              <div className="chat-header-info">
+                <div className="chat-header-name">{conv.name}</div>
+                <div className="chat-header-desc">
+                  {conv.agents?.length || 0} 人
+                  {activeTypingAgent && (
+                    <span style={{ color: 'var(--accent)', marginLeft: 8 }}>
+                      · {activeTypingAgent.name} 正在回复...
+                    </span>
+                  )}
                 </div>
-              </>
-            ) : (
-              <>
-                <div className="chat-header-avatar">
-                  <IconAvatar agentId={conv.agentId} size={20} />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="chat-header-avatar">
+                <IconAvatar agentId={conv.agentId} size={20} />
+              </div>
+              <div className="chat-header-info">
+                <div className="chat-header-name">{conv.name}</div>
+                <div className="chat-header-desc">
+                  {agents.find((a) => a.agent_id === conv.agentId)?.role || ''}
                 </div>
-                <div className="chat-header-info">
-                  <div className="chat-header-name">{conv.name}</div>
-                  <div className="chat-header-desc">
-                    {agents.find((a) => a.agent_id === conv.agentId)?.role || ''}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-          <div className="chat-header-spacer" />
-          <div className="chat-header-right">
-            {typingAgentIds.length > 0 && !activeTypingAgent && (
-              <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
-            )}
-            <button className="header-icon-btn" onClick={() => setTaskPopup(!taskPopup)}>
-              <LayoutList size={20} />
-              <span className="icon-tooltip">任务看板</span>
-            </button>
-            <button className="header-icon-btn" onClick={() => setDagPopup(!dagPopup)}>
-              <GitBranch size={20} />
-              <span className="icon-tooltip">协作图</span>
-            </button>
-            <button className="header-icon-btn" onClick={toggleSlidePanel} style={slidePanelOpen ? { color: 'var(--accent)' } : undefined}>
-              <Code2 size={20} />
-              <span className="icon-tooltip">代码/文档预览</span>
-            </button>
-          </div>
+              </div>
+            </>
+          )}
         </div>
+        <div className="chat-header-spacer" />
+        <div className="chat-header-right">
+          {typingAgentIds.length > 0 && !activeTypingAgent && (
+            <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
+          )}
+          <button className="header-icon-btn" onClick={() => setTaskPopup(!taskPopup)}>
+            <LayoutList size={20} />
+            <span className="icon-tooltip">任务看板</span>
+          </button>
+          <button className="header-icon-btn" onClick={() => setDagPopup(!dagPopup)}>
+            <GitBranch size={20} />
+            <span className="icon-tooltip">协作图</span>
+          </button>
+          <button className="header-icon-btn" onClick={toggleSlidePanel} style={slidePanelOpen ? { color: 'var(--accent)' } : undefined}>
+            <Code2 size={20} />
+            <span className="icon-tooltip">代码/文档预览</span>
+          </button>
+        </div>
+      </div>
 
+      <div className="chat-panel-inner">
         {/* Messages */}
         <div className="chat-messages" ref={messagesRef}>
           {conv.messages.length === 0 && (
