@@ -190,44 +190,47 @@ export default function ChatPanel({ onToggleSidebar }) {
       <div className="chat-panel-inner">
         {/* Header */}
         <div className="chat-header">
-          <button className="hamburger-btn" onClick={onToggleSidebar} title="菜单">
-            <Menu size={18} />
-          </button>
-          {isGroup ? (
-            <>
-              <div className="group-avatar-stack">
-                {(conv.agents || []).slice(0, 4).map((agentId) => (
-                  <div key={agentId} className="mini-avatar">
-                    <IconAvatar agentId={agentId} size={10} />
+          <div className="chat-header-left">
+            <button className="hamburger-btn" onClick={onToggleSidebar} title="菜单">
+              <Menu size={18} />
+            </button>
+            {isGroup ? (
+              <>
+                <div className="group-avatar-stack">
+                  {(conv.agents || []).slice(0, 4).map((agentId) => (
+                    <div key={agentId} className="mini-avatar">
+                      <IconAvatar agentId={agentId} size={10} />
+                    </div>
+                  ))}
+                </div>
+                <div className="chat-header-info">
+                  <div className="chat-header-name">{conv.name}</div>
+                  <div className="chat-header-desc">
+                    {conv.agents?.length || 0} 人
+                    {activeTypingAgent && (
+                      <span style={{ color: 'var(--accent)', marginLeft: 8 }}>
+                        · {activeTypingAgent.name} 正在回复...
+                      </span>
+                    )}
                   </div>
-                ))}
-              </div>
-              <div className="chat-header-info">
-                <div className="chat-header-name">{conv.name}</div>
-                <div className="chat-header-desc">
-                  {conv.agents?.length || 0} 人
-                  {activeTypingAgent && (
-                    <span style={{ color: 'var(--accent)', marginLeft: 8 }}>
-                      · {activeTypingAgent.name} 正在回复...
-                    </span>
-                  )}
                 </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="chat-header-avatar">
-                <IconAvatar agentId={conv.agentId} size={20} />
-              </div>
-              <div className="chat-header-info">
-                <div className="chat-header-name">{conv.name}</div>
-                <div className="chat-header-desc">
-                  {agents.find((a) => a.agent_id === conv.agentId)?.role || ''}
+              </>
+            ) : (
+              <>
+                <div className="chat-header-avatar">
+                  <IconAvatar agentId={conv.agentId} size={20} />
                 </div>
-              </div>
-            </>
-          )}
-          <div className="chat-header-actions">
+                <div className="chat-header-info">
+                  <div className="chat-header-name">{conv.name}</div>
+                  <div className="chat-header-desc">
+                    {agents.find((a) => a.agent_id === conv.agentId)?.role || ''}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="chat-header-spacer" />
+          <div className="chat-header-right">
             {typingAgentIds.length > 0 && !activeTypingAgent && (
               <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
             )}
