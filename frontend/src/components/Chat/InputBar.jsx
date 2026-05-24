@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react'
-import { Send, Square, AtSign, Maximize2 } from 'lucide-react'
+import React, { useState, useRef, useEffect } from 'react'
+import { Send, Square, AtSign } from 'lucide-react'
 import { useAgentStore } from '../../stores/agentStore'
 import AgentSelector from './AgentSelector'
 
@@ -7,8 +7,16 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
   const [text, setText] = useState('')
   const [mentionedAgents, setMentionedAgents] = useState([])
   const [showSelector, setShowSelector] = useState(false)
-  const [expanded, setExpanded] = useState(false)
   const textareaRef = useRef(null)
+
+  // Auto-resize textarea: grow with content, cap at 120px then scroll
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+    el.style.overflowY = el.scrollHeight > 120 ? 'auto' : 'hidden'
+  }, [text])
 
   const handleSend = () => {
     if (!text.trim() || isGenerating) return
@@ -27,7 +35,6 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
   const handleChange = (e) => {
     const val = e.target.value
     setText(val)
-    // Detect @ trigger in group mode
     if (isGroup && val.endsWith('@')) {
       setShowSelector(true)
     }
@@ -75,16 +82,11 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           placeholder={isGroup ? '@ 指定 Agent 或输入消息...' : '输入消息...'}
-          rows={expanded ? 4 : 1}
+          rows={1}
         />
-        <div className="input-actions">
-          <button className="input-btn" onClick={() => setExpanded(!expanded)} title={expanded ? '收起' : '展开'}>
-            <Maximize2 size={16} />
-          </button>
-          <button className="send-btn" onClick={handleSend} disabled={!text.trim()}>
-            <Send size={16} />
-          </button>
-        </div>
+        <button className="send-btn" onClick={handleSend} disabled={!text.trim()}>
+          <Send size={16} />
+        </button>
       </div>
 
       {/* Mentioned tags */}
@@ -102,7 +104,6 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
         </div>
       )}
 
-      {/* Agent Selector for @mention */}
       {showSelector && (
         <AgentSelector
           multiSelect

@@ -683,16 +683,17 @@ body {
 /* ================================================================
    INPUT BAR
    ================================================================ */
-.input-bar { padding: var(--space-4) var(--space-5); flex-shrink: 0; }
+.input-bar { padding: var(--space-3) var(--space-5); flex-shrink: 0; }
 
 .input-wrapper {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: var(--space-2);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  min-height: 40px;
   transition: border-color var(--duration-fast) var(--ease-in-out);
 }
 
@@ -707,9 +708,10 @@ body {
   font-size: var(--text-sm);
   font-family: var(--font-ui);
   resize: none;
-  min-height: 22px;
-  max-height: 100px;
-  line-height: var(--leading-normal);
+  min-height: 24px;
+  line-height: 1.5;
+  padding: var(--space-1) 0;
+  align-self: center;
 }
 
 .input-wrapper textarea::placeholder { color: var(--text-muted); }
@@ -740,8 +742,6 @@ body {
 
 .at-tag button:hover { opacity: 0.7; }
 
-.input-actions { display: flex; align-items: center; gap: var(--space-1); flex-shrink: 0; }
-
 .input-btn {
   width: 32px;
   height: 32px;
@@ -754,6 +754,7 @@ body {
   align-items: center;
   justify-content: center;
   transition: all var(--duration-fast) var(--ease-in-out);
+  flex-shrink: 0;
 }
 
 .input-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
@@ -771,6 +772,7 @@ body {
   justify-content: center;
   transition: all var(--duration-fast) var(--ease-in-out);
   flex-shrink: 0;
+  align-self: center;
 }
 
 .send-btn:hover:not(:disabled) { filter: brightness(1.1); }
