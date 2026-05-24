@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Square, AtSign } from 'lucide-react'
+import { Send, Square, AtSign, Plus } from 'lucide-react'
 import { useAgentStore } from '../../stores/agentStore'
 import AgentSelector from './AgentSelector'
 
@@ -9,7 +9,6 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
   const [showSelector, setShowSelector] = useState(false)
   const textareaRef = useRef(null)
 
-  // Auto-resize textarea: grow with content, cap at 120px then scroll
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
@@ -54,7 +53,7 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
     return (
       <div className="input-bar">
         <div className="input-wrapper" style={{ borderColor: 'var(--red)', opacity: 0.6 }}>
-          <textarea value="" readOnly placeholder="Agent 正在回复..." rows={1} style={{ opacity: 0.5, cursor: 'not-allowed' }} />
+          <textarea value="" readOnly placeholder="Agent 正在回复..." rows={1} style={{ opacity: 0.5, cursor: 'not-allowed', minHeight: 48 }} />
           <button className="stop-btn" onClick={onStop} title="停止生成">
             <Square size={14} fill="currentColor" />
           </button>
@@ -86,6 +85,13 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
         />
         <button className="send-btn" onClick={handleSend} disabled={!text.trim()}>
           <Send size={16} />
+        </button>
+      </div>
+
+      {/* Bottom toolbar */}
+      <div className="input-toolbar">
+        <button className="input-toolbar-btn" title="上传文件（即将支持）">
+          <Plus size={18} />
         </button>
       </div>
 
