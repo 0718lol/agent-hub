@@ -356,6 +356,104 @@ body {
   border: 1px solid var(--border);
 }
 
+/* Header icon buttons (Coze-style top-right icons) */
+.header-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  color: #6B7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: color var(--duration-fast) var(--ease-in-out),
+              background var(--duration-fast) var(--ease-in-out);
+}
+
+.header-icon-btn:hover {
+  color: #1D2129;
+  background: var(--bg-secondary);
+}
+
+/* Tooltip bubble */
+.icon-tooltip {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(6px);
+  background: #1D2129;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 6px 10px;
+  border-radius: 6px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-in-out);
+  z-index: var(--z-tooltip);
+}
+
+/* Tooltip arrow */
+.icon-tooltip::before {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-bottom-color: #1D2129;
+}
+
+.header-icon-btn:hover .icon-tooltip {
+  opacity: 1;
+}
+
+/* Feature popup (DAG / Task Board floating window) */
+.feature-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+}
+
+.feature-popup {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 480px;
+  max-height: 420px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  animation: scaleUp 0.2s var(--ease-out);
+}
+
+.feature-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.feature-popup-body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-4);
+}
+
 .online-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .online-dot.online { background: var(--green); }
 .online-dot.busy { background: var(--orange); animation: dotPulse 1.5s infinite; }

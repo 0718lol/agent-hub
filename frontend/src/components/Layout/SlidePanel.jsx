@@ -29,13 +29,13 @@ export default function SlidePanel() {
               className={`slide-panel-tab ${tab === 'code' ? 'active' : ''}`}
               onClick={() => setTab('code')}
             >
-              代码
+              代码预览
             </button>
             <button
               className={`slide-panel-tab ${tab === 'preview' ? 'active' : ''}`}
               onClick={() => setTab('preview')}
             >
-              预览
+              文档预览
             </button>
           </div>
           <div className="slide-panel-actions">

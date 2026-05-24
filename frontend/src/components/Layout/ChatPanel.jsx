@@ -1,17 +1,16 @@
-import React, { useRef, useEffect } from 'react'
-import { MessageSquare, PanelRightOpen, PanelRightClose, Menu } from 'lucide-react'
+import React, { useRef, useEffect, useState } from 'react'
+import { MessageSquare, Code2, GitBranch, LayoutList, Menu, X } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
 import MessageBubble from '../Chat/MessageBubble'
 import InputBar from '../Chat/InputBar'
-import InlineDAGCard from '../Chat/InlineDAGCard'
-import InlineTaskCard from '../Chat/InlineTaskCard'
 import InlineDeployCard from '../Chat/InlineDeployCard'
+import AgentDAG from '../Canvas/AgentDAG'
+import TaskBoard from '../Canvas/TaskBoard'
 import { wsClient } from '../../utils/websocket'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import IconAvatar from '../IconAvatar'
-import ThemeToggle from '../ThemeToggle'
 
 export default function ChatPanel({ onToggleSidebar }) {
   const activeId = useChatStore((s) => s.activeConversationId)
@@ -45,6 +44,9 @@ export default function ChatPanel({ onToggleSidebar }) {
   const isGenerating = generatingConvs.has(activeId)
   const isGroup = conv?.type === 'group'
   const currentPinned = pinnedMessages[activeId] || []
+
+  const [dagPopup, setDagPopup] = useState(false)
+  const [taskPopup, setTaskPopup] = useState(false)
 
   useEffect(() => {
     loadMessages(activeId)
@@ -230,14 +232,17 @@ export default function ChatPanel({ onToggleSidebar }) {
             {typingAgentIds.length > 0 && !activeTypingAgent && (
               <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
             )}
-            <ThemeToggle />
-            <button
-              className="input-btn"
-              onClick={toggleSlidePanel}
-              title={slidePanelOpen ? '关闭面板' : '打开面板'}
-              style={{ color: slidePanelOpen ? 'var(--accent)' : undefined }}
-            >
-              {slidePanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+            <button className="header-icon-btn" onClick={() => setTaskPopup(!taskPopup)}>
+              <LayoutList size={20} />
+              <span className="icon-tooltip">任务看板</span>
+            </button>
+            <button className="header-icon-btn" onClick={() => setDagPopup(!dagPopup)}>
+              <GitBranch size={20} />
+              <span className="icon-tooltip">协作图</span>
+            </button>
+            <button className="header-icon-btn" onClick={toggleSlidePanel} style={slidePanelOpen ? { color: 'var(--accent)' } : undefined}>
+              <Code2 size={20} />
+              <span className="icon-tooltip">代码/文档预览</span>
             </button>
           </div>
         </div>
@@ -304,13 +309,43 @@ export default function ChatPanel({ onToggleSidebar }) {
           </div>
         )}
 
-        {/* Inline cards: DAG + Tasks + Deploy */}
-        {conv.messages.length > 0 && (
-          <div style={{ padding: '0 var(--space-5) var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', flexShrink: 0 }}>
-            <InlineDAGCard />
-            <InlineTaskCard />
-            <InlineDeployCard />
-          </div>
+        {/* Deploy inline card */}
+        {conv.messages.length > 0 && <InlineDeployCard />}
+
+        {/* DAG popup */}
+        {dagPopup && (
+          <>
+            <div className="feature-popup-backdrop" onClick={() => setDagPopup(false)} />
+            <div className="feature-popup">
+              <div className="feature-popup-header">
+                <span>协作图</span>
+                <button className="slide-panel-btn" onClick={() => setDagPopup(false)}>
+                  <X />
+                </button>
+              </div>
+              <div className="feature-popup-body">
+                <AgentDAG compact />
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Task popup */}
+        {taskPopup && (
+          <>
+            <div className="feature-popup-backdrop" onClick={() => setTaskPopup(false)} />
+            <div className="feature-popup">
+              <div className="feature-popup-header">
+                <span>任务看板</span>
+                <button className="slide-panel-btn" onClick={() => setTaskPopup(false)}>
+                  <X />
+                </button>
+              </div>
+              <div className="feature-popup-body">
+                <TaskBoard compact />
+              </div>
+            </div>
+          </>
         )}
 
         {/* Input */}
