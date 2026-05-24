@@ -681,25 +681,26 @@ body {
 .inline-card-header .icon { display: flex; align-items: center; color: var(--accent); }
 
 /* ================================================================
-   INPUT BAR
+   INPUT BAR — Coze-style
    ================================================================ */
 .input-bar { padding: var(--space-3) var(--space-5); flex-shrink: 0; }
 
-.input-wrapper {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  background: var(--bg-secondary);
+.coze-input {
+  background: var(--bg-primary);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-2) var(--space-3);
-  transition: border-color var(--duration-fast) var(--ease-in-out);
+  border-radius: var(--radius-xl);
+  transition: border-color var(--duration-normal) var(--ease-in-out);
+  overflow: hidden;
 }
 
-.input-wrapper:focus-within { border-color: var(--accent); }
+.coze-input:focus-within {
+  border-color: #BCCCF7;
+  box-shadow: 0 0 0 3px rgba(22, 93, 255, 0.06);
+}
 
-.input-wrapper textarea {
-  flex: 1;
+.coze-input textarea {
+  display: block;
+  width: 100%;
   background: none;
   border: none;
   outline: none;
@@ -707,28 +708,36 @@ body {
   font-size: var(--text-sm);
   font-family: var(--font-ui);
   resize: none;
-  min-height: 48px;
+  min-height: 24px;
   line-height: 1.5;
-  padding: var(--space-1) 0;
-  align-self: center;
+  padding: var(--space-3) var(--space-4) 0;
 }
 
-.input-wrapper textarea::placeholder { color: var(--text-muted); }
+.coze-input textarea::placeholder {
+  color: var(--text-muted);
+}
 
-/* Bottom toolbar below input */
-.input-toolbar {
+/* Bottom toolbar */
+.coze-input-toolbar {
   display: flex;
   align-items: center;
-  padding: var(--space-1) 0 0;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-2);
 }
 
-.input-toolbar-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
+.coze-input-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.coze-toolbar-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -736,11 +745,63 @@ body {
   transition: all var(--duration-fast) var(--ease-in-out);
 }
 
-.input-toolbar-btn:hover {
-  background: var(--bg-tertiary);
+.coze-toolbar-btn:hover {
+  background: var(--bg-secondary);
   color: var(--text-primary);
 }
 
+.coze-input-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 var(--space-1);
+}
+
+/* Send / Mic button */
+.coze-send-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--duration-fast) var(--ease-in-out);
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.coze-send-btn:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+
+.coze-send-btn:not(:disabled):hover {
+  filter: brightness(1.1);
+}
+
+.coze-send-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Stop button (generating state) */
+.stop-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--red);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* @ tags */
 .at-tag {
   display: inline-flex;
   align-items: center;
@@ -766,55 +827,6 @@ body {
 }
 
 .at-tag button:hover { opacity: 0.7; }
-
-.input-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--duration-fast) var(--ease-in-out);
-  flex-shrink: 0;
-}
-
-.input-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-
-.send-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: var(--accent);
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--duration-fast) var(--ease-in-out);
-  flex-shrink: 0;
-  align-self: center;
-}
-
-.send-btn:hover:not(:disabled) { filter: brightness(1.1); }
-.send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-
-.stop-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: var(--red);
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 
 /* ================================================================
    SLIDE PANEL
