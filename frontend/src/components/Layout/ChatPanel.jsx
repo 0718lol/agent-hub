@@ -225,7 +225,6 @@ export default function ChatPanel({ onToggleSidebar }) {
                   {agents.find((a) => a.agent_id === conv.agentId)?.role || ''}
                 </div>
               </div>
-              <span className={`online-dot ${agents.find((a) => a.agent_id === conv.agentId)?.status === 'working' ? 'busy' : 'online'}`} />
             </>
           )}
           <div className="chat-header-actions">
