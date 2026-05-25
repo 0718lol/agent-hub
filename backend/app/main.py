@@ -1,10 +1,12 @@
 import json
 import os
 import re
+import uuid
 import asyncio
 from pydantic import BaseModel
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.core.websocket import manager
 from app.core.database import (
@@ -16,6 +18,7 @@ from app.core.llm_client import llm_client
 from app.core.quality_gate import quality_gate
 from app.core.prompt_engine import prompt_engine
 from app.routers import agents as agents_router
+from app.routers import uploads as uploads_router
 
 LLM_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "llm_config.json")
 from app.agents.pm import PMAgent
@@ -28,6 +31,12 @@ from app.agents.builder import AgentBuilderAgent
 from app.agents.custom import CustomAgent, AVAILABLE_TOOLS
 
 app = FastAPI(title="AgentHub API")
+
+# ---- 文件上传目录 ----
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,6 +60,7 @@ AGENTS = {
 _stop_events: dict[str, asyncio.Event] = {}
 
 app.include_router(agents_router.router, prefix="/api")
+app.include_router(uploads_router.router)
 
 init_db()
 
@@ -290,6 +300,7 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
     raw_text = ""
     buffer = ""
     last_thinking_broadcast = ""
+    last_stream_broadcast = 0.0
     assigned_agents = []
 
     # If context provided (PM's task breakdown), prepend to user_text for the agent
@@ -451,8 +462,11 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
                     buffer = buffer[:code_match.start()] + buffer[code_match.end():]
 
                 # Broadcast remaining text (summary) as streaming message
+                # 节流控制：最快每 80ms 广播一次，避免刷屏
+                now = asyncio.get_running_loop().time()
                 summary = buffer.strip()
-                if summary:
+                if summary and (now - last_stream_broadcast) >= 0.08:
+                    last_stream_broadcast = now
                     await manager.broadcast(conversation_id, {
                         "type": "message",
                         "conversation_id": conversation_id,
@@ -626,6 +640,32 @@ async def list_available_tools():
         {"id": tid, "name": t["name"], "icon": t["icon"], "description": t["description"]}
         for tid, t in AVAILABLE_TOOLS.items()
     ]
+
+
+# ---- File Upload API ----
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    # 生成唯一文件名，保留原始扩展名
+    ext = os.path.splitext(file.filename or "")[1]
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    file_path = os.path.join(UPLOAD_DIR, stored_name)
+
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    is_image = (file.content_type or "").startswith("image/")
+
+    return {
+        "status": "uploaded",
+        "original_name": file.filename,
+        "stored_name": stored_name,
+        "url": f"/uploads/{stored_name}",
+        "content_type": file.content_type,
+        "size": len(content),
+        "is_image": is_image,
+    }
 
 
 # ---- Quality Gate API ----

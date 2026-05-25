@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react'
-import { Plus, Search, Settings, Pin, MoreHorizontal, X } from 'lucide-react'
+import { Plus, Settings, Pin, MoreHorizontal, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import SettingsPanel from './SettingsPanel'
@@ -14,23 +14,21 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
   const archiveConversation = useChatStore((s) => s.archiveConversation)
   const reorderConversations = useChatStore((s) => s.reorderConversations)
 
+  const [collapsed, setCollapsed] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showNewDialog, setShowNewDialog] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
   const [contextMenu, setContextMenu] = useState(null)
   const [dragIndex, setDragIndex] = useState(null)
 
   // Sort: pinned first, then by updatedAt desc. Filter archived.
   const sorted = useMemo(() => {
-    const active = conversations.filter((c) => !c.archived)
-    const filtered = searchQuery
-      ? active.filter((c) => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
-      : active
-    return [...filtered].sort((a, b) => {
-      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-      return (b.updatedAt || 0) - (a.updatedAt || 0)
-    })
-  }, [conversations, searchQuery])
+    return conversations
+      .filter((c) => !c.archived)
+      .sort((a, b) => {
+        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+        return (b.updatedAt || 0) - (a.updatedAt || 0)
+      })
+  }, [conversations])
 
   const handleContextMenu = useCallback((e, convId) => {
     e.preventDefault()
@@ -69,28 +67,25 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
 
   return (
     <>
-      <div className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
+      <div className={`sidebar ${mobileOpen ? 'mobile-open' : ''} ${collapsed ? 'collapsed' : ''}`}>
+        {/* Header */}
         <div className="sidebar-header">
-          <span className="sidebar-logo">AgentHub</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <button className="sidebar-new-btn" onClick={() => setShowNewDialog(true)} title="新建对话">
-              <Plus size={18} />
-            </button>
+          {!collapsed && <span className="sidebar-logo">AgentHub</span>}
+          <button
+            className="sidebar-collapse-btn"
+            onClick={() => setCollapsed(!collapsed)}
+            title={collapsed ? '展开侧边栏' : '收起侧边栏'}
+          >
+            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
+          {!collapsed && (
             <button className="hamburger-btn" onClick={onClose} title="关闭菜单">
               <X size={18} />
             </button>
-          </div>
+          )}
         </div>
 
-        <div className="sidebar-search">
-          <input
-            type="text"
-            placeholder="搜索会话..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-
+        {/* Conversation List */}
         <div className="conversation-list">
           {sorted.map((conv, i) => (
             <div
@@ -98,14 +93,13 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
               className={`conversation-item ${activeId === conv.id ? 'active' : ''}`}
               onClick={() => setActive(conv.id)}
               onContextMenu={(e) => handleContextMenu(e, conv.id)}
-              draggable
+              draggable={!collapsed}
               onDragStart={(e) => handleDragStart(e, i)}
               onDragOver={handleDragOver}
               onDrop={(e) => handleDrop(e, i)}
+              title={collapsed ? conv.name : undefined}
             >
-              {conv.pinned && (
-                <span className="pin-indicator"><Pin size={10} /></span>
-              )}
+              {conv.pinned && <span className="pin-indicator"><Pin size={10} /></span>}
               <div className="conv-avatar">
                 <IconAvatar
                   agentId={conv.type === 'single' ? conv.agentId : undefined}
@@ -113,25 +107,50 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
                   size={20}
                 />
               </div>
-              <div className="conv-info">
-                <div className={`conv-name ${conv.unread ? 'unread' : ''}`}>{conv.name}</div>
-              </div>
-              <span className="conv-time">{formatTime(conv.updatedAt)}</span>
-              {conv.unread && <span className="unread-dot" />}
-              <button
-                className="conv-menu-btn"
-                onClick={(e) => { e.stopPropagation(); handleContextMenu(e, conv.id) }}
-              >
-                <MoreHorizontal size={14} />
-              </button>
+              {!collapsed && (
+                <>
+                  <div className="conv-info">
+                    <div className={`conv-name ${conv.unread ? 'unread' : ''}`}>{conv.name}</div>
+                  </div>
+                  <span className="conv-time">{formatTime(conv.updatedAt)}</span>
+                  {conv.unread && <span className="unread-dot" />}
+                  <button
+                    className="conv-menu-btn"
+                    onClick={(e) => { e.stopPropagation(); handleContextMenu(e, conv.id) }}
+                  >
+                    <MoreHorizontal size={14} />
+                  </button>
+                </>
+              )}
             </div>
           ))}
         </div>
 
+        {/* 新建 Agent */}
+        <div
+          className="conversation-item sidebar-new-conv"
+          onClick={() => setShowNewDialog(true)}
+          title={collapsed ? '新建 Agent' : undefined}
+        >
+          <div className="conv-avatar" style={{ background: 'var(--accent-bg)', color: 'var(--accent)' }}>
+            <Plus size={18} />
+          </div>
+          {!collapsed && (
+            <div className="conv-info">
+              <div className="conv-name" style={{ color: 'var(--accent)' }}>新建 Agent</div>
+            </div>
+          )}
+        </div>
+
+        {/* Settings */}
         <div className="sidebar-footer">
-          <div className="sidebar-footer-item" onClick={() => setShowSettings(true)}>
+          <div
+            className="sidebar-footer-item"
+            onClick={() => setShowSettings(true)}
+            title={collapsed ? '设置' : undefined}
+          >
             <Settings size={16} />
-            <span>设置</span>
+            {!collapsed && <span>设置</span>}
           </div>
         </div>
       </div>

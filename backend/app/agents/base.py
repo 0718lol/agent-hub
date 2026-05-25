@@ -18,9 +18,9 @@ class BaseAgent:
     system_prompt: str = ""
 
     async def stream_reply(self, message: str, context: list = None,
-                           history: list = None) -> AsyncGenerator[str, None]:
+                           history: list = None, attachments: list = None) -> AsyncGenerator[str, None]:
         if llm_client.is_configured() and self.system_prompt:
-            messages = self._build_messages(message, context, history)
+            messages = self._build_messages(message, context, history, attachments)
             # Structured layered prompt injection
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
             prompt_context = {"task_type": task_type}
@@ -30,12 +30,12 @@ class BaseAgent:
         else:
             reply = self._generate_reply(message, context)
             for char in reply:
-                delay = random.uniform(0.02, 0.06)
+                delay = random.uniform(0.04, 0.10)
                 await asyncio.sleep(delay)
                 yield char
 
     def _build_messages(self, message: str, context: list = None,
-                        history: list = None) -> list[dict]:
+                        history: list = None, attachments: list = None) -> list[dict]:
         messages = []
         total_chars = 0
 
@@ -67,7 +67,20 @@ class BaseAgent:
                 if text:
                     messages.append({"role": role, "content": text})
 
-        messages.append({"role": "user", "content": message})
+        # 附件文件内容注入：将 extracted_text 追加到用户消息中
+        enhanced_message = message
+        if attachments:
+            file_contexts = []
+            for att in attachments:
+                extracted = att.get("extracted_text", "")
+                if extracted:
+                    file_contexts.append(
+                        f"[文件: {att.get('original_name', 'unknown')}]\n{extracted[:2000]}"
+                    )
+            if file_contexts:
+                enhanced_message = message + "\n\n" + "\n\n".join(file_contexts)
+
+        messages.append({"role": "user", "content": enhanced_message})
         return messages
 
     def _generate_reply(self, message: str, context: list = None) -> str:

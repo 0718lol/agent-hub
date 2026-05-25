@@ -12,3 +12,9 @@ llm_config.json
 venv/
 .venv/
 backend/venv/
+
+# 运行时数据目录（上传文件、数据库、API Key 配置等）
+backend/data/
+
+# Claude Code IDE 本地配置
+.claude/

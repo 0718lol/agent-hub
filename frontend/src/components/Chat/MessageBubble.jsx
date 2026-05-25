@@ -6,6 +6,7 @@ import { useCanvasStore } from '../../stores/canvasStore'
 import CodeCard from './CodeCard'
 import MockupCard from './MockupCard'
 import ClarificationCard from './ClarificationCard'
+import FileAttachmentCard from './FileAttachmentCard'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import { wsClient } from '../../utils/websocket'
 import IconAvatar from '../IconAvatar'
@@ -22,6 +23,7 @@ export default function MessageBubble({ message, isPinned }) {
   const isUser = message.sender === 'user'
   const agent = agents.find((a) => a.agent_id === message.sender)
   const text = message.content?.text || ''
+  const attachments = message.content?.attachments || []
   const isRead = allRead[activeId]
   const [copied, setCopied] = useState(false)
 
@@ -167,6 +169,18 @@ export default function MessageBubble({ message, isPinned }) {
         {isPinned && (
           <div style={{ fontSize: 11, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
             <Pin size={10} /> 已固定
+          </div>
+        )}
+
+        {/* 附件预览 */}
+        {attachments.length > 0 && (
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: 6,
+            marginBottom: text ? 8 : 0,
+          }}>
+            {attachments.map((att, i) => (
+              <FileAttachmentCard key={i} attachment={att} />
+            ))}
           </div>
         )}
 

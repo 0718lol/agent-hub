@@ -6,11 +6,23 @@ export const useCanvasStore = create((set) => ({
 
   // Slide panel state
   slidePanelOpen: false,
-  slidePanelPinned: false,
+  slidePanelContent: 'code', // 'code' | 'dag' | 'task'
   slidePanelTab: 'code',
-  toggleSlidePanel: () => set((s) => ({ slidePanelOpen: !s.slidePanelOpen, slidePanelPinned: false })),
+  slidePanelWidth: (() => {
+    try { const v = localStorage.getItem('agent-hub-slide-panel-width'); return v ? parseInt(v) : 380 }
+    catch { return 380 }
+  })(),
+  toggleSlidePanel: (content) => set((s) => {
+    if (s.slidePanelOpen && s.slidePanelContent === content) {
+      return { slidePanelOpen: false }
+    }
+    return { slidePanelOpen: true, slidePanelContent: content }
+  }),
   setSlidePanelTab: (tab) => set({ slidePanelTab: tab }),
-  toggleSlidePanelPin: () => set((s) => ({ slidePanelPinned: !s.slidePanelPinned })),
+  setSlidePanelWidth: (width) => {
+    try { localStorage.setItem('agent-hub-slide-panel-width', String(width)) } catch {}
+    set({ slidePanelWidth: width })
+  },
 
   previewHtml: null,
   setPreviewHtml: (html) => set({ previewHtml: html }),

@@ -1,10 +1,12 @@
 import React from 'react'
-import { DiffEditor } from '@monaco-editor/react'
+import { DiffEditor, Editor } from '@monaco-editor/react'
 import { useCanvasStore } from '../../stores/canvasStore'
+import { useThemeStore } from '../../stores/themeStore'
 
 export default function DiffViewer() {
   const generatedCode = useCanvasStore((s) => s.generatedCode)
   const previousCode = useCanvasStore((s) => s.previousCode)
+  const theme = useThemeStore((s) => s.theme)
 
   if (!generatedCode) {
     return (
@@ -19,6 +21,17 @@ export default function DiffViewer() {
   }
 
   const { language, code } = generatedCode
+  const monacoTheme = theme === 'light' ? 'vs' : 'vs-dark'
+  const monacoLang = language.toLowerCase() === 'html' ? 'html' : language.toLowerCase() === 'python' ? 'python' : 'javascript'
+
+  const commonOptions = {
+    readOnly: true,
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    fontSize: 13,
+    lineNumbers: 'on',
+    scrollbar: { verticalScrollbarSize: 6, horizontalScrollbarSize: 6 },
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -28,50 +41,48 @@ export default function DiffViewer() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{
-            padding: '3px 10px', background: 'rgba(99,102,241,0.2)',
-            border: '1px solid rgba(99,102,241,0.4)', borderRadius: 6,
-            color: '#6366f1', fontSize: 12, fontFamily: 'monospace',
+            padding: '3px 10px', background: 'var(--accent-bg)',
+            border: '1px solid var(--accent)', borderRadius: 6,
+            color: 'var(--accent)', fontSize: 12, fontFamily: 'monospace',
           }}>
             {language}
           </span>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            代码对比视图 (Monaco Diff Editor)
+            {previousCode ? '代码对比视图' : '代码预览'}
           </span>
         </div>
         {previousCode ? (
-          <span style={{ fontSize: 11, color: '#10b981', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontSize: 11, color: 'var(--green)', display: 'flex', alignItems: 'center', gap: 4 }}>
             ● 已载入历史代码比对
           </span>
         ) : (
           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            ● 新增文件 (无历史版本)
+            ● 新增文件
           </span>
         )}
       </div>
 
       <div style={{
         flex: 1, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)',
-        height: 'calc(100vh - 200px)'
       }}>
-        <DiffEditor
-          height="100%"
-          language={language.toLowerCase() === 'html' ? 'html' : language.toLowerCase() === 'python' ? 'python' : 'javascript'}
-          original={previousCode || ''}
-          modified={code}
-          theme="vs-dark"
-          options={{
-            readOnly: true,
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            renderSideBySide: true,
-            fontSize: 13,
-            lineNumbers: 'on',
-            scrollbar: {
-              verticalScrollbarSize: 6,
-              horizontalScrollbarSize: 6,
-            }
-          }}
-        />
+        {previousCode ? (
+          <DiffEditor
+            height="100%"
+            language={monacoLang}
+            original={previousCode}
+            modified={code}
+            theme={monacoTheme}
+            options={{ ...commonOptions, renderSideBySide: false }}
+          />
+        ) : (
+          <Editor
+            height="100%"
+            language={monacoLang}
+            value={code}
+            theme={monacoTheme}
+            options={commonOptions}
+          />
+        )}
       </div>
     </div>
   )

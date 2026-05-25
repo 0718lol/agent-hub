@@ -126,7 +126,7 @@ export default function SettingsPanel({ onClose }) {
 
   const labelStyle = {
     fontSize: 13,
-    color: '#94a3b8',
+    color: 'var(--text-secondary)',
     marginBottom: 6,
     display: 'block',
   }
@@ -137,17 +137,17 @@ export default function SettingsPanel({ onClose }) {
     alignItems: 'center',
     padding: '12px 14px',
     borderRadius: 10,
-    background: 'rgba(255,255,255,0.03)',
-    border: '1px solid rgba(255,255,255,0.08)',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
   }
 
-  const btnStyle = {
+  const btnPrimary = {
     width: '100%',
     padding: '12px',
     borderRadius: 10,
-    background: '#6366f1',
+    background: 'var(--accent)',
     border: 'none',
-    color: 'white',
+    color: '#fff',
     fontSize: 14,
     fontWeight: 600,
     cursor: 'pointer',
@@ -155,23 +155,46 @@ export default function SettingsPanel({ onClose }) {
     transition: 'all 0.2s',
   }
 
+  const inputStyle = {
+    width: '100%', padding: '10px 14px',
+    background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+    borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+    fontFamily: 'inherit',
+  }
+
+  const optionActive = {
+    flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
+    background: 'var(--accent)',
+    border: '1px solid var(--accent)',
+    color: '#fff',
+    cursor: 'pointer', fontWeight: 600,
+  }
+
+  const optionInactive = {
+    flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-muted)',
+    cursor: 'pointer', fontWeight: 400,
+  }
+
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+      background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       zIndex: 1000,
     }} onClick={onClose}>
-      <div style={{
+      <div className="settings-panel" style={{
         width: 500, maxHeight: '88vh', overflow: 'auto',
-        background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)',
+        background: 'var(--bg-primary)', border: '1px solid var(--border)',
         borderRadius: 16, padding: 28,
       }} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 18, color: '#f8fafc' }}>设置</h2>
+          <h2 style={{ margin: 0, fontSize: 18, color: 'var(--text-primary)' }}>设置</h2>
           <button onClick={onClose} style={{
-            background: 'none', border: 'none', color: '#64748b',
+            background: 'none', border: 'none', color: 'var(--text-secondary)',
             fontSize: 20, cursor: 'pointer', padding: '0 4px',
           }}>×</button>
         </div>
@@ -180,13 +203,16 @@ export default function SettingsPanel({ onClose }) {
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           padding: '12px 14px', borderRadius: 10, marginBottom: 20,
-          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--bg-secondary)', border: '1px solid var(--border)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {theme === 'light' ? <Sun size={16} color="#fbbf24" /> : <Moon size={16} color="#818cf8" />}
+            {theme === 'light'
+              ? <Sun size={16} color="#f59e0b" />
+              : <Moon size={16} color="#6366f1" />
+            }
             <div>
-              <div style={{ fontSize: 14, color: '#f8fafc' }}>界面主题</div>
-              <div style={{ fontSize: 12, color: '#64748b' }}>
+              <div style={{ fontSize: 14, color: 'var(--text-primary)' }}>界面主题</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                 {theme === 'light' ? '浅色模式' : '深色模式'}
               </div>
             </div>
@@ -195,12 +221,16 @@ export default function SettingsPanel({ onClose }) {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: 'rgba(0,0,0,0.2)', borderRadius: 10, padding: 4 }}>
+        <div style={{
+          display: 'flex', gap: 4, marginBottom: 24,
+          background: 'var(--bg-tertiary)', borderRadius: 10, padding: 4,
+        }}>
           {tabs.map((t) => (
             <button key={t.id} onClick={() => { setTab(t.id); setMsg('') }} style={{
               flex: 1, padding: '8px 12px', borderRadius: 8, fontSize: 12,
-              background: tab === t.id ? '#6366f1' : 'transparent',
-              border: 'none', color: tab === t.id ? 'white' : '#94a3b8',
+              background: tab === t.id ? 'var(--accent)' : 'transparent',
+              border: 'none',
+              color: tab === t.id ? '#fff' : 'var(--text-muted)',
               cursor: 'pointer', fontWeight: tab === t.id ? 600 : 400,
               transition: 'all 0.2s',
             }}><span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{tabIcons[t.id]}{t.label}</span></button>
@@ -212,11 +242,11 @@ export default function SettingsPanel({ onClose }) {
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: configured ? 'rgba(16,185,129,0.1)' : 'rgba(251,191,36,0.1)',
-              border: `1px solid ${configured ? 'rgba(16,185,129,0.2)' : 'rgba(251,191,36,0.2)'}`,
-              fontSize: 13, color: configured ? '#10b981' : '#fbbf24',
+              background: configured ? 'rgba(16,185,129,0.08)' : 'rgba(251,191,36,0.08)',
+              border: `1px solid ${configured ? 'rgba(16,185,129,0.15)' : 'rgba(251,191,36,0.15)'}`,
+              fontSize: 13, color: configured ? 'var(--green)' : 'var(--orange)',
             }}>
-              {configured ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><CheckCircle size={14} color="#10b981" style={{ flexShrink: 0 }} /> 已连接 LLM — Agent 使用真实模型回复</span> : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={14} color="#fbbf24" style={{ flexShrink: 0 }} /> 未配置 — Agent 使用 Mock 回复</span>}
+              {configured ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><CheckCircle size={14} style={{ flexShrink: 0 }} /> 已连接 LLM — Agent 使用真实模型回复</span> : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={14} style={{ flexShrink: 0 }} /> 未配置 — Agent 使用 Mock 回复</span>}
             </div>
 
             {/* Presets */}
@@ -226,8 +256,8 @@ export default function SettingsPanel({ onClose }) {
                 {presets.map((p) => (
                   <button key={p.label} onClick={() => applyPreset(p)} style={{
                     padding: '6px 12px', borderRadius: 6, fontSize: 12,
-                    background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)',
-                    color: '#a5b4fc', cursor: 'pointer',
+                    background: 'var(--accent-bg)', border: '1px solid var(--accent-bg)',
+                    color: 'var(--accent)', cursor: 'pointer',
                   }}>{p.label}</button>
                 ))}
               </div>
@@ -238,13 +268,7 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>接口格式</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 {['openai', 'anthropic'].map((p) => (
-                  <button key={p} onClick={() => setProvider(p)} style={{
-                    flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
-                    background: provider === p ? '#6366f1' : 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${provider === p ? '#6366f1' : 'rgba(255,255,255,0.1)'}`,
-                    color: provider === p ? 'white' : '#94a3b8',
-                    cursor: 'pointer', fontWeight: provider === p ? 600 : 400,
-                  }}>
+                  <button key={p} onClick={() => setProvider(p)} style={provider === p ? optionActive : optionInactive}>
                     {p === 'openai' ? 'OpenAI 兼容' : 'Anthropic'}
                   </button>
                 ))}
@@ -273,8 +297,8 @@ export default function SettingsPanel({ onClose }) {
                 <label style={labelStyle}>Temperature: {temperature}</label>
                 <input type="range" min="0" max="1" step="0.1" value={temperature}
                   onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                  style={{ width: '100%', accentColor: '#6366f1' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b' }}>
+                  style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-secondary)' }}>
                   <span>精确</span><span>创意</span>
                 </div>
               </div>
@@ -286,7 +310,7 @@ export default function SettingsPanel({ onClose }) {
               </div>
             </div>
 
-            <button onClick={handleSave} disabled={saving} style={btnStyle}>
+            <button onClick={handleSave} disabled={saving} style={btnPrimary}>
               {saving ? '保存中...' : '保存配置'}
             </button>
           </>
@@ -295,15 +319,19 @@ export default function SettingsPanel({ onClose }) {
         {/* ====== TAB: Quality Gate ====== */}
         {tab === 'quality' && (
           <>
-            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)', fontSize: 12, color: '#a5b4fc' }}>
+            <div style={{
+              padding: '12px 14px', borderRadius: 8, marginBottom: 20,
+              background: 'var(--accent-bg)', border: '1px solid var(--accent-bg)',
+              fontSize: 12, color: 'var(--accent)',
+            }}>
               质量门会自动评估 Agent 输出，不达标时触发重写或择优选择
             </div>
 
             {/* Enable toggle */}
             <div style={{ ...rowStyle, marginBottom: 16 }}>
               <div>
-                <div style={{ fontSize: 14, color: '#f8fafc' }}>启用质量门</div>
-                <div style={{ fontSize: 12, color: '#64748b' }}>关闭后 Agent 直接输出不评估</div>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)' }}>启用质量门</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>关闭后 Agent 直接输出不评估</div>
               </div>
               <ToggleSwitch checked={qEnabled} onChange={setQEnabled} />
             </div>
@@ -313,20 +341,14 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>多候选择优 (Best-of-N)</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 {[1, 2, 3].map((n) => (
-                  <button key={n} onClick={() => setBestOfN(n)} style={{
-                    flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
-                    background: bestOfN === n ? '#6366f1' : 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${bestOfN === n ? '#6366f1' : 'rgba(255,255,255,0.1)'}`,
-                    color: bestOfN === n ? 'white' : '#94a3b8',
-                    cursor: 'pointer', fontWeight: bestOfN === n ? 600 : 400,
-                  }}>
+                  <button key={n} onClick={() => setBestOfN(n)} style={bestOfN === n ? optionActive : optionInactive}>
                     {n === 1 ? '关闭' : `${n} 候选`}
                   </button>
                 ))}
               </div>
               {bestOfN > 1 && (
-                <div style={{ marginTop: 6, fontSize: 11, color: '#fbbf24' }}>
-                  <AlertTriangle size={12} color="#fbbf24" style={{ verticalAlign: 'middle', marginRight: 2, flexShrink: 0 }} /> 将消耗 {bestOfN}x Token，适合高质量关键输出
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--orange)' }}>
+                  <AlertTriangle size={12} style={{ verticalAlign: 'middle', marginRight: 2, flexShrink: 0 }} /> 将消耗 {bestOfN}x Token，适合高质量关键输出
                 </div>
               )}
             </div>
@@ -336,13 +358,7 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>不达标自动重写次数</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 {[0, 1, 2].map((n) => (
-                  <button key={n} onClick={() => setMaxRetries(n)} style={{
-                    flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
-                    background: maxRetries === n ? '#6366f1' : 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${maxRetries === n ? '#6366f1' : 'rgba(255,255,255,0.1)'}`,
-                    color: maxRetries === n ? 'white' : '#94a3b8',
-                    cursor: 'pointer', fontWeight: maxRetries === n ? 600 : 400,
-                  }}>
+                  <button key={n} onClick={() => setMaxRetries(n)} style={maxRetries === n ? optionActive : optionInactive}>
                     {n === 0 ? '不重写' : `${n} 次`}
                   </button>
                 ))}
@@ -352,13 +368,13 @@ export default function SettingsPanel({ onClose }) {
             {/* LLM Judge */}
             <div style={{ ...rowStyle, marginBottom: 20 }}>
               <div>
-                <div style={{ fontSize: 14, color: '#f8fafc' }}>LLM 深度评审</div>
-                <div style={{ fontSize: 12, color: '#64748b' }}>用 LLM 做语义级质量评分（额外消耗 Token）</div>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)' }}>LLM 深度评审</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>用 LLM 做语义级质量评分（额外消耗 Token）</div>
               </div>
               <ToggleSwitch checked={useLlmJudge} onChange={setUseLlmJudge} />
             </div>
 
-            <button onClick={handleSaveQuality} disabled={saving} style={btnStyle}>
+            <button onClick={handleSaveQuality} disabled={saving} style={btnPrimary}>
               {saving ? '保存中...' : '保存质量门配置'}
             </button>
           </>
@@ -367,7 +383,11 @@ export default function SettingsPanel({ onClose }) {
         {/* ====== TAB: Prompt Layers ====== */}
         {tab === 'prompt' && (
           <>
-            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)', fontSize: 12, color: '#a5b4fc' }}>
+            <div style={{
+              padding: '12px 14px', borderRadius: 8, marginBottom: 20,
+              background: 'var(--accent-bg)', border: '1px solid var(--accent-bg)',
+              fontSize: 12, color: 'var(--accent)',
+            }}>
               Prompt 按层级注入，每层可独立开关。高层级（约束）优先级最高。
             </div>
 
@@ -375,17 +395,17 @@ export default function SettingsPanel({ onClose }) {
               <div key={layer.id} style={{
                 ...rowStyle,
                 marginBottom: 10, padding: '12px 14px', borderRadius: 10,
-                background: layer.enabled ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.2)',
-                border: `1px solid ${layer.enabled ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)'}`,
+                background: layer.enabled ? 'var(--bg-secondary)' : 'var(--bg-tertiary)',
+                border: `1px solid ${layer.enabled ? 'var(--border)' : 'var(--border)'}`,
                 opacity: layer.enabled ? 1 : 0.5,
               }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, color: '#f8fafc', fontWeight: 500 }}>
-                    <span style={{ fontSize: 11, color: '#6366f1', marginRight: 6 }}>L{layer.level}</span>
+                  <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
+                    <span style={{ fontSize: 11, color: 'var(--accent)', marginRight: 6 }}>L{layer.level}</span>
                     {layer.id}
-                    {layer.has_condition && <span style={{ fontSize: 10, color: '#fbbf24', marginLeft: 6 }}>条件注入</span>}
+                    {layer.has_condition && <span style={{ fontSize: 10, color: 'var(--orange)', marginLeft: 6 }}>条件注入</span>}
                   </div>
-                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3 }}>
                     {layer.content_preview}
                   </div>
                 </div>
@@ -399,9 +419,10 @@ export default function SettingsPanel({ onClose }) {
         {msg && (
           <div style={{
             marginTop: 16, padding: '10px 14px', borderRadius: 8,
-            background: msg.includes('成功') || msg.includes('已保存') ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-            border: `1px solid ${msg.includes('成功') || msg.includes('已保存') ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
-            fontSize: 13, color: msg.includes('成功') || msg.includes('已保存') ? '#10b981' : '#ef4444',
+            background: msg.includes('成功') || msg.includes('已保存') ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+            border: `1px solid ${msg.includes('成功') || msg.includes('已保存') ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}`,
+            fontSize: 13,
+            color: msg.includes('成功') || msg.includes('已保存') ? 'var(--green)' : 'var(--red)',
           }}>{msg}</div>
         )}
       </div>
@@ -413,22 +434,15 @@ function ToggleSwitch({ checked, onChange }) {
   return (
     <div onClick={() => onChange(!checked)} style={{
       width: 44, height: 24, borderRadius: 12, cursor: 'pointer',
-      background: checked ? '#6366f1' : 'rgba(255,255,255,0.1)',
-      border: `1px solid ${checked ? '#6366f1' : 'rgba(255,255,255,0.15)'}`,
+      background: checked ? 'var(--accent)' : 'var(--bg-tertiary)',
+      border: `1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
       position: 'relative', transition: 'all 0.2s', flexShrink: 0,
     }}>
       <div style={{
         width: 18, height: 18, borderRadius: 9,
-        background: 'white', position: 'absolute', top: 2,
+        background: '#fff', position: 'absolute', top: 2,
         left: checked ? 22 : 3, transition: 'left 0.2s',
       }} />
     </div>
   )
-}
-
-const inputStyle = {
-  width: '100%', padding: '10px 14px',
-  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: 8, color: '#f8fafc', fontSize: 13, outline: 'none',
-  fontFamily: 'inherit',
 }

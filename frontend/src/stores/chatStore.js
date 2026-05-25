@@ -108,16 +108,18 @@ export const useChatStore = create((set, get) => ({
 
   addMessage: (conversationId, message) =>
     set((state) => ({
-      conversations: state.conversations.map((conv) =>
-        conv.id === conversationId
-          ? {
-              ...conv,
-              messages: [...conv.messages, { ...message, id: Date.now() + Math.random(), timestamp: new Date().toISOString() }],
-              updatedAt: Date.now(),
-              unread: message.sender !== 'user' && conversationId !== state.activeConversationId,
-            }
-          : conv
-      ),
+      conversations: state.conversations.map((conv) => {
+        if (conv.id !== conversationId) return conv
+        // 如果提供了 id，检查是否已存在（防止重复）
+        if (message.id && conv.messages.some((m) => m.id === message.id)) return conv
+        const msgId = message.id || Date.now() + Math.random()
+        return {
+          ...conv,
+          messages: [...conv.messages, { ...message, id: msgId, timestamp: message.timestamp || new Date().toISOString() }],
+          updatedAt: Date.now(),
+          unread: message.sender !== 'user' && conversationId !== state.activeConversationId,
+        }
+      }),
     })),
 
   updateLastAgentMessage: (conversationId, senderId, text, streaming) =>

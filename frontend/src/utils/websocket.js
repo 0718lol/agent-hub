@@ -1,7 +1,7 @@
 class WSClient {
   constructor() {
     this.ws = null
-    this.handlers = []
+    this.handlers = new Set()
     this.reconnectTimer = null
     this.pendingMessages = []
     this.currentConvId = null
@@ -61,9 +61,9 @@ class WSClient {
   }
 
   onMessage(handler) {
-    this.handlers.push(handler)
+    this.handlers.add(handler)
     return () => {
-      this.handlers = this.handlers.filter((h) => h !== handler)
+      this.handlers.delete(handler)
     }
   }
 

@@ -53,6 +53,17 @@ def init_db():
             tools TEXT DEFAULT '[]',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS uploaded_files (
+            id TEXT PRIMARY KEY,
+            original_name TEXT NOT NULL,
+            stored_name TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            content_type TEXT DEFAULT '',
+            size INTEGER DEFAULT 0,
+            extracted_text TEXT DEFAULT '',
+            uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
     ''')
 
     default_convs = [
@@ -180,3 +191,33 @@ def create_conversation(conv_id: str, conv_type: str, name: str, avatar: str,
     )
     conn.commit()
     conn.close()
+
+
+# ---- Uploaded Files CRUD ----
+
+def save_uploaded_file(file_id: str, original_name: str, stored_name: str,
+                       file_path: str, content_type: str = "", size: int = 0,
+                       extracted_text: str = ""):
+    conn = get_db()
+    conn.execute(
+        'INSERT OR REPLACE INTO uploaded_files (id, original_name, stored_name, file_path, content_type, size, extracted_text) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (file_id, original_name, stored_name, file_path, content_type, size, extracted_text)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_uploaded_file(file_id: str) -> dict | None:
+    conn = get_db()
+    row = conn.execute('SELECT * FROM uploaded_files WHERE id = ?', (file_id,)).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def get_all_uploaded_files() -> list[dict]:
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM uploaded_files ORDER BY uploaded_at DESC').fetchall()
+    conn.close()
+    return [dict(row) for row in rows]

@@ -1,13 +1,13 @@
 import React, { useRef, useEffect, useState } from 'react'
-import { MessageSquare, Code2, GitBranch, LayoutList, Menu, X } from 'lucide-react'
+import { MessageSquare, Code2, GitBranch, LayoutList, Menu, X, Search } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
 import MessageBubble from '../Chat/MessageBubble'
 import InputBar from '../Chat/InputBar'
 import InlineDeployCard from '../Chat/InlineDeployCard'
-import AgentDAG from '../Canvas/AgentDAG'
 import TaskBoard from '../Canvas/TaskBoard'
+import AgentDAG from '../Canvas/AgentDAG'
 import { wsClient } from '../../utils/websocket'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import IconAvatar from '../IconAvatar'
@@ -28,9 +28,13 @@ export default function ChatPanel({ onToggleSidebar }) {
   const thinkingAgents = useChatStore((s) => s.thinkingAgents)
   const pinnedMessages = useChatStore((s) => s.pinnedMessages)
   const messagesRef = useRef(null)
+  const generationTimeoutRef = useRef(null)
 
   const slidePanelOpen = useCanvasStore((s) => s.slidePanelOpen)
+  const slidePanelContent = useCanvasStore((s) => s.slidePanelContent)
   const toggleSlidePanel = useCanvasStore((s) => s.toggleSlidePanel)
+  const [taskPopup, setTaskPopup] = useState(false)
+  const [dagPopup, setDagPopup] = useState(false)
   const setGeneratedCode = useCanvasStore((s) => s.setGeneratedCode)
   const setPreviewHtml = useCanvasStore((s) => s.setPreviewHtml)
   const updateTaskByAgent = useCanvasStore((s) => s.updateTaskByAgent)
@@ -45,10 +49,9 @@ export default function ChatPanel({ onToggleSidebar }) {
   const isGroup = conv?.type === 'group'
   const currentPinned = pinnedMessages[activeId] || []
 
-  const [dagPopup, setDagPopup] = useState(false)
-  const [taskPopup, setTaskPopup] = useState(false)
-
   useEffect(() => {
+    // 如果当前会话正在生成中，延迟加载历史，避免覆盖流式消息
+    if (generatingConvs.has(activeId)) return
     loadMessages(activeId)
   }, [activeId])
 
@@ -88,7 +91,18 @@ export default function ChatPanel({ onToggleSidebar }) {
     wsClient.connect(activeId)
     const unsub = wsClient.onMessage((data) => {
       if (data.conversation_id !== activeId) return
-      if (data.type === 'typing') { setTyping(activeId, data.agent_id, data.is_typing); return }
+      if (data.type === 'typing') {
+        setTyping(activeId, data.agent_id, data.is_typing)
+        // 超时保护：15 秒后自动清除 typing 状态，防止卡死
+        if (data.is_typing) {
+          setTimeout(() => {
+            const convNow = useChatStore.getState().conversations.find((c) => c.id === activeId)
+            const stillTyping = convNow?.messages?.some((m) => m.sender === data.agent_id && m.streaming)
+            if (!stillTyping) setTyping(activeId, data.agent_id, false)
+          }, 15000)
+        }
+        return
+      }
       if (data.type === 'thinking') { setThinking(activeId, data.agent_id, data.text); return }
       if (data.type === 'code') {
         useCanvasStore.getState().setGeneratedCode(data.language, data.code)
@@ -96,7 +110,14 @@ export default function ChatPanel({ onToggleSidebar }) {
         return
       }
       if (data.type === 'preview') { useCanvasStore.getState().setPreviewHtml(data.html); return }
-      if (data.type === 'generating') { setGenerating(activeId, data.is_generating); return }
+      if (data.type === 'generating') {
+        setGenerating(activeId, data.is_generating)
+        if (!data.is_generating && generationTimeoutRef.current) {
+          clearTimeout(generationTimeoutRef.current)
+          generationTimeoutRef.current = null
+        }
+        return
+      }
       if (data.type === 'task_status') {
         useCanvasStore.getState().updateTaskByAgent(data.agent_id, data.status === 'doing' ? 'doing' : data.status)
         useCanvasStore.getState().setNodeStatus(data.agent_id, data.status === 'doing' ? 'working' : data.status)
@@ -132,23 +153,51 @@ export default function ChatPanel({ onToggleSidebar }) {
       }
       if (data.type === 'read') { markRead(activeId); return }
       if (data.type === 'message') {
+        // 跳过服务器回显的用户消息（handleSend 已本地添加）
+        if (data.sender === 'user') return
+
+        // 收到 Agent 消息时自动清除该 Agent 的 typing 状态
+        setTyping(activeId, data.sender, false)
+
         if (data.stream) {
           const convNow = useChatStore.getState().conversations.find((c) => c.id === activeId)
           const hasStreaming = convNow?.messages?.some((m) => m.sender === data.sender && m.streaming)
-          if (hasStreaming) { updateLastAgentMessage(activeId, data.sender, data.content.text, true) }
-          else { addMessage(activeId, { sender: data.sender, content: data.content, streaming: true }) }
+          if (hasStreaming) {
+            updateLastAgentMessage(activeId, data.sender, data.content.text, true)
+          } else {
+            // 检查是否有同名 agent 的最终消息刚完成（防止创建重复气泡）
+            const lastMsg = convNow?.messages?.[convNow.messages.length - 1]
+            const isDuplicate = lastMsg && lastMsg.sender === data.sender && !lastMsg.streaming
+            if (!isDuplicate) {
+              addMessage(activeId, { id: `${data.sender}-stream-${Date.now()}`, sender: data.sender, content: data.content, streaming: true })
+            }
+          }
           setAgentStatus(data.sender, 'working')
         } else {
           const convNow = useChatStore.getState().conversations.find((c) => c.id === activeId)
           const hasStreaming = convNow?.messages?.some((m) => m.sender === data.sender && m.streaming)
-          if (hasStreaming) { updateLastAgentMessage(activeId, data.sender, data.content.text, false) }
-          else { addMessage(activeId, { sender: data.sender, content: data.content, streaming: false }) }
+          if (hasStreaming) {
+            updateLastAgentMessage(activeId, data.sender, data.content.text, false)
+          } else {
+            // 检查是否已有该 agent 的非流式消息（避免重复）
+            const lastMsg = convNow?.messages?.[convNow.messages.length - 1]
+            const isDuplicate = lastMsg && lastMsg.sender === data.sender && !lastMsg.streaming && lastMsg.content?.text === data.content?.text
+            if (!isDuplicate) {
+              addMessage(activeId, { id: `${data.sender}-final-${Date.now()}`, sender: data.sender, content: data.content, streaming: false })
+            }
+          }
           setAgentStatus(data.sender, 'done')
           setTimeout(() => setAgentStatus(data.sender, 'idle'), 2000)
         }
       }
     })
-    return () => { unsub(); wsClient.disconnect() }
+    return () => {
+      unsub(); wsClient.disconnect()
+      if (generationTimeoutRef.current) {
+        clearTimeout(generationTimeoutRef.current)
+        generationTimeoutRef.current = null
+      }
+    }
   }, [activeId])
 
   // Auto scroll
@@ -158,18 +207,34 @@ export default function ChatPanel({ onToggleSidebar }) {
     }
   }, [conv?.messages])
 
-  const handleSend = (text, mentionedAgents) => {
-    addMessage(activeId, { sender: 'user', content: { text }, streaming: false })
+  const handleSend = (text, mentionedAgents, attachments = []) => {
+    if (isGenerating) return // 双重保险：生成中禁止发送
+    const msgId = `user-${Date.now()}`
+    const content = { text }
+    if (attachments.length > 0) content.attachments = attachments
+    addMessage(activeId, { id: msgId, sender: 'user', content, streaming: false })
     const targetAgent = !isGroup ? conv?.agentId : undefined
     wsClient.send({
       type: 'message',
       conversation_id: activeId,
       sender: 'user',
-      content: { text, target_agent: targetAgent, mentioned_agents: mentionedAgents },
+      content: { text, target_agent: targetAgent, mentioned_agents: mentionedAgents, attachments },
     })
+    // 启动超时清理（60 秒无响应则强制解锁生成状态）
+    if (generationTimeoutRef.current) clearTimeout(generationTimeoutRef.current)
+    generationTimeoutRef.current = setTimeout(() => {
+      setGenerating(activeId, false)
+      generationTimeoutRef.current = null
+    }, 60000)
   }
 
-  const handleStop = () => { wsClient.send({ type: 'stop', conversation_id: activeId }) }
+  const handleStop = () => {
+    wsClient.send({ type: 'stop', conversation_id: activeId })
+    if (generationTimeoutRef.current) {
+      clearTimeout(generationTimeoutRef.current)
+      generationTimeoutRef.current = null
+    }
+  }
 
   // Active typing agent for group indicator
   const activeTypingAgent = typingAgentIds.length > 0
@@ -233,15 +298,35 @@ export default function ChatPanel({ onToggleSidebar }) {
           {typingAgentIds.length > 0 && !activeTypingAgent && (
             <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
           )}
-          <button className="header-icon-btn" onClick={() => setTaskPopup(!taskPopup)}>
+          <button
+            className="header-icon-btn"
+            onClick={() => toggleSlidePanel('search')}
+            style={slidePanelOpen && slidePanelContent === 'search' ? { color: 'var(--accent)' } : undefined}
+          >
+            <Search size={20} />
+            <span className="icon-tooltip">搜索对话</span>
+          </button>
+          <button
+            className="header-icon-btn"
+            onClick={() => setTaskPopup(!taskPopup)}
+            style={taskPopup ? { color: 'var(--accent)' } : undefined}
+          >
             <LayoutList size={20} />
             <span className="icon-tooltip">任务看板</span>
           </button>
-          <button className="header-icon-btn" onClick={() => setDagPopup(!dagPopup)}>
+          <button
+            className="header-icon-btn"
+            onClick={() => setDagPopup(!dagPopup)}
+            style={dagPopup ? { color: 'var(--accent)' } : undefined}
+          >
             <GitBranch size={20} />
             <span className="icon-tooltip">协作图</span>
           </button>
-          <button className="header-icon-btn" onClick={toggleSlidePanel} style={slidePanelOpen ? { color: 'var(--accent)' } : undefined}>
+          <button
+            className="header-icon-btn"
+            onClick={() => toggleSlidePanel('code')}
+            style={slidePanelOpen && slidePanelContent === 'code' ? { color: 'var(--accent)' } : undefined}
+          >
             <Code2 size={20} />
             <span className="icon-tooltip">代码/文档预览</span>
           </button>
@@ -314,42 +399,6 @@ export default function ChatPanel({ onToggleSidebar }) {
         {/* Deploy inline card */}
         {conv.messages.length > 0 && <InlineDeployCard />}
 
-        {/* DAG popup */}
-        {dagPopup && (
-          <>
-            <div className="feature-popup-backdrop" onClick={() => setDagPopup(false)} />
-            <div className="feature-popup">
-              <div className="feature-popup-header">
-                <span>协作图</span>
-                <button className="slide-panel-btn" onClick={() => setDagPopup(false)}>
-                  <X />
-                </button>
-              </div>
-              <div className="feature-popup-body">
-                <AgentDAG compact />
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Task popup */}
-        {taskPopup && (
-          <>
-            <div className="feature-popup-backdrop" onClick={() => setTaskPopup(false)} />
-            <div className="feature-popup">
-              <div className="feature-popup-header">
-                <span>任务看板</span>
-                <button className="slide-panel-btn" onClick={() => setTaskPopup(false)}>
-                  <X />
-                </button>
-              </div>
-              <div className="feature-popup-body">
-                <TaskBoard compact />
-              </div>
-            </div>
-          </>
-        )}
-
         {/* Input */}
         <InputBar
           onSend={handleSend}
@@ -358,6 +407,42 @@ export default function ChatPanel({ onToggleSidebar }) {
           isGroup={isGroup}
         />
       </div>
+
+      {/* 任务看板悬浮窗 */}
+      {taskPopup && (
+        <>
+          <div className="task-popup-backdrop" onClick={() => setTaskPopup(false)} />
+          <div className="task-popup">
+            <div className="task-popup-header">
+              <span>任务看板</span>
+              <button className="slide-panel-btn" onClick={() => setTaskPopup(false)}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="task-popup-body">
+              <TaskBoard />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 协作图悬浮窗 */}
+      {dagPopup && (
+        <>
+          <div className="task-popup-backdrop" onClick={() => setDagPopup(false)} />
+          <div className="task-popup" style={{ maxWidth: 'min(560px, 90vw)' }}>
+            <div className="task-popup-header">
+              <span>协作图</span>
+              <button className="slide-panel-btn" onClick={() => setDagPopup(false)}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="task-popup-body">
+              <AgentDAG />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
