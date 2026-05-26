@@ -10,6 +10,7 @@ from app.core.websocket import manager
 from app.core.database import (
     init_db, save_message, get_messages, get_conversations, clear_messages,
     save_custom_agent, get_custom_agents, delete_custom_agent, create_conversation,
+    update_conversation_details,
 )
 from app.core.config import settings
 from app.core.llm_client import llm_client
@@ -141,6 +142,31 @@ async def update_llm_settings(s: LLMSettings):
     )
     _save_llm_config()
     return {"status": "ok", "configured": llm_client.is_configured()}
+
+
+@app.get("/api/ollama/models")
+async def list_ollama_models():
+    """Fetch installed models from local Ollama instance."""
+    import httpx
+    url = "http://127.0.0.1:11434/api/tags"
+    if llm_client.provider == "ollama" and llm_client.base_url:
+        base = llm_client.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            url = base[:-3] + "/api/tags"
+        elif "11434" in base:
+            url = base + "/api/tags" if not base.endswith("/api/tags") else base
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                models = [m["name"] for m in data.get("models", [])]
+                return {"status": "ok", "models": models}
+            else:
+                return {"status": "error", "message": f"Ollama returned status {resp.status_code}", "models": []}
+    except Exception as e:
+        return {"status": "error", "message": f"Ollama not running: {str(e)}", "models": []}
 
 
 @app.get("/")
@@ -573,6 +599,7 @@ def _register_custom_agent(config: dict):
     # Create a conversation for this agent
     conv_id = f"conv_{aid}"
     create_conversation(conv_id, "single", name, avatar, agent_id=aid, preview=role)
+    update_conversation_details(conv_id, name, avatar, role)
 
 
 def _remove_custom_agent(agent_id: str):
@@ -612,6 +639,21 @@ async def create_custom_agent(body: CustomAgentCreate):
     }
     _register_custom_agent(config)
     return {"status": "created", "agent": config}
+
+
+@app.put("/api/agents/custom/{agent_id}")
+async def update_custom_agent(agent_id: str, body: CustomAgentCreate):
+    config = {
+        "agent_id": agent_id,
+        "name": body.name,
+        "avatar": body.avatar,
+        "role": body.role,
+        "style": body.style,
+        "system_prompt": body.system_prompt,
+        "tools": body.tools,
+    }
+    _register_custom_agent(config)
+    return {"status": "updated", "agent": config}
 
 
 @app.delete("/api/agents/custom/{agent_id}")
@@ -720,6 +762,19 @@ async def preview_prompt(body: dict):
     }
 
 
+@app.post("/api/deploy/open-folder")
+async def open_deploy_folder():
+    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    export_dir = os.path.join(workspace_dir, "agenthub_export")
+    if os.path.exists(export_dir):
+        try:
+            os.startfile(export_dir)
+            return {"status": "ok"}
+        except Exception as e:
+            return {"error": f"Failed to open folder: {str(e)}"}
+    return {"error": "Deploy folder not found"}
+
+
 @app.post("/api/deploy/{conversation_id}")
 async def deploy_project(conversation_id: str):
     asyncio.create_task(_simulate_deploy(conversation_id))
@@ -727,6 +782,86 @@ async def deploy_project(conversation_id: str):
 
 
 async def _simulate_deploy(conversation_id: str):
+    # 1. Try to find the latest HTML code block from conversation history
+    messages = get_messages(conversation_id)
+    html_code = ""
+    for msg in reversed(messages):
+        text = msg.get("content", {}).get("text", "")
+        # Try to find a code block
+        code_match = re.search(r"```(?:html)?\n([\s\S]*?)```", text, re.IGNORECASE)
+        if code_match:
+            html_code = code_match.group(1).strip()
+            break
+            
+    # If no html code block found, check if there's any text in any code blocks
+    if not html_code:
+        for msg in reversed(messages):
+            text = msg.get("content", {}).get("text", "")
+            code_match = re.search(r"```\w*\n([\s\S]*?)```", text)
+            if code_match:
+                html_code = code_match.group(1).strip()
+                break
+                
+    # Fallback to a nice default template if no code block at all
+    if not html_code:
+        html_code = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AgentHub Demo</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 40px;
+            border-radius: 16px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        h1 { color: #6366f1; margin-bottom: 10px; }
+        p { color: #94a3b8; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🚀 AgentHub 生成项目</h1>
+        <p>这是一个默认的演示页面，未能在当前会话的历史记录中找到有效的 HTML 代码。</p>
+        <p>请尝试让前端工程师为您设计并生成代码后，再次点击部署！</p>
+    </div>
+</body>
+</html>"""
+
+    # 2. Write files in workspace under "agenthub_export"
+    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    export_dir = os.path.join(workspace_dir, "agenthub_export")
+    try:
+        os.makedirs(export_dir, exist_ok=True)
+        
+        # Write index.html
+        html_file_path = os.path.join(export_dir, "index.html")
+        with open(html_file_path, "w", encoding="utf-8") as f:
+            f.write(html_code)
+            
+        # Write 双击运行.bat
+        bat_file_path = os.path.join(export_dir, "双击运行.bat")
+        with open(bat_file_path, "w", encoding="gbk") as f:
+            f.write("@echo off\nstart index.html\n")
+            
+        local_path_msg = f"📂 本地交付件已生成在项目根目录 /agenthub_export 下"
+    except Exception as e:
+        local_path_msg = f"⚠️ 生成本地交付件出错: {str(e)}"
+
     logs = [
         "🚀 正在初始化云部署沙盒环境...",
         "📦 检查工作目录并拉取最新依赖包...",
@@ -735,11 +870,12 @@ async def _simulate_deploy(conversation_id: str):
         "🐳 正在向远端镜像仓库推送镜像 agenthub/app:latest...",
         "☸️ Kubernetes 资源调度与健康状态检查...",
         "🌎 域名解析与 SSL 证书(Let's Encrypt) 自动配置...",
-        "🎉 一键部署成功！静态资源与 API 服务均已上线。"
+        local_path_msg,
+        "🎉 一键部署与本地离线交付包打包成功！"
     ]
     
     for i, log in enumerate(logs):
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(1.0)
         status = "success" if i == len(logs) - 1 else "running"
         url = f"https://agenthub-app-{conversation_id[:6]}.netlify.app" if status == "success" else None
         
@@ -757,7 +893,7 @@ async def _simulate_deploy(conversation_id: str):
         "type": "message",
         "conversation_id": conversation_id,
         "sender": "agent_devops",
-        "content": {"text": f"✅ 报告！项目已成功一键部署上线！\n\n🌍 线上访问地址：{url}\n⚠️ 生产集群运行平稳，SSL 证书配置正确，CDN 分发已全球生效！"},
+        "content": {"text": f"✅ 报告！项目已成功打包并部署！\n\n🌎 模拟线上预览地址：{url}\n\n📂 **本地离线部署包已生成**！位置：`{export_dir}`\n\n💡 **如何运行**：\n您可以直接点击右侧面板中的 **「📂 打开本地部署文件夹」** 按钮，系统会立即为您打开该文件夹。您可以直接把这个文件夹复制到桌面，双击运行里面的 `双击运行.bat` 或 `index.html`，即可在任何电脑上完美离线打开与预览网页！"},
         "stream": False
     })
 

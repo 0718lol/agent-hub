@@ -180,3 +180,13 @@ def create_conversation(conv_id: str, conv_type: str, name: str, avatar: str,
     )
     conn.commit()
     conn.close()
+
+
+def update_conversation_details(conv_id: str, name: str, avatar: str, preview: str):
+    conn = get_db()
+    conn.execute(
+        'UPDATE conversations SET name = ?, avatar = ?, preview = ? WHERE id = ?',
+        (name, avatar, preview, conv_id)
+    )
+    conn.commit()
+    conn.close()

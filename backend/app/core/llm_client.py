@@ -30,6 +30,8 @@ class LLMClient:
             return True
         if self.provider == "claude_code":
             return bool(self.api_key)
+        if self.provider == "ollama":
+            return bool(self.model)
         return bool(self.api_key and self.base_url and self.model)
 
     async def chat_stream(self, messages: list[dict], system: str = "") -> AsyncGenerator[str, None]:
@@ -42,6 +44,11 @@ class LLMClient:
                     yield chunk
             elif self.provider == "anthropic":
                 async for chunk in self._anthropic_stream(messages, system):
+                    yield chunk
+            elif self.provider == "ollama":
+                if not self.base_url:
+                    self.base_url = "http://127.0.0.1:11434/v1"
+                async for chunk in self._openai_stream(messages, system):
                     yield chunk
             else:
                 async for chunk in self._openai_stream(messages, system):

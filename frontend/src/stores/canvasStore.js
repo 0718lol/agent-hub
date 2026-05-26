@@ -112,4 +112,11 @@ export const useCanvasStore = create((set) => ({
         ),
       }
     }),
+
+  updateNodePosition: (nodeId, x, y) =>
+    set((state) => ({
+      dagNodes: state.dagNodes.map((n) =>
+        n.id === nodeId ? { ...n, x, y } : n
+      ),
+    })),
 }))

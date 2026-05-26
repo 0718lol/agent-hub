@@ -181,6 +181,7 @@ export default function ChatPanel() {
       }
 
       if (data.type === 'message') {
+        if (data.sender === 'user') return
         const isStreaming = data.stream
 
         if (isStreaming) {

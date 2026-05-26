@@ -115,6 +115,13 @@ export const useChatStore = create((set, get) => ({
       return { conversations: [...state.conversations, conv] }
     }),
 
+  updateConversation: (convId, updates) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === convId ? { ...c, ...updates } : c
+      ),
+    })),
+
   removeConversation: (convId) =>
     set((state) => ({
       conversations: state.conversations.filter((c) => c.id !== convId),

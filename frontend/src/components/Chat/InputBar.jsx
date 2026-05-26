@@ -20,6 +20,7 @@ export default function InputBar({ onSend, isGenerating, onStop }) {
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.nativeEvent.isComposing) return
       e.preventDefault()
       handleSend()
     }

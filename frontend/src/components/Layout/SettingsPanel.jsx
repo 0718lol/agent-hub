@@ -12,6 +12,44 @@ export default function SettingsPanel({ onClose }) {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
+  // Ollama integration states
+  const [ollamaModels, setOllamaModels] = useState([])
+  const [ollamaLoading, setOllamaLoading] = useState(false)
+  const [ollamaError, setOllamaError] = useState('')
+
+  const fetchOllamaModels = () => {
+    setOllamaLoading(true)
+    setOllamaError('')
+    fetch('/api/ollama/models')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.status === 'ok') {
+          setOllamaModels(d.models || [])
+          if (d.models && d.models.length > 0) {
+            if (!model || !d.models.includes(model)) {
+              setModel(d.models[0])
+            }
+          } else {
+            setOllamaError('未在本地 Ollama 中发现已下载的模型，请先运行 "ollama run <model>"')
+          }
+        } else {
+          setOllamaError(d.message || '无法获取本地模型列表')
+        }
+      })
+      .catch(() => {
+        setOllamaError('无法连接到后端或本地 Ollama 服务没有运行')
+      })
+      .finally(() => {
+        setOllamaLoading(false)
+      })
+  }
+
+  useEffect(() => {
+    if (provider === 'ollama') {
+      fetchOllamaModels()
+    }
+  }, [provider])
+
   // Quality gate state
   const [qEnabled, setQEnabled] = useState(true)
   const [bestOfN, setBestOfN] = useState(1)
@@ -55,12 +93,12 @@ export default function SettingsPanel({ onClose }) {
       const resp = await fetch('/api/settings/llm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl, model, temperature, max_tokens: maxTokens }),
+        body: JSON.stringify({ provider, api_key: provider === 'ollama' ? 'ollama' : apiKey, base_url: baseUrl, model, temperature, max_tokens: maxTokens }),
       })
       const d = await resp.json()
       setConfigured(d.configured)
       setMsg(d.configured ? '配置成功！Agent 现在会使用真实 LLM 回复' : '请填写完整信息')
-      if (d.configured) setApiKey('')
+      if (d.configured && provider !== 'ollama') setApiKey('')
     } catch {
       setMsg('保存失败，请检查后端是否运行')
     }
@@ -95,6 +133,7 @@ export default function SettingsPanel({ onClose }) {
   }
 
   const presets = [
+    { label: 'Ollama 本地', provider: 'ollama', base_url: 'http://127.0.0.1:11434/v1', model: '' },
     { label: '小米 MiLM', provider: 'openai', base_url: 'https://token-plan-cn.xiaomimimo.com/v1', model: 'mimo-v2.5' },
     { label: 'DeepSeek', provider: 'openai', base_url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { label: '通义千问', provider: 'openai', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo' },
@@ -209,15 +248,20 @@ export default function SettingsPanel({ onClose }) {
             <div style={{ marginBottom: 16 }}>
               <label style={labelStyle}>接口格式</label>
               <div style={{ display: 'flex', gap: 8 }}>
-                {['openai', 'anthropic'].map((p) => (
-                  <button key={p} onClick={() => setProvider(p)} style={{
+                {['openai', 'anthropic', 'ollama'].map((p) => (
+                  <button key={p} onClick={() => {
+                    setProvider(p);
+                    if (p === 'ollama') {
+                      setBaseUrl('http://127.0.0.1:11434/v1');
+                    }
+                  }} style={{
                     flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
                     background: provider === p ? '#6366f1' : 'rgba(255,255,255,0.04)',
                     border: `1px solid ${provider === p ? '#6366f1' : 'rgba(255,255,255,0.1)'}`,
                     color: provider === p ? 'white' : '#94a3b8',
                     cursor: 'pointer', fontWeight: provider === p ? 600 : 400,
                   }}>
-                    {p === 'openai' ? 'OpenAI 兼容' : 'Anthropic'}
+                    {p === 'openai' ? 'OpenAI 兼容' : p === 'anthropic' ? 'Anthropic' : 'Ollama 本地'}
                   </button>
                 ))}
               </div>
@@ -230,14 +274,64 @@ export default function SettingsPanel({ onClose }) {
             </div>
             <div style={{ marginBottom: 16 }}>
               <label style={labelStyle}>模型名称</label>
-              <input value={model} onChange={(e) => setModel(e.target.value)}
-                placeholder="model-name" style={inputStyle} />
+              {provider === 'ollama' ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {ollamaModels.length > 0 ? (
+                    <select
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      style={{ ...inputStyle, flex: 1 }}
+                    >
+                      {ollamaModels.map((m) => (
+                        <option key={m} value={m} style={{ background: '#1e293b', color: '#f8fafc' }}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      placeholder="例如: deepseek-r1:7b"
+                      style={{ ...inputStyle, flex: 1 }}
+                    />
+                  )}
+                  <button
+                    onClick={(e) => { e.preventDefault(); fetchOllamaModels(); }}
+                    disabled={ollamaLoading}
+                    style={{
+                      padding: '10px 14px',
+                      background: 'rgba(99,102,241,0.1)',
+                      border: '1px solid rgba(99,102,241,0.2)',
+                      color: '#a5b4fc',
+                      borderRadius: 8,
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4
+                    }}
+                  >
+                    {ollamaLoading ? '🔄' : '🔄 刷新'}
+                  </button>
+                </div>
+              ) : (
+                <input value={model} onChange={(e) => setModel(e.target.value)}
+                  placeholder="model-name" style={inputStyle} />
+              )}
+              {provider === 'ollama' && ollamaError && (
+                <div style={{ marginTop: 6, fontSize: 11, color: '#fbbf24' }}>
+                  ⚠️ {ollamaError}
+                </div>
+              )}
             </div>
-            <div style={{ marginBottom: 16 }}>
-              <label style={labelStyle}>API Key</label>
-              <input value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-                type="password" placeholder="sk-..." style={inputStyle} />
-            </div>
+            {provider !== 'ollama' && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={labelStyle}>API Key</label>
+                <input value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+                  type="password" placeholder="sk-..." style={inputStyle} />
+              </div>
+            )}
 
             {/* Temperature & Max Tokens */}
             <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
