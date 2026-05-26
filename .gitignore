@@ -13,8 +13,17 @@ venv/
 .venv/
 backend/venv/
 
-# 运行时数据目录（上传文件、数据库、API Key 配置等）
-backend/data/
+# 比赛资料（不参与 GitHub 上传）
+资料/
 
-# Claude Code IDE 本地配置
-.claude/
+# Harness eval outputs (CLI 跑出来的临时产物)
+backend/harness_*.json
+backend/harness_*.html
+backend/report.html
+
+# Editor configs
+.vscode/
+.idea/
+
+# Personal scratch
+xmz/*.txt

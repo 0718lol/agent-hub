@@ -331,6 +331,27 @@ export default function ChatPanel({ onToggleSidebar }) {
             <span className="icon-tooltip">代码/文档预览</span>
           </button>
         </div>
+        <button
+          onClick={handleClearHistory}
+          title="清空对话历史"
+          style={{
+            background: 'rgba(239,68,68,0.08)',
+            border: '1px solid rgba(239,68,68,0.2)',
+            color: '#f87171',
+            borderRadius: 8,
+            padding: '6px 12px',
+            fontSize: 12,
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+          onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.15)' }}
+          onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)' }}
+        >
+          🗑️ 新对话
+        </button>
       </div>
 
       <div className="chat-panel-inner">
