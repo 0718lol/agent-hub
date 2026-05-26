@@ -181,10 +181,6 @@ export default function ChatPanel() {
       }
 
       if (data.type === 'message') {
-        // User messages are added locally in handleSend; the backend echoes them
-        // back over WS, which would otherwise duplicate every user bubble.
-        if (data.sender === 'user') return
-
         const isStreaming = data.stream
 
         if (isStreaming) {
@@ -241,10 +237,6 @@ export default function ChatPanel() {
       streaming: false,
     })
 
-    // Optimistically flip to "generating" so the stop button appears immediately,
-    // without waiting for the backend's generating=true broadcast round-trip.
-    setGenerating(activeId, true)
-
     const targetAgent = conv?.type === 'single' ? conv.agentId : undefined
     wsClient.send({
       type: 'message',
@@ -258,28 +250,13 @@ export default function ChatPanel() {
     wsClient.send({ type: 'stop', conversation_id: activeId })
   }
 
-  const handleClearHistory = async () => {
-    if (!window.confirm(`确定清空与「${conv?.name}」的所有对话历史？此操作不可恢复。`)) return
-    try {
-      await fetch(`/api/conversations/${activeId}/messages`, { method: 'DELETE' })
-      useChatStore.getState().clearMessages(activeId)
-      // Also clear right-panel artifacts tied to this conversation
-      useCanvasStore.getState().setPreviewHtml('')
-      useCanvasStore.getState().setGeneratedCode('text', '')
-      setGenerating(activeId, false)
-    } catch (e) {
-      console.error('Clear history failed:', e)
-      window.alert('清空失败，请检查后端是否运行')
-    }
-  }
-
   if (!conv) return <div className="chat-panel"><div className="empty-state"><div className="icon">💬</div><div className="text">选择一个会话开始</div></div></div>
 
   return (
     <div className="chat-panel">
       <div className="chat-header">
         <div className="avatar">{conv.avatar}</div>
-        <div style={{ flex: 1 }}>
+        <div>
           <div className="title">{conv.name}</div>
           <div className="subtitle">
             {typingAgentIds.length > 0
@@ -290,27 +267,6 @@ export default function ChatPanel() {
             }
           </div>
         </div>
-        <button
-          onClick={handleClearHistory}
-          title="清空对话历史"
-          style={{
-            background: 'rgba(239,68,68,0.08)',
-            border: '1px solid rgba(239,68,68,0.2)',
-            color: '#f87171',
-            borderRadius: 8,
-            padding: '6px 12px',
-            fontSize: 12,
-            cursor: 'pointer',
-            transition: 'all 0.15s',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-          }}
-          onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.15)' }}
-          onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)' }}
-        >
-          🗑️ 新对话
-        </button>
       </div>
 
       <div className="chat-messages" ref={messagesRef}>

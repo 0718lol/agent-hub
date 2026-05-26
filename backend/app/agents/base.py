@@ -67,13 +67,7 @@ class BaseAgent:
                 if text:
                     messages.append({"role": role, "content": text})
 
-        # Avoid duplicating the current user message when history already includes it
-        # (main.py saves the user message before fetching history, so the last entry
-        # may already be the same message — appending again breaks Anthropic's
-        # user/assistant alternation rule).
-        if not (messages and messages[-1].get("role") == "user"
-                and messages[-1].get("content") == message):
-            messages.append({"role": "user", "content": message})
+        messages.append({"role": "user", "content": message})
         return messages
 
     def _generate_reply(self, message: str, context: list = None) -> str:

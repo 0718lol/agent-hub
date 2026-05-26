@@ -102,15 +102,10 @@ class LLMClient:
         if not url.startswith("http"):
             url = f"https://{url}"
 
-        sanitized = _sanitize_for_anthropic(messages)
-        if not sanitized:
-            yield "[LLM Error: 消息为空或无 user 消息，无法调用 Anthropic API]"
-            return
-
         payload = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "messages": sanitized,
+            "messages": messages,
             "stream": True,
             "temperature": self.temperature,
         }
@@ -163,21 +158,3 @@ class LLMClient:
 
 
 llm_client = LLMClient()
-
-
-def _sanitize_for_anthropic(messages: list[dict]) -> list[dict]:
-    """Anthropic 要求 messages 以 user 开头且 user/assistant 交替。
-    合并相邻同 role 的消息，丢弃开头的 assistant 消息。"""
-    cleaned: list[dict] = []
-    for m in messages:
-        role = m.get("role")
-        content = m.get("content", "")
-        if not content or role not in ("user", "assistant"):
-            continue
-        if cleaned and cleaned[-1]["role"] == role:
-            cleaned[-1]["content"] = f"{cleaned[-1]['content']}\n\n{content}"
-        else:
-            cleaned.append({"role": role, "content": content})
-    while cleaned and cleaned[0]["role"] != "user":
-        cleaned.pop(0)
-    return cleaned
