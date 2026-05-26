@@ -9,7 +9,7 @@ export default function WebPreview() {
   return (
     <div className="web-preview">
       <div className="preview-url-bar">
-        <span style={{ color: 'var(--green)', fontSize: 12 }}>●</span>
+        <span style={{ color: '#10b981', fontSize: 12 }}>●</span>
         <input value="http://localhost:3000/preview" readOnly />
       </div>
       <iframe

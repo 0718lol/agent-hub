@@ -18,6 +18,7 @@ from app.core.llm_client import llm_client
 from app.core.quality_gate import quality_gate
 from app.core.quality_retry import evaluate_and_retry
 from app.core.prompt_engine import prompt_engine
+from app.core.speech import stt_client
 from app.routers import agents as agents_router
 from app.routers import uploads as uploads_router
 
@@ -152,6 +153,31 @@ async def update_llm_settings(s: LLMSettings):
     )
     _save_llm_config()
     return {"status": "ok", "configured": llm_client.is_configured()}
+
+
+@app.get("/api/ollama/models")
+async def list_ollama_models():
+    """Fetch installed models from local Ollama instance."""
+    import httpx
+    url = "http://127.0.0.1:11434/api/tags"
+    if llm_client.provider == "ollama" and llm_client.base_url:
+        base = llm_client.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            url = base[:-3] + "/api/tags"
+        elif "11434" in base:
+            url = base + "/api/tags" if not base.endswith("/api/tags") else base
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                models = [m["name"] for m in data.get("models", [])]
+                return {"status": "ok", "models": models}
+            else:
+                return {"status": "error", "message": f"Ollama returned status {resp.status_code}", "models": []}
+    except Exception as e:
+        return {"status": "error", "message": f"Ollama not running: {str(e)}", "models": []}
 
 
 @app.get("/")
@@ -828,6 +854,98 @@ async def preview_prompt(body: dict):
         "char_count": len(assembled),
         "estimated_tokens": len(assembled) // 3,
     }
+
+
+# ---- Speech-to-Text API ----
+
+STT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "stt_config.json")
+
+
+def _load_stt_config():
+    try:
+        if os.path.exists(STT_CONFIG_PATH):
+            with open(STT_CONFIG_PATH, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            stt_client.configure(
+                api_key=cfg.get("api_key", ""),
+                base_url=cfg.get("base_url", ""),
+                model=cfg.get("model", "whisper-1"),
+                language=cfg.get("language", "zh"),
+            )
+    except Exception:
+        pass
+
+
+def _save_stt_config():
+    os.makedirs(os.path.dirname(STT_CONFIG_PATH), exist_ok=True)
+    with open(STT_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump({
+            "api_key": stt_client.api_key,
+            "base_url": stt_client.base_url,
+            "model": stt_client.model,
+            "language": stt_client.language,
+        }, f, ensure_ascii=False, indent=2)
+
+
+_load_stt_config()
+
+
+class STTSettings(BaseModel):
+    api_key: str = ""
+    base_url: str = ""
+    model: str = "whisper-1"
+    language: str = "zh"
+
+
+@app.get("/api/settings/stt")
+async def get_stt_settings():
+    return {
+        "configured": stt_client.is_configured(),
+        "base_url": stt_client.base_url,
+        "model": stt_client.model,
+        "language": stt_client.language,
+    }
+
+
+@app.post("/api/settings/stt")
+async def update_stt_settings(s: STTSettings):
+    stt_client.configure(
+        api_key=s.api_key or stt_client.api_key,
+        base_url=s.base_url,
+        model=s.model,
+        language=s.language,
+    )
+    _save_stt_config()
+    return {"configured": stt_client.is_configured()}
+
+
+@app.post("/api/speech/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    """
+    Upload an audio file and get transcribed text back.
+    Supports: webm, wav, mp3, m4a, ogg, flac
+    Falls back to LLM provider's Whisper endpoint if STT not separately configured.
+    """
+    audio_bytes = await file.read()
+    filename = file.filename or "audio.webm"
+
+    # If STT not configured, try using the LLM provider's base_url + key
+    if not stt_client.is_configured() and llm_client.is_configured():
+        stt_client.configure(
+            api_key=llm_client.api_key,
+            base_url=llm_client.base_url,
+            model="whisper-1",
+            language="zh",
+        )
+
+    if not stt_client.is_configured():
+        return {"error": "语音识别未配置。请在设置中配置 STT API 或 LLM API。", "text": ""}
+
+    try:
+        text = await stt_client.transcribe(audio_bytes, filename)
+        return {"text": text, "status": "ok"}
+    except Exception as e:
+        return {"error": f"语音识别失败: {str(e)[:200]}", "text": ""}
 
 
 @app.post("/api/deploy/{conversation_id}")

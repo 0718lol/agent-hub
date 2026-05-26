@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Square, AtSign, Plus, Mic, Image, Paperclip } from 'lucide-react'
+import { Send, Square, AtSign, Plus, Mic, MicOff, Image, Paperclip, Loader } from 'lucide-react'
 import { useAgentStore } from '../../stores/agentStore'
 import AgentSelector from './AgentSelector'
 import FileUploader from './FileUploader'
+import { useVoiceRecorder } from '../../utils/useVoiceRecorder'
 
 export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
   const [text, setText] = useState('')
@@ -16,6 +17,15 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
   const plusBtnRef = useRef(null)
+
+  // Voice recording
+  const handleTranscribed = useCallback((transcribedText) => {
+    setText((prev) => prev + (prev ? ' ' : '') + transcribedText)
+  }, [])
+  const {
+    isRecording, isTranscribing, duration, error: voiceError,
+    startRecording, stopRecording, cancelRecording,
+  } = useVoiceRecorder(handleTranscribed)
 
   // Auto-resize textarea: grow with content, cap at 120px then scroll
   useEffect(() => {
@@ -189,11 +199,99 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
               <AtSign size={18} />
             </button>
           </div>
+          {/* Voice recording button */}
+          {isRecording ? (
+            <button
+              className="coze-toolbar-btn"
+              onClick={stopRecording}
+              title="停止录音"
+              style={{ color: 'var(--red, #ef4444)', animation: 'pulse 1s infinite' }}
+            >
+              <MicOff size={18} />
+              <span style={{ fontSize: 11, marginLeft: 2 }}>{duration}s</span>
+            </button>
+          ) : isTranscribing ? (
+            <button className="coze-toolbar-btn" disabled title="识别中...">
+              <Loader size={18} style={{ animation: 'spin 1s linear infinite' }} />
+            </button>
+          ) : (
+            <button
+              className="coze-toolbar-btn"
+              onClick={startRecording}
+              title="语音输入"
+            >
+              <Mic size={18} />
+            </button>
+          )}
           <button className="coze-send-btn" onClick={handleSend} disabled={!hasContent}>
-            {hasContent ? <Send size={16} /> : <Mic size={16} />}
+            <Send size={16} />
           </button>
         </div>
       </div>
+
+      {/* Recording overlay */}
+      {isRecording && (
+        <div style={{
+          position: 'absolute', bottom: '100%', left: 0, right: 0,
+          padding: '10px 16px',
+          background: 'var(--bg-primary, #1e293b)',
+          borderTop: '1px solid var(--red, #ef4444)',
+          display: 'flex', alignItems: 'center', gap: 12,
+          animation: 'slideUp 0.2s ease',
+        }}>
+          <div style={{
+            width: 10, height: 10, borderRadius: '50%',
+            background: 'var(--red, #ef4444)',
+            animation: 'pulse 1s infinite',
+          }} />
+          <span style={{ fontSize: 13, color: 'var(--text-primary, #f8fafc)', flex: 1 }}>
+            正在录音... {duration}s
+          </span>
+          <button
+            onClick={cancelRecording}
+            style={{
+              padding: '4px 12px', borderRadius: 6, fontSize: 12,
+              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+              color: 'var(--text-secondary, #94a3b8)', cursor: 'pointer',
+            }}
+          >取消</button>
+          <button
+            onClick={stopRecording}
+            style={{
+              padding: '4px 12px', borderRadius: 6, fontSize: 12,
+              background: 'var(--accent, #6366f1)', border: 'none',
+              color: 'white', cursor: 'pointer', fontWeight: 600,
+            }}
+          >完成识别</button>
+        </div>
+      )}
+
+      {/* Voice error toast */}
+      {voiceError && (
+        <div style={{
+          position: 'absolute', bottom: '100%', left: 16, right: 16,
+          padding: '8px 14px', borderRadius: 8, marginBottom: 4,
+          background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
+          fontSize: 12, color: '#ef4444',
+        }}>
+          🎤 {voiceError}
+        </div>
+      )}
+
+      {/* Transcribing indicator */}
+      {isTranscribing && (
+        <div style={{
+          position: 'absolute', bottom: '100%', left: 0, right: 0,
+          padding: '10px 16px',
+          background: 'var(--bg-primary, #1e293b)',
+          borderTop: '1px solid var(--accent, #6366f1)',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 13, color: 'var(--accent, #6366f1)',
+        }}>
+          <Loader size={14} style={{ animation: 'spin 1s linear infinite' }} />
+          语音识别中，请稍候...
+        </div>
+      )}
 
       {showSelector && (
         <AgentSelector

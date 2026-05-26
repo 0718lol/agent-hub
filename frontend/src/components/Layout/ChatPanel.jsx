@@ -337,11 +337,27 @@ export default function ChatPanel({ onToggleSidebar }) {
           </button>
           <button
             className="header-icon-btn"
-            onClick={() => toggleSlidePanel('code')}
-            style={slidePanelOpen && slidePanelContent === 'code' ? { color: 'var(--accent)' } : undefined}
+            onClick={() => { toggleSlidePanel('code'); useCanvasStore.getState().setSlidePanelTab('code') }}
+            style={slidePanelOpen && slidePanelContent === 'code' && useCanvasStore.getState().slidePanelTab === 'code' ? { color: 'var(--accent)' } : undefined}
           >
             <Code2 size={20} />
-            <span className="icon-tooltip">代码/文档预览</span>
+            <span className="icon-tooltip">代码</span>
+          </button>
+          <button
+            className="header-icon-btn"
+            onClick={() => { toggleSlidePanel('code'); useCanvasStore.getState().setSlidePanelTab('preview') }}
+            style={slidePanelOpen && slidePanelContent === 'code' && useCanvasStore.getState().slidePanelTab === 'preview' ? { color: 'var(--accent)' } : undefined}
+          >
+            <span style={{ fontSize: 16 }}>🌐</span>
+            <span className="icon-tooltip">项目预览</span>
+          </button>
+          <button
+            className="header-icon-btn"
+            onClick={() => { toggleSlidePanel('code'); useCanvasStore.getState().setSlidePanelTab('deploy') }}
+            style={slidePanelOpen && slidePanelContent === 'code' && useCanvasStore.getState().slidePanelTab === 'deploy' ? { color: 'var(--accent)' } : undefined}
+          >
+            <span style={{ fontSize: 16 }}>🚀</span>
+            <span className="icon-tooltip">部署</span>
           </button>
         </div>
         <button

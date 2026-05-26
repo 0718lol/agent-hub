@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { useCanvasStore } from '../../stores/canvasStore'
 import DiffViewer from '../Canvas/DiffViewer'
 import WebPreview from '../Canvas/WebPreview'
+import DeployPanel from '../Canvas/DeployPanel'
 import SearchPanel from './SearchPanel'
 import { useChatStore } from '../../stores/chatStore'
 
@@ -78,13 +79,19 @@ export default function SlidePanel() {
                 className={`slide-panel-tab ${tab === 'code' ? 'active' : ''}`}
                 onClick={() => setTab('code')}
               >
-                代码预览
+                代码
               </button>
               <button
                 className={`slide-panel-tab ${tab === 'preview' ? 'active' : ''}`}
                 onClick={() => setTab('preview')}
               >
-                文档预览
+                预览
+              </button>
+              <button
+                className={`slide-panel-tab ${tab === 'deploy' ? 'active' : ''}`}
+                onClick={() => setTab('deploy')}
+              >
+                部署
               </button>
             </>
           )}
@@ -101,6 +108,7 @@ export default function SlidePanel() {
       <div className="slide-panel-content">
         {content === 'code' && tab === 'code' && <DiffViewer />}
         {content === 'code' && tab === 'preview' && <WebPreview />}
+        {content === 'code' && tab === 'deploy' && <DeployPanel />}
         {content === 'search' && (
           <SearchPanel
             onSelect={(convId) => {
