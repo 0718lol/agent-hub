@@ -14,8 +14,10 @@ from app.core.database import (
 from app.core.config import settings
 from app.core.llm_client import llm_client
 from app.core.quality_gate import quality_gate
+from app.core.quality_retry import evaluate_and_retry
 from app.core.prompt_engine import prompt_engine
 from app.routers import agents as agents_router
+from app.routers.harness_handler import try_intercept_with_harness, handle_verdict
 
 LLM_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "llm_config.json")
 from app.agents.pm import PMAgent
@@ -172,6 +174,9 @@ async def delete_messages(conversation_id: str):
 @app.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     await manager.connect(websocket, conversation_id)
+    # Tasks spawned for ongoing generations on this connection, so we can
+    # await them at disconnect time. Stop is signalled via _stop_events.
+    bg_tasks: set[asyncio.Task] = set()
     try:
         while True:
             data = await websocket.receive_text()
@@ -183,9 +188,12 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             text = content.get("text", "")
             target_agent = content.get("target_agent")
 
-            # Handle stop generation
+            # Handle stop generation — must be processed without blocking on
+            # the in-flight generation task (which is why generation runs as a
+            # background task, not awaited here).
             if msg_type == "stop":
                 event = _stop_events.get(conversation_id)
+                print(f"[STOP] conv={conversation_id} event_exists={event is not None} already_set={event.is_set() if event else 'N/A'}", flush=True)
                 if event:
                     event.set()
                 continue
@@ -199,6 +207,11 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 })
                 continue
 
+            # Handle harness verdict (user裁决指令)
+            if msg_type == "harness_verdict":
+                await handle_verdict(conversation_id, msg, manager)
+                continue
+
             save_message(conversation_id, sender, content, streaming=False)
 
             await manager.broadcast(conversation_id, {
@@ -209,78 +222,120 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 "stream": False,
             })
 
+            # If a previous generation is still running for this conversation,
+            # signal it to stop before starting a new one.
+            prev_event = _stop_events.get(conversation_id)
+            if prev_event and not prev_event.is_set():
+                prev_event.set()
+
             if target_agent and target_agent in AGENTS:
-                agent = AGENTS[target_agent]
-                stop_event = asyncio.Event()
-                _stop_events[conversation_id] = stop_event
-                await manager.broadcast(conversation_id, {
-                    "type": "generating",
-                    "conversation_id": conversation_id,
-                    "is_generating": True,
-                })
-                assigned_agent_ids, pm_response = await _stream_agent_reply(conversation_id, agent, text, stop_event)
-
-                # If the agent (e.g. PM) assigned downstream agents, trigger them
-                if assigned_agent_ids and not stop_event.is_set():
-                    agents_to_run = [AGENTS[aid] for aid in assigned_agent_ids if aid in AGENTS and aid != target_agent]
-                    if agents_to_run:
-                        await asyncio.gather(*[
-                            _stream_agent_reply(conversation_id, a, text, stop_event, context=pm_response)
-                            for a in agents_to_run
-                        ])
-
-                _stop_events.pop(conversation_id, None)
-                await manager.broadcast(conversation_id, {
-                    "type": "generating",
-                    "conversation_id": conversation_id,
-                    "is_generating": False,
-                })
+                task = asyncio.create_task(
+                    _run_target_agent_flow(conversation_id, AGENTS[target_agent], text)
+                )
+                bg_tasks.add(task)
+                task.add_done_callback(bg_tasks.discard)
             elif sender == "user":
-                # Create stop event for this generation
-                stop_event = asyncio.Event()
-                _stop_events[conversation_id] = stop_event
-
-                # Broadcast generating start
-                await manager.broadcast(conversation_id, {
-                    "type": "generating",
-                    "conversation_id": conversation_id,
-                    "is_generating": True,
-                })
-
-                is_group = not target_agent
-                pm = AGENTS.get("agent_pm")
-                assigned_agent_ids = []
-                pm_response = ""
-
-                if pm:
-                    assigned_agent_ids, pm_response = await _stream_agent_reply(conversation_id, pm, text, stop_event)
-
-                if is_group and not stop_event.is_set():
-                    # Determine which agents to run
-                    if assigned_agent_ids:
-                        # PM assigned specific agents
-                        agents_to_run = [AGENTS[aid] for aid in assigned_agent_ids if aid in AGENTS and aid != "agent_pm"]
-                    else:
-                        # Default: designer + frontend + backend
-                        agents_to_run = [AGENTS["agent_designer"], AGENTS["agent_frontend"], AGENTS["agent_backend"]]
-
-                    if agents_to_run:
-                        # Pass PM's task breakdown as context to other agents
-                        await asyncio.gather(*[
-                            _stream_agent_reply(conversation_id, agent, text, stop_event, context=pm_response)
-                            for agent in agents_to_run
-                        ])
-
-                # Clean up stop event and broadcast generating end
-                _stop_events.pop(conversation_id, None)
-                await manager.broadcast(conversation_id, {
-                    "type": "generating",
-                    "conversation_id": conversation_id,
-                    "is_generating": False,
-                })
+                task = asyncio.create_task(
+                    _run_user_message_flow(conversation_id, text, target_agent)
+                )
+                bg_tasks.add(task)
+                task.add_done_callback(bg_tasks.discard)
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, conversation_id)
+        # Signal any in-flight generation to stop on disconnect
+        event = _stop_events.get(conversation_id)
+        if event:
+            event.set()
+
+
+async def _run_target_agent_flow(conversation_id: str, agent, text: str):
+    """Background generation flow when user targets a specific agent."""
+    stop_event = asyncio.Event()
+    _stop_events[conversation_id] = stop_event
+    try:
+        await manager.broadcast(conversation_id, {
+            "type": "generating",
+            "conversation_id": conversation_id,
+            "is_generating": True,
+        })
+        assigned_agent_ids, pm_response = await _stream_agent_reply(
+            conversation_id, agent, text, stop_event
+        )
+
+        # If the agent (e.g. PM) assigned downstream agents, trigger them
+        if assigned_agent_ids and not stop_event.is_set():
+            agents_to_run = [
+                AGENTS[aid] for aid in assigned_agent_ids
+                if aid in AGENTS and aid != agent.agent_id
+            ]
+            if agents_to_run:
+                await asyncio.gather(*[
+                    _stream_agent_reply(conversation_id, a, text, stop_event, context=pm_response)
+                    for a in agents_to_run
+                ])
+    finally:
+        _stop_events.pop(conversation_id, None)
+        await manager.broadcast(conversation_id, {
+            "type": "generating",
+            "conversation_id": conversation_id,
+            "is_generating": False,
+        })
+
+
+async def _run_user_message_flow(conversation_id: str, text: str, target_agent: str | None):
+    """Background generation flow for a plain user message (group or auto-routed)."""
+    stop_event = asyncio.Event()
+    _stop_events[conversation_id] = stop_event
+    try:
+        await manager.broadcast(conversation_id, {
+            "type": "generating",
+            "conversation_id": conversation_id,
+            "is_generating": True,
+        })
+
+        # ---- Harness 拦截：复杂任务进入辩论沙盒 ----
+        intercepted = await try_intercept_with_harness(
+            conversation_id, text, llm_client, manager
+        )
+        if intercepted:
+            return
+
+        # User may have stopped during harness — skip downstream agents
+        if stop_event.is_set():
+            return
+
+        is_group = not target_agent
+        pm = AGENTS.get("agent_pm")
+        assigned_agent_ids = []
+        pm_response = ""
+
+        if pm:
+            assigned_agent_ids, pm_response = await _stream_agent_reply(
+                conversation_id, pm, text, stop_event
+            )
+
+        if is_group and not stop_event.is_set():
+            if assigned_agent_ids:
+                agents_to_run = [
+                    AGENTS[aid] for aid in assigned_agent_ids
+                    if aid in AGENTS and aid != "agent_pm"
+                ]
+            else:
+                agents_to_run = [AGENTS["agent_designer"], AGENTS["agent_frontend"], AGENTS["agent_backend"]]
+
+            if agents_to_run:
+                await asyncio.gather(*[
+                    _stream_agent_reply(conversation_id, agent, text, stop_event, context=pm_response)
+                    for agent in agents_to_run
+                ])
+    finally:
+        _stop_events.pop(conversation_id, None)
+        await manager.broadcast(conversation_id, {
+            "type": "generating",
+            "conversation_id": conversation_id,
+            "is_generating": False,
+        })
 
 
 async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_event: asyncio.Event = None, context: str = "") -> tuple[list[str], str]:
@@ -360,6 +415,7 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
             async for chunk in agent.stream_reply(effective_text, history=history):
                 # Check stop signal
                 if stop_event and stop_event.is_set():
+                    print(f"[STOP] breaking stream loop for agent={agent.agent_id}", flush=True)
                     break
 
                 raw_text += chunk
@@ -464,6 +520,36 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
         # Final text is whatever remains in buffer (summary only)
         full_text = buffer.strip()
 
+        # Bare HTML fallback: if the model returned raw HTML without a ``` fence,
+        # detect <!DOCTYPE> / <html> and route it to the canvas as a code block
+        # so it doesn't dump the entire HTML source into the chat bubble.
+        if full_text and "```" not in raw_text and re.search(
+            r'<!DOCTYPE\s+html|<html[\s>]|<body[\s>]', full_text, re.IGNORECASE
+        ):
+            html_match = re.search(
+                r'(<!DOCTYPE[\s\S]*?</html>|<html[\s\S]*?</html>|<body[\s\S]*?</body>)',
+                full_text, re.IGNORECASE
+            )
+            if html_match:
+                bare_html = html_match.group(1).strip()
+                await manager.broadcast(conversation_id, {
+                    "type": "code",
+                    "conversation_id": conversation_id,
+                    "agent_id": agent.agent_id,
+                    "language": "html",
+                    "code": bare_html,
+                })
+                await manager.broadcast(conversation_id, {
+                    "type": "preview",
+                    "conversation_id": conversation_id,
+                    "agent_id": agent.agent_id,
+                    "html": bare_html,
+                })
+                # Strip HTML from chat bubble, leave a short notice
+                full_text = full_text.replace(bare_html, "").strip()
+                if not full_text:
+                    full_text = "（已生成代码，请查看右侧面板）"
+
     except Exception as e:
         err_msg = f"[Agent 回复出错: {type(e).__name__}: {str(e)[:200]}]"
         if not full_text:
@@ -480,43 +566,28 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
     if not raw_text:
         raw_text = full_text
 
-    # ---- Quality Gate: evaluate and optionally auto-retry ----
-    if not stopped and quality_gate.enabled and agent.agent_id not in ("agent_builder", "agent_pm"):
-        report = quality_gate.evaluate(raw_text, agent.agent_id)
-        if not report.passed and quality_gate.max_retries > 0:
-            # Auto-retry: re-generate with quality feedback
-            feedback = report.feedback_text()
-            retry_msg = (
-                f"{effective_text}\n\n"
-                f"【质量检查未通过，请修复后重新输出】：\n{feedback}"
-            )
-            retry_output = ""
-            async for chunk in agent.stream_reply(retry_msg, history=history):
-                if stop_event and stop_event.is_set():
-                    break
-                retry_output += chunk
-                # Broadcast retry streaming
-                await manager.broadcast(conversation_id, {
-                    "type": "message",
-                    "conversation_id": conversation_id,
-                    "sender": agent.agent_id,
-                    "content": {"text": "[质量优化中...] " + retry_output.strip()[:100]},
-                    "stream": True,
-                })
-            if retry_output.strip():
-                raw_text = retry_output
-                full_text = retry_output.strip()
-                report = quality_gate.evaluate(raw_text, agent.agent_id)
+    # ---- 自动反思与重试 (Self-Reflection & Retry) ----
+    if not stopped and agent.agent_id not in ("agent_builder", "agent_pm"):
+        eval_result = await evaluate_and_retry(
+            conversation_id=conversation_id,
+            agent=agent,
+            task=effective_text,
+            raw_output=raw_text,
+            llm_client=llm_client,
+            manager=manager,
+            stop_event=stop_event,
+            history=history,
+        )
+        # 用评估后的最终输出替换原始输出
+        if eval_result["final_output"]:
+            raw_text = eval_result["final_output"]
+            full_text = eval_result["final_output"].strip()
 
-        # Broadcast quality report to frontend
-        await manager.broadcast(conversation_id, {
-            "type": "quality_report",
-            "conversation_id": conversation_id,
-            "agent_id": agent.agent_id,
-            "report": report.to_dict(),
-        })
-
-    save_message(conversation_id, agent.agent_id, {"text": raw_text}, streaming=False)
+    # Don't persist LLM error responses — they pollute history and cause the
+    # model to parrot the error string back on the next turn.
+    is_llm_error = ("[LLM Error" in raw_text) or ("[LLM 调用出错" in raw_text) or ("[Agent 回复出错" in raw_text)
+    if not is_llm_error:
+        save_message(conversation_id, agent.agent_id, {"text": raw_text}, streaming=False)
 
     # Broadcast thinking stop
     await manager.broadcast(conversation_id, {
