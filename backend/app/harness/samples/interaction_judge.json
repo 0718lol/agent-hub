@@ -1,0 +1,122 @@
+[
+  {
+    "tool": "interaction_judge",
+    "description": "简单问候 — 应直接回答",
+    "user_input": "你好",
+    "expected_decision": "direct_answer",
+    "expected_score_range": [0, 30],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "天气查询 — 简单任务",
+    "user_input": "今天天气怎么样？",
+    "expected_decision": "direct_answer",
+    "expected_score_range": [0, 30],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "闲聊 — 简单任务",
+    "user_input": "你是谁？",
+    "expected_decision": "direct_answer",
+    "expected_score_range": [0, 30],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "React vs Vue 选型 — 需要辩论",
+    "user_input": "React 还是 Vue 做商城比较好？",
+    "expected_decision": "needs_interaction",
+    "expected_score_range": [70, 100],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "分布式系统设计 — 复杂任务",
+    "user_input": "帮我设计一个分布式消息队列系统",
+    "expected_decision": "needs_interaction",
+    "expected_score_range": [70, 100],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "数据库选型对比 — 含关键词触发",
+    "user_input": "MySQL 和 PostgreSQL 选哪个好？有什么优缺点？",
+    "expected_decision": "needs_interaction",
+    "expected_score_range": [70, 100],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "简单代码查询 — 不需要辩论",
+    "user_input": "Python 怎么读取 CSV 文件？",
+    "expected_decision": "direct_answer",
+    "expected_score_range": [0, 40],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "架构方案对比 — 需要辩论",
+    "user_input": "微服务和单体架构对比，哪个更适合初创公司？",
+    "expected_decision": "needs_interaction",
+    "expected_score_range": [70, 100],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "简单翻译请求",
+    "user_input": "帮我把这段话翻译成英文：今天天气真好",
+    "expected_decision": "direct_answer",
+    "expected_score_range": [0, 30],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "技术选型含 trade-off — 需要辩论",
+    "user_input": "做实时协作用 WebSocket 还是 Server-Sent Events？各有什么 trade-off？",
+    "expected_decision": "needs_interaction",
+    "expected_score_range": [70, 100],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "简单数学计算",
+    "user_input": "123 乘以 456 等于多少？",
+    "expected_decision": "direct_answer",
+    "expected_score_range": [0, 30],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "前端框架方案实现 — 复杂任务",
+    "user_input": "用 React + TypeScript 实现一个拖拽看板，支持列管理和卡片排序",
+    "expected_decision": "needs_interaction",
+    "expected_score_range": [60, 100],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "LLM必经 — 无关键词但需架构设计",
+    "user_input": "帮我设计一个高并发的用户认证系统架构",
+    "expected_decision": "needs_interaction",
+    "expected_score_range": [70, 100],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "LLM必经 — 无关键词的简单问答",
+    "user_input": "Python 列表如何反转",
+    "expected_decision": "direct_answer",
+    "expected_score_range": [0, 40],
+    "pass_threshold": 60
+  },
+  {
+    "tool": "interaction_judge",
+    "description": "LLM必经 — 含技术决策但无对比关键词",
+    "user_input": "为电商平台搭建一套支付网关，需要支持多渠道、对账、风控",
+    "expected_decision": "needs_interaction",
+    "expected_score_range": [70, 100],
+    "pass_threshold": 60
+  }
+]
