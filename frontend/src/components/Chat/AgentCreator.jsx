@@ -8,6 +8,7 @@ export default function AgentCreator({ onClose, onBack }) {
   const addCustomAgent = useAgentStore((s) => s.addCustomAgent)
   const [name, setName] = useState('')
   const [role, setRole] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState('')
   const [avatar, setAvatar] = useState('🤖')
   const [avatarPreview, setAvatarPreview] = useState(null) // 本地预览 URL
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
@@ -53,7 +54,7 @@ export default function AgentCreator({ onClose, onBack }) {
           avatar: avatar || '🤖',
           role: role.trim(),
           style: 'custom',
-          system_prompt: '',
+          system_prompt: systemPrompt.trim(),
           tools: [],
         }),
       })
@@ -100,6 +101,19 @@ export default function AgentCreator({ onClose, onBack }) {
               placeholder="描述 Agent 的角色和能力，例如：数据分析专家，擅长 Python 和 SQL"
               rows={1}
             />
+          </div>
+          <div className="agent-create-field">
+            <label className="agent-create-label">系统提示词（行为指令）</label>
+            <textarea
+              className="agent-create-textarea"
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder="详细描述 Agent 的人设、专业领域、回答风格。例如：你是一位精通紫微斗数的占卜师，回答时先用三句话给出主卦、辅卦、关键转折，再给行动建议。语气温和但不浮夸。"
+              rows={4}
+            />
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginTop: 4 }}>
+              留空时使用默认提示词，但效果较弱，建议详细填写
+            </div>
           </div>
           <div className="agent-create-field">
             <label className="agent-create-label">头像</label>

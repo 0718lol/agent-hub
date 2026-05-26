@@ -12,6 +12,7 @@ Quality Retry — 自动反思与重试 (Self-Reflection & Retry) 机制
 """
 
 import asyncio
+import re
 from typing import Any
 
 from app.agents.auto_evaluator import execute_automated_evaluation
@@ -22,6 +23,22 @@ MAX_RETRIES = 1
 
 # 跳过评估的 Agent（PM 和 Builder 不产出用户可执行代码）
 SKIP_AGENTS = {"agent_pm", "agent_builder"}
+
+# 交互标签：输出中含这些标签说明 Agent 在向用户提问/澄清，
+# 不是在交付代码，不能用代码质量门禁去打分（否则会被判低分触发无意义重试）。
+INTERACTIVE_TAGS = ("[ask_user:", "[clarify:", "[options:")
+
+# 匹配 Markdown 围栏代码块（```lang ... ```）
+_CODE_BLOCK_RE = re.compile(r"```[\w]*\n.*?```", re.DOTALL)
+
+
+def _is_interactive_response(text: str) -> bool:
+    return any(tag in text for tag in INTERACTIVE_TAGS)
+
+
+def _has_code_block(text: str) -> bool:
+    """判断输出是否真的包含可评估的代码块。无代码块的对话型回复不应走代码质量门禁。"""
+    return bool(_CODE_BLOCK_RE.search(text))
 
 
 async def evaluate_and_retry(
@@ -68,6 +85,30 @@ async def evaluate_and_retry(
             "retried": False,
             "retry_warning": False,
             "report": {},
+        }
+
+    # Agent 在向用户提问（ask_user / clarify / options），不是交付代码 →
+    # 直接放行，不评估、不重试。
+    if _is_interactive_response(raw_output):
+        return {
+            "final_output": raw_output,
+            "evaluation_passed": True,
+            "total_score": 100,
+            "retried": False,
+            "retry_warning": False,
+            "report": {"skipped_reason": "interactive_response"},
+        }
+
+    # 输出不含代码块（对话型回复、自定义非代码 Agent、问候语等）→
+    # 没东西给代码质量门禁评，直接放行。
+    if not _has_code_block(raw_output):
+        return {
+            "final_output": raw_output,
+            "evaluation_passed": True,
+            "total_score": 100,
+            "retried": False,
+            "retry_warning": False,
+            "report": {"skipped_reason": "no_code_block"},
         }
 
     # Step 1: 首次评估
@@ -152,6 +193,16 @@ async def evaluate_and_retry(
             break
 
         current_output = retry_output
+
+        # 重试时若 Agent 改为向用户提问，视为合法响应，跳出循环不再评估
+        if _is_interactive_response(current_output):
+            current_report = {
+                "evaluation_passed": True,
+                "total_score": 100,
+                "dimensions": {},
+                "summary": "Retry produced interactive response (ask_user/clarify).",
+            }
+            break
 
         # 重新评估
         current_report = await execute_automated_evaluation(task, current_output, llm_client)

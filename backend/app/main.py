@@ -642,7 +642,7 @@ def _register_custom_agent(config: dict):
     avatar = config.get("avatar", "🤖")
     role = config.get("role", "智能助手")
     style = config.get("style", "友好专业")
-    system_prompt = config.get("system_prompt", f"你是{name}，角色是{role}。")
+    system_prompt = config.get("system_prompt") or f"你是{name}，{role}。请基于这个角色为用户提供专业、有帮助的回答。"
     tools = config.get("tools", [])
 
     # Save to database

@@ -17,7 +17,10 @@
       "Bash(npm run *)",
       "Bash(findstr \":300\")",
       "Bash(powershell *)",
-      "Bash(python -m uvicorn app.main:app --port 8000)"
+      "Bash(python -m uvicorn app.main:app --port 8000)",
+      "Bash(python -c ' *)",
+      "Bash(python *)",
+      "Bash(taskkill //PID 27560 //F)"
     ]
   }
 }

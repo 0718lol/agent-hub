@@ -107,5 +107,6 @@ CSS 自定义属性方案，两个主题文件 `theme-tech-dark.css` 和 `theme-
 
 
 
-###xmz 任务 
+### xmz 任务 
 我这部分完成的主要是agent 的harness 部分，现在阶段就是优化agent 的输出 ，有一个需求 帮我 完成一个工具，这个工具能够在调用的时候像 claude code 询问用户 哪种方案 合适 ，或者 yes no else 那种执行效果，在需要用户参与的时候调用这个工具。
+在 xmz 任务完成期间 ，自动提交 git 提交 重要改动，本地提交
