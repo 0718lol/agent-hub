@@ -6,7 +6,18 @@
       "Bash(npx vite *)",
       "Skill(ui-ux-pro-max)",
       "Bash(python3 *)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :8000)",
+      "Bash(findstr LISTENING)",
+      "Bash(curl *)",
+      "Bash(findstr :3000)",
+      "Bash(findstr -i \":300\")",
+      "Bash(python -c \"from app.main import app; print\\('IMPORT OK'\\)\")",
+      "Bash(npm run *)",
+      "Bash(findstr \":300\")",
+      "Bash(powershell *)",
+      "Bash(python -m uvicorn app.main:app --port 8000)"
     ]
   }
 }

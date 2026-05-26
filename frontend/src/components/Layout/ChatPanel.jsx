@@ -18,6 +18,7 @@ export default function ChatPanel({ onToggleSidebar }) {
   const addMessage = useChatStore((s) => s.addMessage)
   const updateLastAgentMessage = useChatStore((s) => s.updateLastAgentMessage)
   const loadMessages = useChatStore((s) => s.loadMessages)
+  const clearMessages = useChatStore((s) => s.clearMessages)
   const setAgentStatus = useAgentStore((s) => s.setAgentStatus)
   const setTyping = useChatStore((s) => s.setTyping)
   const setThinking = useChatStore((s) => s.setThinking)
@@ -233,6 +234,18 @@ export default function ChatPanel({ onToggleSidebar }) {
     if (generationTimeoutRef.current) {
       clearTimeout(generationTimeoutRef.current)
       generationTimeoutRef.current = null
+    }
+  }
+
+  const handleClearHistory = async () => {
+    if (!activeId) return
+    if (!window.confirm('确定要清空当前会话的全部历史消息吗？此操作不可撤销。')) return
+    try {
+      await fetch(`/api/conversations/${activeId}/messages`, { method: 'DELETE' })
+      clearMessages(activeId)
+    } catch (err) {
+      console.error('Clear history failed:', err)
+      window.alert('清空失败，请稍后再试。')
     }
   }
 

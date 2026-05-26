@@ -6,6 +6,7 @@ import { useCanvasStore } from '../../stores/canvasStore'
 import CodeCard from './CodeCard'
 import MockupCard from './MockupCard'
 import ClarificationCard from './ClarificationCard'
+import AskUserCard from './AskUserCard'
 import FileAttachmentCard from './FileAttachmentCard'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import { wsClient } from '../../utils/websocket'
@@ -83,6 +84,23 @@ export default function MessageBubble({ message, isPinned }) {
     })
   }
 
+  const handleAskUserReply = (answer) => {
+    addMessage(activeId, {
+      sender: 'user',
+      content: { text: answer },
+      streaming: false,
+    })
+    wsClient.send({
+      type: 'message',
+      conversation_id: activeId,
+      sender: 'user',
+      content: {
+        text: `[ask_user_reply] ${answer}`,
+        target_agent: message.sender,
+      },
+    })
+  }
+
   const renderText = (t) => {
     let clean = t.replace(/\[thinking\][\s\S]*?\[\/thinking\]/g, '')
     clean = clean.replace(/\[assign:\w+\]/g, '')
@@ -90,7 +108,7 @@ export default function MessageBubble({ message, isPinned }) {
 
     if (!clean) return null
 
-    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[options:[^\]]+\]|```[\s\S]*?```)/g)
+    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[ask_user:[^\]]+\]|\[options:[^\]]+\]|```[\s\S]*?```)/g)
     return parts.map((part, i) => {
       if (!part) return null
 
@@ -115,6 +133,32 @@ export default function MessageBubble({ message, isPinned }) {
       if (clarifyMatch) {
         const questions = clarifyMatch[1].split('|')
         return <ClarificationCard key={i} questions={questions} onSubmit={handleClarifySubmit} />
+      }
+
+      const askUserMatch = part.match(/\[ask_user:([^\]]+)\]/)
+      if (askUserMatch) {
+        const raw = askUserMatch[1]
+        const segments = raw.split('|').map((s) => s.trim()).filter(Boolean)
+        const question = segments[0] || ''
+        const options = segments.slice(1, 5).map((seg) => {
+          const [labelRaw, ...descParts] = seg.split('::')
+          let label = labelRaw.trim()
+          let recommended = false
+          if (label.startsWith('*')) {
+            recommended = true
+            label = label.slice(1).trim()
+          }
+          const description = descParts.join('::').trim()
+          return { label, description, recommended }
+        })
+        return (
+          <AskUserCard
+            key={i}
+            question={question}
+            options={options}
+            onAnswer={handleAskUserReply}
+          />
+        )
       }
 
       const optionsMatch = part.match(/\[options:([^\]]+)\]/)

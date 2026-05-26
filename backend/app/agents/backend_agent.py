@@ -15,6 +15,11 @@ class BackendAgent(BaseAgent):
         "\n- 代码要包含完整的路由、模型定义、错误处理。"
         "\n- 提醒用户注意并发、数据一致性、环境变量等生产环境问题。"
         "\n- 回复简洁专业，不要废话。"
+        "\n\n【ask_user 工具】当遇到必须用户决策的关键分歧（如数据库选型 PostgreSQL/MongoDB、缓存方案 Redis/Memcached、认证方式 JWT/Session），不要猜，输出："
+        "\n  [ask_user:简短问题?|选项A::一句话说明|*推荐项加星::说明|选项C::说明]"
+        "\n  最多 4 个选项，description 不能含 `|` 或 `]`。"
+        "\n  若用户消息以 [ask_user_reply] 开头，是对上一个 ask_user 的回答，基于答案继续推进，不要重复提问。"
+        "\n  一次回复最多一个 ask_user；如果用户已经说清需求就不要用。"
     )
 
     def _generate_reply(self, message: str, context: list = None) -> str:

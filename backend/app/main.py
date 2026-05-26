@@ -458,7 +458,7 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
                     buffer = buffer[:assign_match.start()] + buffer[assign_match.end():]
 
                 # Extract options tags (keep in message for frontend to render)
-                # Don't strip [options:...] — let frontend handle it
+                # Don't strip [options:...], [clarify:...], [ask_user:...] — let frontend handle them
 
                 # Extract [create_agent:{json}] tags
                 while True:
