@@ -1,0 +1,29 @@
+node_modules/
+**/__pycache__/
+*.pyc
+*.pyo
+.env
+dist/
+.vite/
+*.egg-info/
+*.db
+llm_config.json
+
+venv/
+.venv/
+backend/venv/
+
+# 比赛资料（不参与 GitHub 上传）
+资料/
+
+# Harness eval outputs (CLI 跑出来的临时产物)
+backend/harness_*.json
+backend/harness_*.html
+backend/report.html
+
+# Editor configs
+.vscode/
+.idea/
+
+# Personal scratch
+xmz/

@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 \"C:/Users/Lenovo/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/.claude/skills/ui-ux-pro-max/scripts/search.py\" \"social app modern vibrant gradient blue purple rounded youthful fluid\" --design-system -p \"Agent Hub Vibrant\" -f markdown)",
+      "Bash(python3 \"C:/Users/Lenovo/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/.claude/skills/ui-ux-pro-max/scripts/search.py\" \"enterprise SaaS business professional muted slate gray blue team collaboration\" --design-system -p \"Agent Hub Business\" -f markdown)",
+      "Bash(npx vite *)",
+      "Skill(ui-ux-pro-max)",
+      "Bash(python3 *)",
+      "Bash(npm install *)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :8000)",
+      "Bash(findstr LISTENING)",
+      "Bash(curl *)",
+      "Bash(findstr :3000)",
+      "Bash(findstr -i \":300\")",
+      "Bash(python -c \"from app.main import app; print\\('IMPORT OK'\\)\")",
+      "Bash(npm run *)",
+      "Bash(findstr \":300\")",
+      "Bash(powershell *)",
+      "Bash(python -m uvicorn app.main:app --port 8000)",
+      "Bash(python -c ' *)",
+      "Bash(python *)",
+      "Bash(taskkill //PID 27560 //F)"
+    ]
+  }
+}
