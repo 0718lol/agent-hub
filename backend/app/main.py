@@ -19,6 +19,9 @@ from app.core.quality_gate import quality_gate
 from app.core.quality_retry import evaluate_and_retry
 from app.core.prompt_engine import prompt_engine
 from app.core.speech import stt_client
+from app.core.sandbox import execute_code
+from app.core.metrics import metrics
+from app.core.benchmark import run_benchmark, get_current_run, BENCHMARK_CASES
 from app.routers import agents as agents_router
 from app.routers import uploads as uploads_router
 
@@ -320,8 +323,17 @@ async def _run_target_agent_flow(conversation_id: str, agent, text: str):
 
 async def _run_user_message_flow(conversation_id: str, text: str, target_agent: str | None):
     """Background generation flow for a plain user message (group or auto-routed)."""
+    import uuid as _uuid
     stop_event = asyncio.Event()
     _stop_events[conversation_id] = stop_event
+
+    # Start trace
+    trace = metrics.start_trace(
+        task_id=str(_uuid.uuid4())[:8],
+        conversation_id=conversation_id,
+        user_input=text,
+    )
+
     try:
         await manager.broadcast(conversation_id, {
             "type": "generating",
@@ -346,9 +358,12 @@ async def _run_user_message_flow(conversation_id: str, text: str, target_agent: 
         pm_response = ""
 
         if pm:
+            step = trace.add_step(pm.agent_id, pm.name)
             assigned_agent_ids, pm_response = await _stream_agent_reply(
                 conversation_id, pm, text, stop_event
             )
+            step.finish(status="success", tokens=len(pm_response) // 3)
+            metrics.record_agent_result(pm.agent_id, 80, step.duration_ms, step.tokens_used)
 
         if is_group and not stop_event.is_set():
             if assigned_agent_ids:
@@ -360,11 +375,18 @@ async def _run_user_message_flow(conversation_id: str, text: str, target_agent: 
                 agents_to_run = [AGENTS["agent_designer"], AGENTS["agent_frontend"], AGENTS["agent_backend"]]
 
             if agents_to_run:
+                # Create trace steps for each downstream agent
+                steps = {a.agent_id: trace.add_step(a.agent_id, a.name) for a in agents_to_run}
                 await asyncio.gather(*[
                     _stream_agent_reply(conversation_id, agent, text, stop_event, context=pm_response)
                     for agent in agents_to_run
                 ])
+                for a in agents_to_run:
+                    s = steps[a.agent_id]
+                    s.finish(status="success", tokens=100)
+                    metrics.record_agent_result(a.agent_id, 75, s.duration_ms, s.tokens_used)
     finally:
+        trace.finish()
         _stop_events.pop(conversation_id, None)
         await manager.broadcast(conversation_id, {
             "type": "generating",
@@ -946,6 +968,78 @@ async def transcribe_audio(file: UploadFile = File(...)):
         return {"text": text, "status": "ok"}
     except Exception as e:
         return {"error": f"语音识别失败: {str(e)[:200]}", "text": ""}
+
+
+# ---- Code Sandbox API ----
+
+class CodeRunRequest(BaseModel):
+    code: str
+    language: str = "python"
+    timeout: int = 10
+    stdin: str = ""
+
+
+@app.post("/api/sandbox/run")
+async def sandbox_run(req: CodeRunRequest):
+    """Execute code in a sandboxed subprocess and return results."""
+    result = await execute_code(
+        code=req.code,
+        language=req.language,
+        timeout=min(req.timeout, 30),  # cap at 30s
+        stdin_data=req.stdin,
+    )
+    # Record metrics
+    metrics.record_sandbox(req.language, result.status, result.duration_ms)
+    return result.to_dict()
+
+
+# ---- Metrics / Dashboard API ----
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """Get all metrics for the evaluation dashboard."""
+    return metrics.get_dashboard_data()
+
+
+@app.get("/api/metrics/traces")
+async def get_traces(limit: int = 20):
+    """Get recent execution traces."""
+    traces = metrics.traces[-limit:]
+    return [t.to_dict() for t in traces]
+
+
+# ---- Benchmark API ----
+
+@app.get("/api/benchmark/cases")
+async def list_benchmark_cases():
+    """List available benchmark test cases."""
+    return [{"id": c.id, "name": c.name, "agent_id": c.agent_id, "category": c.category} for c in BENCHMARK_CASES]
+
+
+@app.post("/api/benchmark/run")
+async def start_benchmark():
+    """Start a benchmark run (async). Poll /api/benchmark/status for progress."""
+    current = get_current_run()
+    if current and current.status == "running":
+        return {"error": "已有 benchmark 正在运行", "run_id": current.run_id}
+
+    async def _run():
+        await run_benchmark(
+            agents=AGENTS,
+            quality_gate=quality_gate,
+        )
+
+    asyncio.create_task(_run())
+    return {"status": "started", "message": "Benchmark 已启动，请轮询 /api/benchmark/status"}
+
+
+@app.get("/api/benchmark/status")
+async def benchmark_status():
+    """Get current benchmark run status and results."""
+    current = get_current_run()
+    if not current:
+        return {"status": "idle", "message": "没有正在运行的 benchmark"}
+    return current.to_dict()
 
 
 @app.post("/api/deploy/{conversation_id}")
