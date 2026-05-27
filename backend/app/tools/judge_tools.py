@@ -272,7 +272,7 @@ class UserInteractionJudgeTool:
         if is_cli:
             # 打印类似 claude code 风格的提示
             print("\n" + "="*50)
-            print(f"❓ \033[1;35m[用户交互确认]\033[0m {question}")
+            print(f"[?] \033[1;35m[用户交互确认]\033[0m {question}")
             print("-"*50)
             for i, opt in enumerate(parsed_options, 1):
                 rec_str = " \033[1;32m(Recommended)\033[0m" if opt["recommended"] else ""
@@ -283,21 +283,26 @@ class UserInteractionJudgeTool:
 
             # 获取用户输入
             def get_cli_input():
-                while True:
-                    ans = input(f"请输入选择 (1-{len(parsed_options)+1}): ").strip()
-                    if not ans:
-                        # 默认选择第一个推荐项或第一个选项
-                        rec_idx = next((idx for idx, o in enumerate(parsed_options) if o["recommended"]), 0)
-                        return parsed_options[rec_idx]["label"]
-                    try:
-                        idx = int(ans)
-                        if 1 <= idx <= len(parsed_options):
-                            return parsed_options[idx - 1]["label"]
-                        elif idx == len(parsed_options) + 1:
-                            return input("请输入你的自定义回答 / 反馈: ").strip()
-                    except ValueError:
-                        # 如果直接输入文字，则作为自定义回答
-                        return ans
+                try:
+                    while True:
+                        ans = input(f"请输入选择 (1-{len(parsed_options)+1}): ").strip()
+                        if not ans:
+                            # 默认选择第一个推荐项或第一个选项
+                            rec_idx = next((idx for idx, o in enumerate(parsed_options) if o["recommended"]), 0)
+                            return parsed_options[rec_idx]["label"]
+                        try:
+                            idx = int(ans)
+                            if 1 <= idx <= len(parsed_options):
+                                return parsed_options[idx - 1]["label"]
+                            elif idx == len(parsed_options) + 1:
+                                return input("请输入你的自定义回答 / 反馈: ").strip()
+                        except ValueError:
+                            # 如果直接输入文字，则作为自定义回答
+                            return ans
+                except EOFError:
+                    # Headless or non-interactive environment fallback to recommended option
+                    rec_idx = next((idx for idx, o in enumerate(parsed_options) if o["recommended"]), 0)
+                    return parsed_options[rec_idx]["label"]
 
             # 在线程池中异步等待输入，避免阻塞事件循环
             loop = asyncio.get_running_loop()

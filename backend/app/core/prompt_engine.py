@@ -74,8 +74,9 @@ LAYER_STANDARD_CODE = PromptLayer(
     content=(
         "\n\n【输出标准 — 代码类】："
         "\n- 代码必须完整可执行，禁止使用 `...` 或 TODO 占位。"
-        "\n- 使用 ```language 代码块包裹。"
-        "\n- HTML 必须自包含（内联 CSS/JS），包含 DOCTYPE、viewport meta。"
+        "\n- 使用 ```language 代码块包裹，language 后直接换行（如：```html）。"
+        "\n- HTML 必须自包含（内联 CSS/JS），包含 <!DOCTYPE html>、<meta charset=\"utf-8\">、viewport meta。"
+        "\n- HTML 页面必须完整可渲染，不依赖任何外部资源。"
         "\n- Python 代码需有异常处理，API 需有错误状态码。"
         "\n- 变量命名清晰，关键逻辑加注释。"
     ),

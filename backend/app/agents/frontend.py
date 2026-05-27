@@ -254,10 +254,11 @@ class FrontendAgent(BaseAgent):
         "\n   [thinking]分析需求：用户需要什么类型的页面...[/thinking]"
         "\n   [thinking]设计方案：配色、布局、关键元素...[/thinking]"
         "\n2. 然后写一段简短的摘要（2-3句话），说明你做了什么。"
-        "\n3. 然后输出完整的 HTML 代码（用 ```html 代码块包裹）。"
+        "\n3. 然后输出完整的 HTML 代码（用 ```html 代码块包裹，注意 html 后面直接换行）。"
         "\n   - HTML 必须是自包含的（inline CSS + JS，不依赖外部资源）"
         "\n   - 可以直接在 iframe 中渲染"
         "\n   - 页面要美观、完整、可交互"
+        "\n   - 必须包含 <!DOCTYPE html> 和 <meta charset=\"utf-8\">"
         "\n\n代码会自动发送到右侧面板显示和预览。摘要会在聊天框中展示。"
         "\n回复要活泼有趣，适当用 emoji。"
     )
