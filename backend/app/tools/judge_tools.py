@@ -221,3 +221,128 @@ class AlignmentJudgeTool:
                 reason=f"Alignment evaluation failed: {type(e).__name__}: {str(e)[:100]}",
                 signals={"error": str(e)[:200]},
             )
+
+
+# ============================================================
+# Tool 5: UserInteractionJudgeTool
+# Interactive choice tool (Yes/No/Else or specific options)
+# ============================================================
+
+_pending_interactions: dict[str, Any] = {}
+
+
+class UserInteractionJudgeTool:
+    """像 Claude Code 一样交互式询问用户哪种方案合适，支持 Yes/No/Else"""
+
+    name = "user_interaction_judge"
+    description = "人工交互评测工具，提示用户进行方案选择或反馈"
+
+    async def run(self, input_data: dict, llm_client: Any = None) -> JudgeResult:
+        import asyncio
+        from app.core.websocket import manager
+
+        question = input_data.get("question", "请问哪种方案合适？")
+        options_raw = input_data.get("options", ["*Yes::接受此方案", "No::拒绝此方案", "Else::自定义输入其他反馈"])
+        conversation_id = input_data.get("conversation_id")
+
+        # 格式化选项 (处理 * 推荐标记和 :: 描述)
+        # 例如: ["*Yes::描述", "No::描述"]
+        parsed_options = []
+        for opt in options_raw:
+            label_part = opt
+            desc_part = ""
+            if "::" in opt:
+                label_part, desc_part = opt.split("::", 1)
+            
+            recommended = False
+            label = label_part.strip()
+            if label.startswith("*"):
+                recommended = True
+                label = label[1:].strip()
+            
+            parsed_options.append({
+                "label": label,
+                "description": desc_part.strip(),
+                "recommended": recommended
+            })
+
+        # CLI / Terminal 模式 (如果没有活跃连接或者没有 conversation_id)
+        is_cli = not conversation_id or conversation_id not in manager.active_connections
+        
+        if is_cli:
+            # 打印类似 claude code 风格的提示
+            print("\n" + "="*50)
+            print(f"❓ \033[1;35m[用户交互确认]\033[0m {question}")
+            print("-"*50)
+            for i, opt in enumerate(parsed_options, 1):
+                rec_str = " \033[1;32m(Recommended)\033[0m" if opt["recommended"] else ""
+                desc_str = f" - {opt['description']}" if opt["description"] else ""
+                print(f"  {i}. \033[1m{opt['label']}\033[0m{rec_str}{desc_str}")
+            print(f"  {len(parsed_options)+1}. \033[1mElse / Other\033[0m - 输入自定义回答")
+            print("="*50)
+
+            # 获取用户输入
+            def get_cli_input():
+                while True:
+                    ans = input(f"请输入选择 (1-{len(parsed_options)+1}): ").strip()
+                    if not ans:
+                        # 默认选择第一个推荐项或第一个选项
+                        rec_idx = next((idx for idx, o in enumerate(parsed_options) if o["recommended"]), 0)
+                        return parsed_options[rec_idx]["label"]
+                    try:
+                        idx = int(ans)
+                        if 1 <= idx <= len(parsed_options):
+                            return parsed_options[idx - 1]["label"]
+                        elif idx == len(parsed_options) + 1:
+                            return input("请输入你的自定义回答 / 反馈: ").strip()
+                    except ValueError:
+                        # 如果直接输入文字，则作为自定义回答
+                        return ans
+
+            # 在线程池中异步等待输入，避免阻塞事件循环
+            loop = asyncio.get_running_loop()
+            answer = await loop.run_in_executor(None, get_cli_input)
+        
+        # WebSocket 模式
+        else:
+            # 构造前端 [ask_user:...] 标记格式
+            # 格式: [ask_user: Question | Option1::Description1 | *Option2::Description2]
+            opt_segments = []
+            for opt in parsed_options:
+                prefix = "*" if opt["recommended"] else ""
+                desc = f"::{opt['description']}" if opt["description"] else ""
+                opt_segments.append(f"{prefix}{opt['label']}{desc}")
+            
+            tag = f"[ask_user: {question} | {' | '.join(opt_segments)}]"
+
+            # 广播给前端
+            await manager.broadcast(conversation_id, {
+                "type": "message",
+                "conversation_id": conversation_id,
+                "sender": "user_interaction_judge",
+                "content": {"text": tag},
+                "stream": False,
+            })
+
+            # 注册 Future 挂起等待
+            fut = asyncio.get_running_loop().create_future()
+            _pending_interactions[conversation_id] = fut
+            
+            try:
+                # 等待用户回复（通过 websocket 触发的 set_result）
+                answer = await fut
+            finally:
+                _pending_interactions.pop(conversation_id, None)
+
+        # 整理输出决策和评分
+        decision = answer.strip()
+        score = 100.0 if decision.lower() in ("yes", "y", "pass", "approve") or any(decision.lower() == o["label"].lower() and o["recommended"] for o in parsed_options) else 50.0
+        
+        return JudgeResult(
+            decision=decision,
+            score=score,
+            reason=f"用户确认回答: {answer}",
+            signals={"answer": answer},
+            raw={"options": parsed_options, "user_answer": answer}
+        )
+

@@ -1,0 +1,15 @@
+[
+  {
+    "tool": "user_interaction_judge",
+    "description": "Interactive choice: Yes/No/Else",
+    "question": "Is this code solution suitable for production?",
+    "options": [
+      "*Yes::The solution is robust and optimized.",
+      "No::The solution has performance bottlenecks.",
+      "Else::Needs minor styling and naming improvements."
+    ],
+    "expected_decision": "Yes",
+    "expected_score_range": [60, 100],
+    "pass_threshold": 60
+  }
+]

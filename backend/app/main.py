@@ -226,6 +226,27 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             text = content.get("text", "")
             target_agent = content.get("target_agent")
 
+            # Intercept user interaction response if there's a pending interactive judge wait
+            from app.tools.judge_tools import _pending_interactions
+            if conversation_id in _pending_interactions:
+                fut = _pending_interactions[conversation_id]
+                if not fut.done():
+                    reply_text = text
+                    if reply_text.startswith("[ask_user_reply]"):
+                        reply_text = reply_text.replace("[ask_user_reply]", "").strip()
+                    fut.set_result(reply_text)
+                    
+                    # We still want to save and broadcast this message to display it in the Chat UI as a user reply
+                    save_message(conversation_id, sender, content, streaming=False)
+                    await manager.broadcast(conversation_id, {
+                        "type": "message",
+                        "conversation_id": conversation_id,
+                        "sender": sender,
+                        "content": {"text": text},
+                        "stream": False,
+                    })
+                    continue
+
             # Handle stop generation — must be processed without blocking on
             # the in-flight generation task (which is why generation runs as a
             # background task, not awaited here).
@@ -542,7 +563,7 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
 
                 # Extract and broadcast code blocks
                 while True:
-                    code_match = re.search(r'```(\w*)\n(.*?)```', buffer, re.DOTALL)
+                    code_match = re.search(r'```(\w*)\s*\n?(.*?)```', buffer, re.DOTALL)
                     if not code_match:
                         break
                     lang = code_match.group(1) or "html"
