@@ -115,6 +115,29 @@ npm run dev
 
 无 API Key 时 Agent 使用 Mock 回复，功能完整可用。
 
+## 集成 Claude Code (Model Context Protocol - MCP)
+
+AgentHub 完美适配了 Anthropic 最新的 **Model Context Protocol (MCP)** 标准协议。你可以将 AgentHub 强大的代码审查、任务分析和需求对齐评估工具作为 “MCP 工具 / 技能” 挂载并集成到 **Claude Code** 终端助理中。
+
+### 1. 注册 MCP 服务至 Claude Code
+在终端中，运行以下命令（在本地 Claude Code 会话中，或全局配置中）注册 AgentHub Judge 工具集：
+
+```bash
+# 进入后端目录并注册 stdio MCP 服务的完整路径
+claude mcp add --transport stdio agenthub-judges -- python d:/project/high-agent-hub/backend/app/mcp_server.py
+```
+*(注意：请将命令中的 `d:/project/high-agent-hub/backend/app/mcp_server.py` 替换为你实际的绝对路径)*
+
+### 2. 支持的智能体评审工具
+集成成功后，Claude Code 将自动发现并支持以下评审工具：
+*   `agenthub_quality_judge`：代码质量评估。结合 Python 静态语法检查与大模型对逻辑、健壮性及架构的深度评分（0-100 分），并输出评审报告。
+*   `agenthub_complexity_judge`：任务复杂度分析。精准评估需求的技术深度、方案多样性、实现难度与潜在风险。
+*   `agenthub_alignment_judge`：需求对齐度审查。校验最终的代码方案是否完美覆盖了原始用户需求规范，防止架构偏离。
+
+### 3. 使用方法示例
+在 Claude Code 会话中，你现在可以直接用自然语言让它调用你的工具，例如：
+> “请使用 `agenthub_quality_judge` 对我刚刚修改的 backend/app/core/pipeline.py 代码文件进行质量打分和架构评估。”
+
 ## 项目结构
 
 ```
