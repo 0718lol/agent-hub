@@ -23,14 +23,18 @@ class CodebaseMapScanner:
             dirs[:] = [d for d in dirs if d not in self.ignored_names and not d.startswith(".")]
             
             for file in files:
-                if not file.endswith(".py"):
+                ext = os.path.splitext(file)[1].lower()
+                if ext not in (".py", ".js", ".jsx", ".ts", ".tsx"):
                     continue
                     
                 abs_path = os.path.join(root, file)
                 rel_path = os.path.relpath(abs_path, directory_path)
                 
                 try:
-                    symbols = self._parse_file_symbols(abs_path)
+                    if ext == ".py":
+                        symbols = self._parse_file_symbols(abs_path)
+                    else:
+                        symbols = self._parse_js_symbols(abs_path)
                     if symbols:
                         tree_lines.append(self._format_file_symbols(rel_path, symbols))
                 except Exception as e:
@@ -38,7 +42,7 @@ class CodebaseMapScanner:
                     pass
 
         if not tree_lines:
-            return "（沙盒内目前没有可解析的 Python 符号定义）"
+            return "（沙盒内目前没有可解析的 Python/JS/TS 符号定义）"
 
         return "\n".join(tree_lines)
 
@@ -74,6 +78,89 @@ class CodebaseMapScanner:
                         args_str = self._format_args(subnode.args)
                         methods.append(f"{subnode.name}({args_str})")
                 classes[node.name] = methods
+
+        return {
+            "imports": imports,
+            "classes": classes,
+            "functions": functions
+        }
+
+    def _parse_js_symbols(self, file_path: str) -> Dict[str, Any]:
+        """Parse JS/TS file using regex to extract class names, methods, functions, and imports."""
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            code = f.read()
+
+        imports = []
+        classes = {}
+        functions = []
+
+        import re
+        # Remove single line and multi-line comments for easier regex matching
+        code_clean = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+        code_clean = re.sub(r'//.*$', '', code_clean, flags=re.MULTILINE)
+
+        # 1. Match imports
+        import_patterns = [
+            r'import\s+.*?from\s+[\'"]([^\'"]+)[\'"]',
+            r'import\s+[\'"]([^\'"]+)[\'"]',
+            r'(?:const|let|var)\s+.*?\s*=\s*require\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)'
+        ]
+        for pattern in import_patterns:
+            for match in re.finditer(pattern, code_clean):
+                imports.append(match.group(1))
+
+        # Deduplicate and extract bare module name if it starts with relative paths
+        clean_imports = []
+        for imp in imports:
+            # We want react, axios, path, etc. or clean relative names
+            clean_imports.append(imp.split('/')[-1])
+        imports = list(dict.fromkeys(clean_imports))
+
+        # 2. Extract classes and functions
+        keywords = {'if', 'for', 'catch', 'while', 'switch', 'function', 'constructor', 'super', 'import', 'export', 'return'}
+        lines = code_clean.splitlines()
+        current_class = None
+
+        for line in lines:
+            line_str = line.strip()
+            if not line_str:
+                continue
+
+            # Class match
+            cls_match = re.match(r'(?:export\s+)?(?:default\s+)?class\s+(\w+)', line_str)
+            if cls_match:
+                current_class = cls_match.group(1)
+                classes[current_class] = []
+                continue
+
+            # Reset active class if we hit other declarations
+            if current_class and (line.startswith('class ') or line.startswith('export class ') or line.startswith('function ') or line.startswith('export function ') or line.startswith('export default ')):
+                current_class = None
+
+            # Match standard function
+            func_match = re.search(r'(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+(\w+)\s*\((.*?)\)', line_str)
+            if func_match:
+                name = func_match.group(1)
+                args = func_match.group(2).strip()
+                functions.append(f"{name}({args})")
+                continue
+
+            # Match arrow function
+            arrow_match = re.search(r'(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\((.*?)\)\s*=>', line_str)
+            if arrow_match:
+                name = arrow_match.group(1)
+                args = arrow_match.group(2).strip()
+                functions.append(f"{name}({args})")
+                continue
+
+            # Match method inside class
+            if current_class:
+                method_match = re.search(r'^(?:async\s+)?(\w+)\s*\((.*?)\)\s*\{', line_str)
+                if method_match:
+                    meth_name = method_match.group(1)
+                    meth_args = method_match.group(2).strip()
+                    if meth_name not in keywords:
+                        classes[current_class].append(f"{meth_name}({meth_args})")
 
         return {
             "imports": imports,

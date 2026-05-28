@@ -37,6 +37,25 @@ class TestAiderMapsAndBlockEditor(unittest.IsolatedAsyncioTestCase):
         with open(self.py_path, "w", encoding="utf-8") as f:
             f.write(self.py_content)
 
+        # Create a mock TypeScript file for multi-language symbol scanning verification
+        self.ts_file = "helper.ts"
+        self.ts_path = os.path.join(self.sandbox_dir, self.ts_file)
+        self.ts_content = (
+            "import { useState } from 'react';\n"
+            "import axios from 'axios';\n\n"
+            "export function formatCurrency(value: number): string {\n"
+            "    return `$${value.toFixed(2)}`;\n"
+            "}\n\n"
+            "export class OrderManager {\n"
+            "    constructor(private orderId: string) {}\n\n"
+            "    async processOrder(amount: number) {\n"
+            "        console.log('Processing order ' + this.orderId);\n"
+            "    }\n"
+            "}\n"
+        )
+        with open(self.ts_path, "w", encoding="utf-8") as f:
+            f.write(self.ts_content)
+
     def tearDown(self):
         if os.path.exists(self.sandbox_dir):
             try:
@@ -45,13 +64,21 @@ class TestAiderMapsAndBlockEditor(unittest.IsolatedAsyncioTestCase):
                 pass
 
     def test_repo_map_scanner(self):
-        """1. Verify AST symbol map constructs correct markdown hierarchy of classes and functions."""
+        """1. Verify AST & Regex symbol map constructs correct markdown hierarchy of classes and functions for PY and JS/TS."""
         repo_map = codebase_map_scanner.scan_directory(self.sandbox_dir)
+        # Python checks
         self.assertIn("utils_helper.py", repo_map)
         self.assertIn("imports: `os`, `sys`", repo_map)
         self.assertIn("function: `calculate_tax(income)`", repo_map)
         self.assertIn("class: `InvoiceProcessor`", repo_map)
         self.assertIn("method: `process_invoice(self, amount)`", repo_map)
+
+        # JS/TS checks
+        self.assertIn("helper.ts", repo_map)
+        self.assertIn("imports: `react`, `axios`", repo_map)
+        self.assertIn("function: `formatCurrency(value: number)`", repo_map)
+        self.assertIn("class: `OrderManager`", repo_map)
+        self.assertIn("method: `processOrder(amount: number)`", repo_map)
 
     async def test_block_patch_success(self):
         """2. Verify SEARCH/REPLACE block replacement applies high-tolerance modifications correctly."""
