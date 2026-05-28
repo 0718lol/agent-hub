@@ -64,6 +64,21 @@ def init_db():
             extracted_text TEXT DEFAULT '',
             uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS cron_tasks (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            task_prompt TEXT NOT NULL,
+            interval_seconds INTEGER NOT NULL,
+            last_run TEXT,
+            next_run TEXT,
+            status TEXT DEFAULT 'active',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_cron_next_run ON cron_tasks(next_run) WHERE status = 'active';
     ''')
 
     default_convs = [
@@ -221,3 +236,66 @@ def get_all_uploaded_files() -> list[dict]:
     rows = conn.execute('SELECT * FROM uploaded_files ORDER BY uploaded_at DESC').fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+# ---- Offline Cron Tasks CRUD ----
+
+def save_cron_task(task_id: str, conversation_id: str, agent_id: str, task_prompt: str,
+                   interval_seconds: int, status: str = 'active', last_run: str = None, next_run: str = None):
+    conn = get_db()
+    conn.execute(
+        '''
+        INSERT OR REPLACE INTO cron_tasks (id, conversation_id, agent_id, task_prompt, interval_seconds, status, last_run, next_run)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        (task_id, conversation_id, agent_id, task_prompt, interval_seconds, status, last_run, next_run)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_cron_tasks(conversation_id: str = None) -> list[dict]:
+    conn = get_db()
+    if conversation_id:
+        rows = conn.execute(
+            'SELECT * FROM cron_tasks WHERE conversation_id = ? ORDER BY created_at DESC',
+            (conversation_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute('SELECT * FROM cron_tasks ORDER BY created_at DESC').fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_due_cron_tasks(now_str: str) -> list[dict]:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM cron_tasks WHERE status = 'active' AND next_run <= ?",
+        (now_str,)
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def update_cron_task_run_time(task_id: str, last_run: str, next_run: str, status: str = 'active'):
+    conn = get_db()
+    conn.execute(
+        'UPDATE cron_tasks SET last_run = ?, next_run = ?, status = ? WHERE id = ?',
+        (last_run, next_run, status, task_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_cron_task_status(task_id: str, status: str):
+    conn = get_db()
+    conn.execute('UPDATE cron_tasks SET status = ? WHERE id = ?', (status, task_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_cron_task(task_id: str):
+    conn = get_db()
+    conn.execute('DELETE FROM cron_tasks WHERE id = ?', (task_id,))
+    conn.commit()
+    conn.close()

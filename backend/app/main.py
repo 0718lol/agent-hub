@@ -1104,3 +1104,85 @@ async def _simulate_deploy(conversation_id: str):
         "stream": False
     })
 
+
+# ---- Startup / Shutdown Lifespan Hooks ----
+
+@app.on_event("startup")
+async def startup_event():
+    from app.services.daemon_scheduler import daemon_scheduler
+    daemon_scheduler.start()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    from app.services.daemon_scheduler import daemon_scheduler
+    await daemon_scheduler.stop()
+
+
+# ---- Background Autonomous Tasks REST API ----
+
+class CronTaskCreate(BaseModel):
+    conversation_id: str
+    agent_id: str
+    task_prompt: str
+    interval_seconds: int
+
+
+@app.get("/api/cron")
+async def list_cron_tasks(conversation_id: str = None):
+    from app.core.database import get_cron_tasks
+    tasks = get_cron_tasks(conversation_id)
+    return {"status": "ok", "tasks": tasks}
+
+
+@app.post("/api/cron")
+async def create_cron_task(body: CronTaskCreate):
+    from datetime import datetime, timedelta
+    from app.core.database import save_cron_task
+
+    task_id = f"task_{uuid.uuid4().hex[:8]}"
+    now = datetime.utcnow()
+    next_run = (now + timedelta(seconds=body.interval_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+
+    save_cron_task(
+        task_id=task_id,
+        conversation_id=body.conversation_id,
+        agent_id=body.agent_id,
+        task_prompt=body.task_prompt,
+        interval_seconds=body.interval_seconds,
+        status="active",
+        last_run=None,
+        next_run=next_run
+    )
+    return {"status": "ok", "task_id": task_id, "message": "离线自治任务创建成功！"}
+
+
+@app.post("/api/cron/{task_id}/toggle")
+async def toggle_cron_task(task_id: str, body: dict):
+    from app.core.database import update_cron_task_status
+    status = body.get("status", "active")
+    if status not in ("active", "paused"):
+        return {"status": "error", "message": "无效的任务状态"}
+    update_cron_task_status(task_id, status)
+    return {"status": "ok", "message": f"任务状态已更新为 {status}"}
+
+
+@app.post("/api/cron/{task_id}/run")
+async def run_cron_task_now(task_id: str):
+    from app.core.database import get_cron_tasks
+    tasks = get_cron_tasks()
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    if not task:
+        return {"status": "error", "message": "自治任务未找到"}
+
+    from app.services.daemon_scheduler import daemon_scheduler
+    asyncio.create_task(daemon_scheduler._run_task(task))
+    return {"status": "ok", "message": "已手动触发后台自治作业运行！"}
+
+
+@app.delete("/api/cron/{task_id}")
+async def delete_cron_task_endpoint(task_id: str):
+    from app.core.database import delete_cron_task
+    delete_cron_task(task_id)
+    return {"status": "ok", "message": "离线自治任务已成功删除！"}
+
