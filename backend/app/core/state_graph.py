@@ -27,6 +27,7 @@ class StateGraph:
         from app.core.websocket import manager
         
         state = initial_state.copy()
+        state.setdefault("completed_nodes", [])
         current_node = "agent_pm"
         
         # Reset all nodes to idle on start
@@ -65,6 +66,8 @@ class StateGraph:
                 update = await node_func(state)
                 # Merge update into State
                 state.update(update)
+                if current_node not in state["completed_nodes"]:
+                    state["completed_nodes"].append(current_node)
             except Exception as e:
                 logger.error(f"[StateGraph] Error in node '{current_node}': {e}")
                 # Set error status
@@ -88,11 +91,102 @@ class StateGraph:
             next_node = None
             if current_node in self.conditional_edges:
                 router = self.conditional_edges[current_node]
-                next_node = router(state)
+                if asyncio.iscoroutinefunction(router):
+                    next_node = await router(state)
+                else:
+                    res = router(state)
+                    if asyncio.iscoroutine(res):
+                        next_node = await res
+                    else:
+                        next_node = res
                 logger.info(f"[StateGraph] Conditional transition: {current_node} -> {next_node}")
             elif current_node in self.edges:
                 next_node = self.edges[current_node]
                 logger.info(f"[StateGraph] Static transition: {current_node} -> {next_node}")
+
+            # 5. Human-in-the-loop Intercept Check
+            if next_node and stop_event and not stop_event.is_set():
+                import os
+                import json
+                
+                # Load HIL settings safely
+                hil_config_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "hil_config.json")
+                hil_settings = {"human_input_mode": "NEVER", "cooldown_steps": 2}
+                try:
+                    if os.path.exists(hil_config_path):
+                        with open(hil_config_path, "r", encoding="utf-8") as f:
+                            hil_settings = json.load(f)
+                except Exception:
+                    pass
+                    
+                human_input_mode = hil_settings.get("human_input_mode", "NEVER")
+                cooldown_steps = hil_settings.get("cooldown_steps", 2)
+                
+                trigger = False
+                if human_input_mode == "ALWAYS":
+                    trigger = True
+                elif human_input_mode == "COOLDOWN":
+                    trigger = len(state.get("completed_nodes", [])) % cooldown_steps == 0
+                    
+                if trigger:
+                    from app.tools.judge_tools import UserInteractionJudgeTool
+                    from app.core.database import save_message
+                    
+                    current_agent_name = current_node.replace("agent_", "").upper()
+                    next_agent_name = next_node.replace("agent_", "").upper()
+                    next_desc = f"**{next_agent_name}**" if next_node != "END" else "**结束流程 (END)**"
+                    
+                    question = f"🎭 智能体 **{current_agent_name}** 已运行完毕。是否批准其结果并推进至 {next_desc}？"
+                    options = [
+                        "*Approve::批准并推进",
+                        "Revise::输入修改反馈意见",
+                        "Terminate::终止当前流程"
+                    ]
+                    
+                    # Notify HIL starting
+                    await manager.broadcast(conversation_id, {
+                        "type": "message",
+                        "conversation_id": conversation_id,
+                        "sender": "system",
+                        "content": {"text": f"⏳ Human-in-the-loop (HIL) 拦截已触发。等待人工审核..."},
+                        "stream": False,
+                    })
+                    
+                    tool = UserInteractionJudgeTool()
+                    res = await tool.run({
+                        "question": question,
+                        "options": options,
+                        "conversation_id": conversation_id
+                    })
+                    
+                    decision = res.decision.strip()
+                    if decision.lower() in ("approve", "yes", "y"):
+                        logger.info("[HIL Intercept] Approved by user.")
+                    elif decision.lower() in ("terminate", "end", "stop"):
+                        logger.info("[HIL Intercept] Terminated by user.")
+                        next_node = "END"
+                    else:
+                        # User provided custom feedback for revision
+                        feedback = decision
+                        logger.info(f"[HIL Intercept] Revision requested: {feedback}")
+                        
+                        # Save user feedback message to the chat
+                        feedback_msg = f"🔄 [HIL 反馈] 针对 {current_agent_name} 的修改意见：\n{feedback}"
+                        save_message(conversation_id, "user", {"text": feedback_msg}, streaming=False)
+                        await manager.broadcast(conversation_id, {
+                            "type": "message",
+                            "conversation_id": conversation_id,
+                            "sender": "user",
+                            "content": {"text": feedback_msg},
+                            "stream": False,
+                        })
+                        
+                        # Set next_node back to current_node to re-run, and record feedback
+                        state[f"{current_node}_feedback"] = feedback
+                        next_node = current_node
+                        
+                        if current_node in state["completed_nodes"]:
+                            state["completed_nodes"].remove(current_node)
                 
             current_node = next_node
             

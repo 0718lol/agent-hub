@@ -22,6 +22,7 @@ class BaseAgent:
     role: str = ""
     style: str = ""
     system_prompt: str = ""
+    description: str = ""
     # Runtime tools enabled for this agent (None = all enabled tools)
     enabled_tools: list[str] | None = None
 
