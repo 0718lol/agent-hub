@@ -110,6 +110,17 @@ class BaseAgent:
         elif tool_name == "file_read" and isinstance(data, dict):
             content = data.get("content", "")[:500]
             return f"> ```\n{content}\n> ```"
+        elif tool_name == "safe_python_executor" and isinstance(data, dict):
+            stdout = data.get("stdout", "")
+            ret = data.get("result", None)
+            lines = []
+            if stdout:
+                lines.append(f"> **标准输出 (stdout)**:\n> ```\n> {stdout.strip()}\n> ```")
+            if ret is not None:
+                lines.append(f"> **返回值 (return)**: `{ret}`")
+            if not lines:
+                lines.append("> (执行成功，无任何输出与返回值)")
+            return "\n".join(lines)
         elif tool_name in ("file_write", "file_list") and isinstance(data, dict):
             return f"> {json.dumps(data, ensure_ascii=False, indent=2)}"
         else:

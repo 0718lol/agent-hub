@@ -10,3 +10,4 @@ from .registry import (  # noqa: F401
 from . import web_search  # noqa: F401
 from . import http_request  # noqa: F401
 from . import file_ops  # noqa: F401
+from . import code_agent_tools  # noqa: F401

@@ -1,7 +1,7 @@
 from .base import BaseAgent
 
 # Runtime executable tool IDs that can be assigned to custom agents
-RUNTIME_TOOL_IDS = ["web_search", "http_request", "file_read", "file_write", "file_list"]
+RUNTIME_TOOL_IDS = ["web_search", "http_request", "file_read", "file_write", "file_list", "safe_python_executor"]
 
 
 AVAILABLE_TOOLS = {
@@ -74,6 +74,13 @@ AVAILABLE_TOOLS = {
         "icon": "✍️",
         "description": "文案、故事、营销内容创作",
         "prompt_addon": "\n- 你擅长创意写作，包括广告文案、故事创作、营销内容等，文笔优美有感染力。",
+    },
+    "safe_python_executor": {
+        "id": "safe_python_executor",
+        "name": "安全代码沙箱",
+        "icon": "🛡️",
+        "description": "安全执行 Python 脚本，以单步自愈和自校验的方式批量读写文件及运行测试",
+        "prompt_addon": "\n- 你可以使用安全代码沙箱。使用 [tool_call:safe_python_executor]{\"code\": \"python代码\"}[/tool_call] 调用，允许单步多工具运行、循环自测与纠错。",
     },
 }
 
