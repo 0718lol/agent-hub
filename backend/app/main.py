@@ -375,38 +375,130 @@ async def _run_user_message_flow(conversation_id: str, text: str, target_agent: 
             return
 
         is_group = not target_agent
-        pm = AGENTS.get("agent_pm")
-        assigned_agent_ids = []
-        pm_response = ""
-
-        if pm:
-            step = trace.add_step(pm.agent_id, pm.name)
-            assigned_agent_ids, pm_response = await _stream_agent_reply(
-                conversation_id, pm, text, stop_event
-            )
-            step.finish(status="success", tokens=len(pm_response) // 3)
-            metrics.record_agent_result(pm.agent_id, 80, step.duration_ms, step.tokens_used)
-
         if is_group and not stop_event.is_set():
-            if assigned_agent_ids:
-                agents_to_run = [
-                    AGENTS[aid] for aid in assigned_agent_ids
-                    if aid in AGENTS and aid != "agent_pm"
-                ]
-            else:
-                agents_to_run = [AGENTS["agent_designer"], AGENTS["agent_frontend"], AGENTS["agent_backend"]]
+            from app.core.state_graph import StateGraph
+            
+            graph = StateGraph()
+            
+            # 1. Define Node execution wrappers
+            async def run_pm(state: dict) -> dict:
+                pm = AGENTS["agent_pm"]
+                step = trace.add_step(pm.agent_id, pm.name)
+                assigned, pm_res = await _stream_agent_reply(
+                    conversation_id, pm, text, stop_event
+                )
+                step.finish(status="success", tokens=len(pm_res) // 3)
+                metrics.record_agent_result(pm.agent_id, 80, step.duration_ms, step.tokens_used)
+                return {
+                    "pm_response": pm_res,
+                    "assigned_agents": assigned
+                }
+                
+            async def run_designer(state: dict) -> dict:
+                designer = AGENTS["agent_designer"]
+                step = trace.add_step(designer.agent_id, designer.name)
+                _, res = await _stream_agent_reply(
+                    conversation_id, designer, text, stop_event, context=state.get("pm_response", "")
+                )
+                step.finish(status="success", tokens=len(res) // 3)
+                metrics.record_agent_result(designer.agent_id, 75, step.duration_ms, step.tokens_used)
+                return {"designer_response": res}
 
-            if agents_to_run:
-                # Create trace steps for each downstream agent
-                steps = {a.agent_id: trace.add_step(a.agent_id, a.name) for a in agents_to_run}
-                await asyncio.gather(*[
-                    _stream_agent_reply(conversation_id, agent, text, stop_event, context=pm_response)
-                    for agent in agents_to_run
-                ])
-                for a in agents_to_run:
-                    s = steps[a.agent_id]
-                    s.finish(status="success", tokens=100)
-                    metrics.record_agent_result(a.agent_id, 75, s.duration_ms, s.tokens_used)
+            async def run_frontend(state: dict) -> dict:
+                frontend = AGENTS["agent_frontend"]
+                step = trace.add_step(frontend.agent_id, frontend.name)
+                _, res = await _stream_agent_reply(
+                    conversation_id, frontend, text, stop_event, context=state.get("pm_response", "")
+                )
+                step.finish(status="success", tokens=len(res) // 3)
+                metrics.record_agent_result(frontend.agent_id, 75, step.duration_ms, step.tokens_used)
+                return {"frontend_response": res}
+
+            async def run_backend(state: dict) -> dict:
+                backend = AGENTS["agent_backend"]
+                step = trace.add_step(backend.agent_id, backend.name)
+                _, res = await _stream_agent_reply(
+                    conversation_id, backend, text, stop_event, context=state.get("pm_response", "")
+                )
+                step.finish(status="success", tokens=len(res) // 3)
+                metrics.record_agent_result(backend.agent_id, 75, step.duration_ms, step.tokens_used)
+                return {"backend_response": res}
+
+            async def run_tester(state: dict) -> dict:
+                tester = AGENTS["agent_tester"]
+                step = trace.add_step(tester.agent_id, tester.name)
+                _, res = await _stream_agent_reply(
+                    conversation_id, tester, text, stop_event, context=state.get("pm_response", "")
+                )
+                step.finish(status="success", tokens=len(res) // 3)
+                metrics.record_agent_result(tester.agent_id, 75, step.duration_ms, step.tokens_used)
+                return {"tester_response": res}
+
+            async def run_devops(state: dict) -> dict:
+                devops = AGENTS["agent_devops"]
+                step = trace.add_step(devops.agent_id, devops.name)
+                _, res = await _stream_agent_reply(
+                    conversation_id, devops, text, stop_event, context=state.get("pm_response", "")
+                )
+                step.finish(status="success", tokens=len(res) // 3)
+                metrics.record_agent_result(devops.agent_id, 75, step.duration_ms, step.tokens_used)
+                return {"devops_response": res}
+
+            # 2. Add nodes to graph
+            graph.add_node("agent_pm", run_pm)
+            graph.add_node("agent_designer", run_designer)
+            graph.add_node("agent_frontend", run_frontend)
+            graph.add_node("agent_backend", run_backend)
+            graph.add_node("agent_tester", run_tester)
+            graph.add_node("agent_devops", run_devops)
+
+            # 3. Add edges and conditional routing rules
+            def pm_router(state: dict) -> str:
+                assigned = state.get("assigned_agents", [])
+                if not assigned:
+                    return "agent_designer"
+                for aid in ["agent_designer", "agent_frontend", "agent_backend", "agent_tester", "agent_devops"]:
+                    if aid in assigned:
+                        return aid
+                return "END"
+
+            def designer_router(state: dict) -> str:
+                assigned = state.get("assigned_agents", [])
+                for aid in ["agent_frontend", "agent_backend", "agent_tester", "agent_devops"]:
+                    if not assigned or aid in assigned:
+                        return aid
+                return "END"
+
+            def frontend_router(state: dict) -> str:
+                assigned = state.get("assigned_agents", [])
+                for aid in ["agent_backend", "agent_tester", "agent_devops"]:
+                    if not assigned or aid in assigned:
+                        return aid
+                return "END"
+
+            def backend_router(state: dict) -> str:
+                assigned = state.get("assigned_agents", [])
+                for aid in ["agent_tester", "agent_devops"]:
+                    if not assigned or aid in assigned:
+                        return aid
+                return "END"
+
+            def tester_router(state: dict) -> str:
+                assigned = state.get("assigned_agents", [])
+                for aid in ["agent_devops"]:
+                    if not assigned or aid in assigned:
+                        return aid
+                return "END"
+
+            graph.add_conditional_edge("agent_pm", pm_router)
+            graph.add_conditional_edge("agent_designer", designer_router)
+            graph.add_conditional_edge("agent_frontend", frontend_router)
+            graph.add_conditional_edge("agent_backend", backend_router)
+            graph.add_conditional_edge("agent_tester", tester_router)
+            graph.add_edge("agent_devops", "END")
+
+            # 4. Run StateGraph orchestration
+            await graph.run({}, conversation_id, stop_event)
     finally:
         trace.finish()
         _stop_events.pop(conversation_id, None)
