@@ -62,4 +62,5 @@ async def test():
         total = time.time() - start
         print(f'\nDone in {total:.1f}s. Debate triggered: {debate_found}')
 
-asyncio.run(test())
+if __name__ == "__main__":
+    asyncio.run(test())

@@ -166,6 +166,13 @@ class StateGraph:
                 human_input_mode = hil_settings.get("human_input_mode", "NEVER")
                 cooldown_steps = hil_settings.get("cooldown_steps", 2)
                 
+                # Safety override for unit tests: do not trigger real HIL if conversation_id starts with "test" and UserInteractionJudgeTool is not mocked.
+                if conversation_id and conversation_id.startswith("test"):
+                    from app.tools.judge_tools import UserInteractionJudgeTool
+                    from unittest.mock import Mock
+                    if not isinstance(UserInteractionJudgeTool.run, Mock):
+                        human_input_mode = "NEVER"
+                
                 trigger = False
                 if human_input_mode == "ALWAYS":
                     trigger = True

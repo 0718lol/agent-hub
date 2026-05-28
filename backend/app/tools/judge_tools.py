@@ -267,7 +267,7 @@ class UserInteractionJudgeTool:
             })
 
         # CLI / Terminal 模式 (如果没有活跃连接或者没有 conversation_id)
-        is_cli = not conversation_id or conversation_id not in manager.active_connections
+        is_cli = not conversation_id or not hasattr(manager, "active_connections") or conversation_id not in manager.active_connections
         
         if is_cli:
             # 打印类似 claude code 风格的提示
