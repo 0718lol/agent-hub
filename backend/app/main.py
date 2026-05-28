@@ -315,8 +315,13 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
     full_text = ""
     raw_text = ""
     buffer = ""
-    last_thinking_broadcast = ""
-    assigned_agents = []
+
+    # Initialize the stream pipeline dynamically to avoid circular imports
+    from app.core.pipeline import StreamContext, StreamPipeline, UnifiedTagMiddleware, CodeBlockMiddleware
+    context_obj = StreamContext(conversation_id=conversation_id, agent_id=agent.agent_id)
+    pipeline = StreamPipeline(context_obj)
+    pipeline.add_middleware(UnifiedTagMiddleware())
+    pipeline.add_middleware(CodeBlockMiddleware())
 
     # If context provided (PM's task breakdown), prepend to user_text for the agent
     effective_text = user_text
@@ -368,8 +373,10 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
             )
 
             raw_text = best_output
-            buffer = best_output
-            full_text = best_output.strip()
+            # Process best candidate text through the pipeline to register codes/events
+            processed = await pipeline.process_chunk(best_output)
+            flushed = await pipeline.finalize()
+            buffer = processed + flushed
 
             # Broadcast candidates comparison
             await manager.broadcast(conversation_id, {
@@ -389,94 +396,12 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
                     break
 
                 raw_text += chunk
-                buffer += chunk
+                
+                # Pass stream chunk through the Hookable Pipeline
+                processed_chunk = await pipeline.process_chunk(chunk)
+                buffer += processed_chunk
 
-                # Extract and broadcast thinking blocks
-                while True:
-                    think_match = re.search(r'\[thinking\](.*?)\[/thinking\]', buffer, re.DOTALL)
-                    if not think_match:
-                        break
-                    think_text = think_match.group(1).strip()
-                    if think_text and think_text != last_thinking_broadcast:
-                        last_thinking_broadcast = think_text
-                        await manager.broadcast(conversation_id, {
-                            "type": "thinking",
-                            "conversation_id": conversation_id,
-                            "agent_id": agent.agent_id,
-                            "text": think_text,
-                        })
-                    buffer = buffer[:think_match.start()] + buffer[think_match.end():]
-
-                # Extract assign tags
-                while True:
-                    assign_match = re.search(r'\[assign:(\w+)\]', buffer)
-                    if not assign_match:
-                        break
-                    agent_id = assign_match.group(1)
-                    if agent_id not in assigned_agents:
-                        assigned_agents.append(agent_id)
-                    buffer = buffer[:assign_match.start()] + buffer[assign_match.end():]
-
-                # Extract options tags (keep in message for frontend to render)
-                # Don't strip [options:...] — let frontend handle it
-
-                # Extract [create_agent:{json}] tags
-                while True:
-                    ca_match = re.search(r'\[create_agent:(.*?)\]', buffer, re.DOTALL)
-                    if not ca_match:
-                        break
-                    try:
-                        agent_config = json.loads(ca_match.group(1))
-                        _register_custom_agent(agent_config)
-                        # Notify frontend about the new agent
-                        await manager.broadcast(conversation_id, {
-                            "type": "agent_created",
-                            "conversation_id": conversation_id,
-                            "agent": agent_config,
-                        })
-                    except (json.JSONDecodeError, Exception):
-                        pass
-                    buffer = buffer[:ca_match.start()] + buffer[ca_match.end():]
-
-                # Extract [delete_agent:agent_id] tags
-                while True:
-                    da_match = re.search(r'\[delete_agent:(agent_custom_\w+)\]', buffer)
-                    if not da_match:
-                        break
-                    del_id = da_match.group(1)
-                    _remove_custom_agent(del_id)
-                    await manager.broadcast(conversation_id, {
-                        "type": "agent_deleted",
-                        "conversation_id": conversation_id,
-                        "agent_id": del_id,
-                    })
-                    buffer = buffer[:da_match.start()] + buffer[da_match.end():]
-
-                # Extract and broadcast code blocks
-                while True:
-                    code_match = re.search(r'```(\w*)\n(.*?)```', buffer, re.DOTALL)
-                    if not code_match:
-                        break
-                    lang = code_match.group(1) or "html"
-                    code = code_match.group(2).strip()
-                    await manager.broadcast(conversation_id, {
-                        "type": "code",
-                        "conversation_id": conversation_id,
-                        "agent_id": agent.agent_id,
-                        "language": lang,
-                        "code": code,
-                    })
-                    # If HTML, also send to preview panel
-                    if lang.lower() in ("html", "htm", ""):
-                        await manager.broadcast(conversation_id, {
-                            "type": "preview",
-                            "conversation_id": conversation_id,
-                            "agent_id": agent.agent_id,
-                            "html": code,
-                        })
-                    buffer = buffer[:code_match.start()] + buffer[code_match.end():]
-
-                # Broadcast remaining text (summary) as streaming message
+                # Broadcast remaining clean summary text to typewriter message UI
                 summary = buffer.strip()
                 if summary:
                     await manager.broadcast(conversation_id, {
@@ -486,6 +411,13 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
                         "content": {"text": summary},
                         "stream": True,
                     })
+
+            # Stream finished, finalize and flush the pipeline buffers
+            flushed_text = await pipeline.finalize()
+            buffer += flushed_text
+
+        # Retrieve parsed downstream agent assignments from context state
+        assigned_agents = pipeline.context.state.get("assigned_agents", [])
 
         # Final text is whatever remains in buffer (summary only)
         full_text = buffer.strip()
@@ -979,11 +911,15 @@ async def _simulate_deploy(conversation_id: str):
 async def startup_event():
     from app.core.mcp_client import mcp_manager
     await mcp_manager.start_all()
+    from app.services.daemon_scheduler import daemon_scheduler
+    daemon_scheduler.start()
 
 @app.on_event("shutdown")
 async def shutdown_event():
     from app.core.mcp_client import mcp_manager
     await mcp_manager.stop_all()
+    from app.services.daemon_scheduler import daemon_scheduler
+    await daemon_scheduler.stop()
 
 
 # MCP REST APIs
@@ -1061,5 +997,71 @@ async def rollback_sandbox(conversation_id: str, r: RollbackRequest):
     if success:
         return {"status": "ok", "message": f"工作空间已成功回滚至版本: {r.commit_hash[:7]}"}
     return {"status": "error", "message": "工作区回退操作失败，请确认该 commit 节点是否有效"}
+
+
+# ---- Background Autonomous Tasks REST API ----
+
+class CronTaskCreate(BaseModel):
+    conversation_id: str
+    agent_id: str
+    task_prompt: str
+    interval_seconds: int
+
+@app.get("/api/cron")
+async def list_cron_tasks(conversation_id: str = None):
+    from app.core.database import get_cron_tasks
+    tasks = get_cron_tasks(conversation_id)
+    return {"status": "ok", "tasks": tasks}
+
+@app.post("/api/cron")
+async def create_cron_task(body: CronTaskCreate):
+    import uuid
+    from datetime import datetime, timedelta
+    from app.core.database import save_cron_task
+    
+    task_id = f"task_{uuid.uuid4().hex[:8]}"
+    now = datetime.utcnow()
+    # Schedule next run in interval_seconds from now
+    next_run = (now + timedelta(seconds=body.interval_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+    
+    save_cron_task(
+        task_id=task_id,
+        conversation_id=body.conversation_id,
+        agent_id=body.agent_id,
+        task_prompt=body.task_prompt,
+        interval_seconds=body.interval_seconds,
+        status="active",
+        last_run=None,
+        next_run=next_run
+    )
+    return {"status": "ok", "task_id": task_id, "message": "离线自治任务创建成功！"}
+
+@app.post("/api/cron/{task_id}/toggle")
+async def toggle_cron_task(task_id: str, body: dict):
+    from app.core.database import update_cron_task_status
+    status = body.get("status", "active") # 'active' or 'paused'
+    if status not in ("active", "paused"):
+        return {"status": "error", "message": "无效的任务状态"}
+    update_cron_task_status(task_id, status)
+    return {"status": "ok", "message": f"任务状态已更新为 {status}"}
+
+@app.post("/api/cron/{task_id}/run")
+async def run_cron_task_now(task_id: str):
+    from app.core.database import get_cron_tasks
+    tasks = get_cron_tasks()
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    if not task:
+        return {"status": "error", "message": "自治任务未找到"}
+        
+    from app.services.daemon_scheduler import daemon_scheduler
+    # Trigger non-blockingly
+    asyncio.create_task(daemon_scheduler._run_task(task))
+    return {"status": "ok", "message": "已手动触发后台自治作业运行！"}
+
+@app.delete("/api/cron/{task_id}")
+async def delete_cron_task_endpoint(task_id: str):
+    from app.core.database import delete_cron_task
+    delete_cron_task(task_id)
+    return {"status": "ok", "message": "离线自治任务已成功删除！"}
 
 

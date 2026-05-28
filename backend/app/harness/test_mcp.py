@@ -24,7 +24,14 @@ async def run_mcp_testing():
     
     # 0. Cleanup old sandbox folders
     if os.path.exists(sandbox_dir):
-        shutil.rmtree(sandbox_dir)
+        try:
+            def handle_remove_readonly(func, path, exc):
+                import stat
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+            shutil.rmtree(sandbox_dir, onerror=handle_remove_readonly)
+        except Exception:
+            pass
     os.makedirs(sandbox_dir, exist_ok=True)
 
     # 1. Verify Built-in System Server registration
@@ -110,7 +117,15 @@ async def run_mcp_testing():
     print("  SUCCESS: Tool workspace_run_command executed successfully and returned stdout.")
 
     # Cleanup sandbox files
-    shutil.rmtree(sandbox_dir)
+    try:
+        # On Windows, git objects can have read-only permissions
+        def handle_remove_readonly(func, path, exc):
+            import stat
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        shutil.rmtree(sandbox_dir, onerror=handle_remove_readonly)
+    except Exception:
+        pass
 
     print("\n====================================================")
     print("🎉 SUCCESS: Plan D Model Context Protocol integration regression suite finished with 100% PASS!")

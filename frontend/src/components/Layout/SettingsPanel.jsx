@@ -413,7 +413,114 @@ export default function SettingsPanel({ onClose }) {
       fetchSandboxCommits()
     }
   }, [tab, activeConversationId])
+  // Background cron tasks states
+  const [cronTasks, setCronTasks] = useState([])
+  const [cronLoading, setCronLoading] = useState(false)
+  const [selectedAgentForCron, setSelectedAgentForCron] = useState('agent_pm')
+  const [cronPrompt, setCronPrompt] = useState('检查工作区，寻找安全漏洞并重构代码，完毕后运行编译测试并生成 checkpoint 版本。')
+  const [cronInterval, setCronInterval] = useState(60)
 
+  const fetchCronTasks = async () => {
+    setCronLoading(true)
+    try {
+      const resp = await fetch(`/api/cron?conversation_id=${activeConversationId}`)
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setCronTasks(d.tasks || [])
+      }
+    } catch (e) {
+      console.error("Failed to fetch cron tasks:", e)
+    }
+    setCronLoading(false)
+  }
+
+  const handleAddCronTask = async () => {
+    if (!cronPrompt.trim()) return
+    setSaving(true)
+    setMsg('')
+    try {
+      const resp = await fetch('/api/cron', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversation_id: activeConversationId,
+          agent_id: selectedAgentForCron,
+          task_prompt: cronPrompt,
+          interval_seconds: cronInterval
+        })
+      })
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setMsg('离线自治任务成功创建！')
+        setCronPrompt('检查工作区，寻找安全漏洞并重构代码，完毕后运行编译测试并生成 checkpoint 版本。')
+        fetchCronTasks()
+      } else {
+        setMsg('创建失败：' + d.message)
+      }
+    } catch {
+      setMsg('创建任务异常')
+    }
+    setSaving(false)
+  }
+
+  const handleToggleCronTask = async (taskId, currentStatus) => {
+    setSaving(true)
+    setMsg('')
+    try {
+      const newStatus = currentStatus === 'active' ? 'paused' : 'active'
+      const resp = await fetch(`/api/cron/${taskId}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      })
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setMsg(d.message)
+        fetchCronTasks()
+      }
+    } catch {
+      setMsg('操作异常')
+    }
+    setSaving(false)
+  }
+
+  const handleRunCronTaskNow = async (taskId) => {
+    setSaving(true)
+    setMsg('')
+    try {
+      const resp = await fetch(`/api/cron/${taskId}/run`, { method: 'POST' })
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setMsg(d.message)
+        fetchCronTasks()
+      }
+    } catch {
+      setMsg('手动触发异常')
+    }
+    setSaving(false)
+  }
+
+  const handleDeleteCronTask = async (taskId) => {
+    setSaving(true)
+    setMsg('')
+    try {
+      const resp = await fetch(`/api/cron/${taskId}`, { method: 'DELETE' })
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setMsg(d.message)
+        fetchCronTasks()
+      }
+    } catch {
+      setMsg('删除异常')
+    }
+    setSaving(false)
+  }
+
+  useEffect(() => {
+    if (tab === 'cron' && activeConversationId) {
+      fetchCronTasks()
+    }
+  }, [tab, activeConversationId])
 
 
   // AI Detector state
@@ -505,14 +612,15 @@ export default function SettingsPanel({ onClose }) {
   }
 
   const tabs = [
-    { id: 'llm', label: '🤖 LLM 模型' },
-    { id: 'router', label: '🔀 智能路由' },
-    { id: 'mcp', label: '🔌 MCP 工具' },
-    { id: 'sandbox', label: '📂 沙盒版本' },
-    { id: 'quality', label: '🎯 质量门' },
-    { id: 'prompt', label: '📐 Prompt 分层' },
-    { id: 'memory', label: '💡 长期记忆' },
-    { id: 'detector', label: '🔍 AI 探针' },
+    { id: 'llm', label: '🤖 LLM' },
+    { id: 'router', label: '🔀 路由' },
+    { id: 'mcp', label: '🔌 MCP' },
+    { id: 'sandbox', label: '📂 沙盒' },
+    { id: 'cron', label: '📅 自治' },
+    { id: 'quality', label: '🎯 质量' },
+    { id: 'prompt', label: '📐 约束' },
+    { id: 'memory', label: '💡 记忆' },
+    { id: 'detector', label: '🔍 探针' },
   ]
 
   const labelStyle = {
@@ -717,6 +825,199 @@ export default function SettingsPanel({ onClose }) {
             <button onClick={handleSave} disabled={saving} style={btnStyle}>
               {saving ? '保存中...' : '保存配置'}
             </button>
+          </>
+        )}
+
+        {/* ====== TAB: Offline Cron Autonomous Tasks ====== */}
+        {tab === 'cron' && (
+          <>
+            <div style={{
+              padding: '12px 16px', borderRadius: 10, marginBottom: 20,
+              background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)',
+              fontSize: 12, color: '#a5b4fc', lineHeight: '1.5', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+            }}>
+              <span>📅 <b>Always-on 离线常驻自治守护中心</b> — 网页关闭后仍能让 Agent 主动对沙盒进行迭代与自愈开发</span>
+              <button
+                onClick={fetchCronTasks}
+                disabled={cronLoading}
+                style={{
+                  padding: '5px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.2)', cursor: 'pointer',
+                  opacity: cronLoading ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 4
+                }}
+              >
+                {cronLoading ? '🔄' : '🔄 刷新'}
+              </button>
+            </div>
+
+            {/* Configured Cron Tasks */}
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ ...labelStyle, fontSize: 14, fontWeight: 600, color: '#f8fafc', marginBottom: 12 }}>⚡ 当前项目的后台自治作业 (Tasks)</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: '25vh', overflowY: 'auto', paddingRight: 4 }}>
+                {cronTasks.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: '#64748b', padding: '20px 0', fontSize: 12 }}>
+                    暂无活动中的后台自治作业
+                  </div>
+                ) : (
+                  cronTasks.map((t) => {
+                    const isActive = t.status === 'active';
+                    const isRunning = t.status === 'running';
+                    
+                    let statusColor = '#94a3b8';
+                    let statusLabel = '⚪ 暂停中';
+                    if (isActive) {
+                      statusColor = '#10b981';
+                      statusLabel = '🟢 周期监听中';
+                    } else if (isRunning) {
+                      statusColor = '#3b82f6';
+                      statusLabel = '🔵 后台运行中...';
+                    }
+
+                    return (
+                      <div key={t.id} style={{
+                        padding: 14, borderRadius: 10, background: 'rgba(255,255,255,0.02)',
+                        border: `1px solid ${isActive ? 'rgba(16,185,129,0.15)' : isRunning ? 'rgba(59,130,246,0.3)' : 'rgba(255,255,255,0.05)'}`,
+                        display: 'flex', flexDirection: 'column', gap: 10,
+                        boxShadow: isRunning ? '0 0 12px rgba(59,130,246,0.1)' : 'none'
+                      }}>
+                        {/* Task metadata */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 12, color: '#f8fafc', fontWeight: 600, fontFamily: 'monospace' }}>{t.id}</span>
+                            <span style={{ fontSize: 10, background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', padding: '1px 5px', borderRadius: 4, fontWeight: 600 }}>
+                              {t.agent_id}
+                            </span>
+                            <span style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: 'rgba(255,255,255,0.04)', color: statusColor, border: `1px solid ${statusColor}40` }}>
+                              {statusLabel}
+                            </span>
+                          </div>
+                          <span style={{ fontSize: 10, color: '#64748b' }}>
+                            周期: {t.interval_seconds}s
+                          </span>
+                        </div>
+
+                        {/* Task prompt */}
+                        <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: '1.4', background: 'rgba(0,0,0,0.15)', padding: 10, borderRadius: 8, fontFamily: 'monospace' }}>
+                          📜 自治指令: {t.task_prompt}
+                        </div>
+
+                        {/* Task Schedule details */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#475569' }}>
+                          <span>上次触发: {t.last_run || '从未'}</span>
+                          <span>下次触发: {t.next_run || '未规划'}</span>
+                        </div>
+
+                        {/* Task operations */}
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 4 }}>
+                          <button
+                            onClick={() => handleToggleCronTask(t.id, t.status)}
+                            disabled={saving}
+                            style={{
+                              padding: '4px 8px', borderRadius: 6, fontSize: 11, background: 'transparent',
+                              border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', cursor: 'pointer', transition: 'all 0.2s'
+                            }}
+                          >
+                            {isActive ? '⏸️ 挂起' : '▶️ 激活'}
+                          </button>
+                          <button
+                            onClick={() => handleRunCronTaskNow(t.id)}
+                            disabled={saving || isRunning}
+                            style={{
+                              padding: '4px 8px', borderRadius: 6, fontSize: 11, background: 'rgba(59,130,246,0.1)',
+                              border: '1px solid rgba(59,130,246,0.2)', color: '#60a5fa', cursor: 'pointer', transition: 'all 0.2s'
+                            }}
+                          >
+                            ⚡ 立即执行
+                          </button>
+                          <button
+                            onClick={() => handleDeleteCronTask(t.id)}
+                            disabled={saving}
+                            style={{
+                              padding: '4px 8px', borderRadius: 6, fontSize: 11, background: 'rgba(239, 68, 68, 0.05)',
+                              border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171', cursor: 'pointer', transition: 'all 0.2s'
+                            }}
+                          >
+                            🗑️ 删除
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Create Autonomous Task */}
+            <div style={{
+              padding: 16, borderRadius: 12, background: 'rgba(0,0,0,0.15)',
+              border: '1px solid rgba(255,255,255,0.04)', marginBottom: 12
+            }}>
+              <label style={{ ...labelStyle, fontSize: 13, fontWeight: 600, color: '#f8fafc', marginBottom: 10 }}>📅 创建新离线自治任务 (Cron Job)</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                
+                {/* Agent & Interval */}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ ...labelStyle, fontSize: 11, color: '#64748b' }}>执行 Agent</label>
+                    <select
+                      value={selectedAgentForCron}
+                      onChange={(e) => setSelectedAgentForCron(e.target.value)}
+                      style={inputStyle}
+                    >
+                      <option value="agent_pm" style={{ background: '#1e293b' }}>PM 小助手 📋</option>
+                      <option value="agent_designer" style={{ background: '#1e293b' }}>设计顾问 🎯</option>
+                      <option value="agent_frontend" style={{ background: '#1e293b' }}>前端工程师 🎨</option>
+                      <option value="agent_backend" style={{ background: '#1e293b' }}>后端工程师 ⚙️</option>
+                      <option value="agent_tester" style={{ background: '#1e293b' }}>测试工程师 🧪</option>
+                      <option value="agent_devops" style={{ background: '#1e293b' }}>运维工程师 🚀</option>
+                    </select>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ ...labelStyle, fontSize: 11, color: '#64748b' }}>自治周期 (秒 / 间隔)</label>
+                    <select
+                      value={cronInterval}
+                      onChange={(e) => setCronInterval(parseInt(e.target.value))}
+                      style={inputStyle}
+                    >
+                      <option value="60" style={{ background: '#1e293b' }}>1 分钟 (自测用)</option>
+                      <option value="300" style={{ background: '#1e293b' }}>5 分钟</option>
+                      <option value="1800" style={{ background: '#1e293b' }}>30 分钟</option>
+                      <option value="3600" style={{ background: '#1e293b' }}>1 小时</option>
+                      <option value="86400" style={{ background: '#1e293b' }}>24 小时</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Prompt */}
+                <div>
+                  <label style={{ ...labelStyle, fontSize: 11, color: '#64748b' }}>自治 Prompt 指令</label>
+                  <textarea
+                    value={cronPrompt}
+                    onChange={(e) => setCronPrompt(e.target.value)}
+                    rows={3}
+                    style={{
+                      width: '100%', padding: '10px 12px', background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
+                      color: '#f8fafc', fontSize: 12, fontFamily: 'inherit', outline: 'none',
+                      lineHeight: '1.5'
+                    }}
+                    placeholder="输入分配给 Agent 的后台离线自治开发/检测指令..."
+                  />
+                </div>
+
+                <button
+                  onClick={handleAddCronTask}
+                  disabled={saving || !cronPrompt.trim()}
+                  style={{
+                    padding: '10px', borderRadius: 8, background: '#6366f1',
+                    border: 'none', color: 'white', fontSize: 13, fontWeight: 600,
+                    cursor: 'pointer', transition: 'all 0.2s'
+                  }}
+                >
+                  {saving ? '正在处理中...' : '📅 创建常驻离线自治任务'}
+                </button>
+              </div>
+            </div>
           </>
         )}
 
