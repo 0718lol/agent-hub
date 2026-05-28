@@ -30,7 +30,16 @@ class BaseAgent:
                            history: list = None, attachments: list = None,
                            conversation_id: str = "") -> AsyncGenerator[str, None]:
         if llm_client.is_configured() and self.system_prompt:
-            messages = self._build_messages(message, context, history, attachments)
+            if conversation_id:
+                from app.core.event_stream import event_stream_manager, MessageEvent
+                stream = event_stream_manager.get_stream(conversation_id)
+                has_user_prompt = any(isinstance(ev, MessageEvent) and ev.sender == "user" and ev.content == message for ev in stream)
+                if not has_user_prompt:
+                    event_stream_manager.append_event(conversation_id, MessageEvent(sender="user", content=message))
+                messages = event_stream_manager.compile_to_messages(conversation_id)
+            else:
+                messages = self._build_messages(message, context, history, attachments)
+
             # Structured layered prompt injection
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
             prompt_context = {"task_type": task_type}
@@ -53,6 +62,17 @@ class BaseAgent:
                 from app.tools.registry import parse_tool_calls, execute_tool_call
                 tool_calls = parse_tool_calls(accumulated)
 
+                if conversation_id:
+                    from app.core.event_stream import event_stream_manager, ThoughtEvent, ActionCallEvent
+                    if tool_calls:
+                        tool_name, params, start_pos, end_pos = tool_calls[0]
+                        thought_text = accumulated[:start_pos]
+                        if thought_text.strip():
+                            event_stream_manager.append_event(conversation_id, ThoughtEvent(agent_id=self.agent_id, content=thought_text))
+                        event_stream_manager.append_event(conversation_id, ActionCallEvent(tool_name=tool_name, params=params))
+                    else:
+                        event_stream_manager.append_event(conversation_id, ThoughtEvent(agent_id=self.agent_id, content=accumulated))
+
                 if not tool_calls or round_count >= _MAX_TOOL_ROUNDS:
                     break  # No tool calls or max rounds reached
 
@@ -61,7 +81,7 @@ class BaseAgent:
                 tool_name, params, start_pos, end_pos = tool_calls[0]
 
                 # Inject conversation_id for ACI and file/browser tools
-                if tool_name in ("file_read", "file_write", "file_list", "browser_action", "file_view_windowed", "file_edit_line", "run_stateful_command") and conversation_id:
+                if tool_name in ("file_read", "file_write", "file_list", "browser_action", "file_view_windowed", "file_edit_line", "run_stateful_command", "e2b_python_interpreter") and conversation_id:
                     params.setdefault("conversation_id", conversation_id)
 
                 logger.info(f"Agent '{self.agent_id}' calling tool: {tool_name}({params})")
@@ -72,8 +92,18 @@ class BaseAgent:
                 yield f"\n\n> 🔧 **工具调用**: `{tool_name}`\n{result_text}\n\n"
 
                 # Add assistant output + tool result to messages for next round
-                messages.append({"role": "assistant", "content": accumulated})
-                messages.append({"role": "user", "content": f"[工具结果: {tool_name}]\n{json.dumps(result.data if result.success else {'error': result.error}, ensure_ascii=False, indent=2)}\n\n请基于以上工具结果继续回复用户。"})
+                if conversation_id:
+                    from app.core.event_stream import event_stream_manager, ObservationEvent
+                    obs_output = result.data if result.success else result.error
+                    obs_images = result.data.get("images", []) if (result.success and isinstance(result.data, dict)) else []
+                    event_stream_manager.append_event(
+                        conversation_id,
+                        ObservationEvent(tool_name=tool_name, success=result.success, output=obs_output, images=obs_images)
+                    )
+                    messages = event_stream_manager.compile_to_messages(conversation_id)
+                else:
+                    messages.append({"role": "assistant", "content": accumulated})
+                    messages.append({"role": "user", "content": f"[工具结果: {tool_name}]\n{json.dumps(result.data if result.success else {'error': result.error}, ensure_ascii=False, indent=2)}\n\n请基于以上工具结果继续回复用户。"})
         else:
             reply = self._generate_reply(message, context)
             for char in reply:

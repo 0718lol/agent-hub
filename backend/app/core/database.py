@@ -103,6 +103,16 @@ def init_db():
             status TEXT DEFAULT 'ready',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS project_event_stream (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            timestamp REAL NOT NULL,
+            data TEXT NOT NULL,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_stream_conv ON project_event_stream(conversation_id);
     ''')
 
     default_convs = [
@@ -393,6 +403,45 @@ def delete_memory_item(conversation_id: str, key: str):
         'DELETE FROM project_memory WHERE conversation_id = ? AND key = ?',
         (conversation_id, key)
     )
+    conn.commit()
+    conn.close()
+
+
+# ---- Project Event Stream CRUD ----
+
+def save_event_item(conversation_id: str, event_type: str, timestamp: float, data_str: str):
+    conn = get_db()
+    conn.execute(
+        '''
+        INSERT INTO project_event_stream (conversation_id, event_type, timestamp, data)
+        VALUES (?, ?, ?, ?)
+        ''',
+        (conversation_id, event_type, timestamp, data_str)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_event_items(conversation_id: str) -> list[dict]:
+    conn = get_db()
+    rows = conn.execute(
+        'SELECT event_type, timestamp, data FROM project_event_stream WHERE conversation_id = ? ORDER BY timestamp ASC',
+        (conversation_id,)
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            'event_type': row['event_type'],
+            'timestamp': row['timestamp'],
+            'data': row['data']
+        }
+        for row in rows
+    ]
+
+
+def clear_event_items(conversation_id: str):
+    conn = get_db()
+    conn.execute('DELETE FROM project_event_stream WHERE conversation_id = ?', (conversation_id,))
     conn.commit()
     conn.close()
 
