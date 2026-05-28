@@ -1,0 +1,36 @@
+services:
+  backend:
+    build: ./backend
+    container_name: agenthub-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_data:/app/data
+    environment:
+      - AGENTHUB_HOST=0.0.0.0
+      - AGENTHUB_PORT=8000
+      - AGENTHUB_DEBUG=false
+      # LLM config (can override via .env file)
+      - AGENTHUB_LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - AGENTHUB_LLM_API_KEY=${LLM_API_KEY:-}
+      - AGENTHUB_LLM_BASE_URL=${LLM_BASE_URL:-}
+      - AGENTHUB_LLM_MODEL=${LLM_MODEL:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/settings/llm')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    container_name: agenthub-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend_data:
+    driver: local
