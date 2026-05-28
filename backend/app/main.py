@@ -249,6 +249,42 @@ async def health():
     return {"status": "ok", "agents": list(AGENTS.keys())}
 
 
+# ---- MULTI-CHANNEL WEBHOOK CALLBACK ENDPOINTS ----
+from fastapi import Request
+
+@app.post("/api/webhook/callback/slack")
+async def slack_webhook_callback(request: Request):
+    """Slack interactive actions callback endpoint."""
+    try:
+        # Slack sends payloads as form-data URL encoded JSON string under 'payload'
+        form_data = await request.form()
+        payload_str = form_data.get("payload")
+        
+        if payload_str:
+            payload = json.loads(payload_str)
+        else:
+            # Fallback to direct JSON in case of custom test setups
+            payload = await request.json()
+            
+        from app.services.webhook_gateway import webhook_gateway
+        res = await webhook_gateway.handle_slack_callback(payload)
+        return res
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/webhook/callback/telegram")
+async def telegram_webhook_callback(request: Request):
+    """Telegram inline keyboard button click callback endpoint."""
+    try:
+        payload = await request.json()
+        from app.services.webhook_gateway import webhook_gateway
+        res = await webhook_gateway.handle_telegram_callback(payload)
+        return res
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/api/conversations")
 async def list_conversations():
     return get_conversations()

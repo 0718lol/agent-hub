@@ -329,6 +329,15 @@ class UserInteractionJudgeTool:
                 "stream": False,
             })
 
+            # 同时派发给多渠道异步协同网关 (Slack/Telegram)
+            try:
+                from app.services.webhook_gateway import webhook_gateway
+                # Format to run non-blockingly or await
+                await webhook_gateway.send_hil_notification(conversation_id, question, parsed_options)
+            except Exception as ex:
+                import logging
+                logging.getLogger("user_interaction_judge").error(f"Failed to dispatch HIL Webhook notification: {ex}")
+
             # 注册 Future 挂起等待
             fut = asyncio.get_running_loop().create_future()
             _pending_interactions[conversation_id] = fut
