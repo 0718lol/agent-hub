@@ -43,6 +43,18 @@ export default function DeployPanel() {
     }
   }
 
+  const handleOpenFolder = async () => {
+    try {
+      await fetch('/api/deploy/open-folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: activeId })
+      })
+    } catch (e) {
+      console.error("Failed to open isolated deploy folder:", e)
+    }
+  }
+
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 16 }}>
@@ -239,41 +251,65 @@ export default function DeployPanel() {
                 </span>
               </div>
 
-              <div style={{ display: 'flex', gap: 10, width: '100%', marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 10, width: '100%', marginTop: 8, flexDirection: 'column' }}>
+                <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+                  <button
+                    onClick={handleVisitSite}
+                    style={{
+                      flex: 1,
+                      padding: '10px 16px',
+                      background: 'linear-gradient(135deg, #10b981, #059669)',
+                      color: 'white',
+                      border: 'none',
+                      fontWeight: 600,
+                      fontSize: 13,
+                      borderRadius: 8,
+                      boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+                      transition: 'all 0.2s',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    访问线上地址
+                  </button>
+                  <button
+                    onClick={handleDeploy}
+                    style={{
+                      flex: 1,
+                      padding: '10px 16px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid var(--border)',
+                      color: 'var(--text-primary)',
+                      fontWeight: 600,
+                      fontSize: 13,
+                      borderRadius: 8,
+                      transition: 'all 0.2s',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    重新上线
+                  </button>
+                </div>
                 <button
-                  onClick={handleVisitSite}
+                  onClick={handleOpenFolder}
                   style={{
-                    flex: 1,
-                    padding: '10px 16px',
-                    background: 'linear-gradient(135deg, #10b981, #059669)',
-                    color: 'white',
-                    border: 'none',
+                    width: '100%',
+                    padding: '12px 16px',
+                    background: 'rgba(99, 102, 241, 0.1)',
+                    border: '1px solid rgba(99, 102, 241, 0.3)',
+                    color: '#a5b4fc',
                     fontWeight: 600,
                     fontSize: 13,
                     borderRadius: 8,
-                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
                     transition: 'all 0.2s',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 12px rgba(99, 102, 241, 0.1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8
                   }}
                 >
-                  访问线上地址
-                </button>
-                <button
-                  onClick={handleDeploy}
-                  style={{
-                    flex: 1,
-                    padding: '10px 16px',
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid var(--border)',
-                    color: 'var(--text-primary)',
-                    fontWeight: 600,
-                    fontSize: 13,
-                    borderRadius: 8,
-                    transition: 'all 0.2s',
-                    cursor: 'pointer'
-                  }}
-                >
-                  重新上线
+                  📂 打开本地部署文件夹
                 </button>
               </div>
             </div>

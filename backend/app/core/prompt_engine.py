@@ -205,10 +205,42 @@ class PromptEngine:
                         sections.append("\n【工具能力】：" + "".join(addons))
 
             elif layer.id == "context":
-                # Inject dynamic context (PM breakdown, etc.)
                 pm_breakdown = context.get("pm_breakdown", "")
+                context_sections = []
                 if pm_breakdown:
-                    sections.append(f"\n\n【任务上下文】：\nPM 的任务拆解：{pm_breakdown}")
+                    context_sections.append(f"PM 的任务拆解：\n{pm_breakdown}")
+
+                conversation_id = context.get("conversation_id")
+                if conversation_id:
+                    from app.core.database import get_project_memory
+                    try:
+                        mem = get_project_memory(conversation_id)
+                        if mem:
+                            mem_str = "【当前项目长期记忆与技术契约】："
+                            key_labels = {
+                                "tech_stack": "⚙️ 技术栈与接口契约",
+                                "user_preference": "🎨 用户偏好与设计风格",
+                                "implemented_features": "✅ 已开发完成的特性/文件",
+                                "pending_todos": "📋 待开发任务/遗留TODO"
+                            }
+                            has_any = False
+                            for k, label in key_labels.items():
+                                if k in mem and mem[k]["value"].strip():
+                                    mem_str += f"\n- **{label}**:\n{mem[k]['value']}"
+                                    has_any = True
+
+                            for k, v in mem.items():
+                                if k not in key_labels and v["value"].strip():
+                                    mem_str += f"\n- **💡 {k}**:\n{v['value']}"
+                                    has_any = True
+
+                            if has_any:
+                                context_sections.append(mem_str)
+                    except Exception:
+                        pass
+
+                if context_sections:
+                    sections.append("\n\n" + "\n\n".join(context_sections))
 
             else:
                 rendered = layer.render(variables)

@@ -24,8 +24,21 @@ class BaseAgent:
             # Structured layered prompt injection
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
             prompt_context = {"task_type": task_type}
+            conv_id = None
+            if history and len(history) > 0:
+                conv_id = history[0].get("conversation_id")
+            if conv_id:
+                prompt_context["conversation_id"] = conv_id
             full_prompt = prompt_engine.build(self, prompt_context)
-            async for chunk in llm_client.chat_stream(messages, full_prompt):
+            
+            # Fetch dynamic route
+            from app.core.router import smart_router
+            route = smart_router.get_route_for_agent(self.agent_id)
+            
+            # Stream beautiful route indicator to user
+            yield f"\n[thinking]🤖 智能路由调度: 正在调用 {route.model} ({route.provider}) 执行任务...[/thinking]\n"
+            
+            async for chunk in llm_client.chat_stream(messages, full_prompt, route_override=route):
                 yield chunk
         else:
             reply = self._generate_reply(message, context)

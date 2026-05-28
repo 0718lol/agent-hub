@@ -53,6 +53,18 @@ def init_db():
             tools TEXT DEFAULT '[]',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS project_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            source TEXT DEFAULT 'system',
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_conv_key ON project_memory(conversation_id, key);
     ''')
 
     default_convs = [
@@ -190,3 +202,46 @@ def update_conversation_details(conv_id: str, name: str, avatar: str, preview: s
     )
     conn.commit()
     conn.close()
+
+
+# ---- Project Long-term Memory CRUD ----
+
+def save_memory_item(conversation_id: str, key: str, value: str, source: str = "system"):
+    conn = get_db()
+    conn.execute(
+        '''
+        INSERT OR REPLACE INTO project_memory (conversation_id, key, value, source, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''',
+        (conversation_id, key, value, source)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_project_memory(conversation_id: str) -> dict:
+    conn = get_db()
+    rows = conn.execute(
+        'SELECT key, value, source, updated_at FROM project_memory WHERE conversation_id = ?',
+        (conversation_id,)
+    ).fetchall()
+    conn.close()
+    return {
+        row['key']: {
+            'value': row['value'],
+            'source': row['source'],
+            'updated_at': row['updated_at']
+        }
+        for row in rows
+    }
+
+
+def delete_memory_item(conversation_id: str, key: str):
+    conn = get_db()
+    conn.execute(
+        'DELETE FROM project_memory WHERE conversation_id = ? AND key = ?',
+        (conversation_id, key)
+    )
+    conn.commit()
+    conn.close()
+

@@ -34,24 +34,36 @@ class LLMClient:
             return bool(self.model)
         return bool(self.api_key and self.base_url and self.model)
 
-    async def chat_stream(self, messages: list[dict], system: str = "") -> AsyncGenerator[str, None]:
+    async def chat_stream(self, messages: list[dict], system: str = "", route_override=None) -> AsyncGenerator[str, None]:
+        client_to_use = self
+        if route_override:
+            client_to_use = LLMClient()
+            client_to_use.configure(
+                provider=route_override.provider,
+                api_key=route_override.api_key,
+                base_url=route_override.base_url,
+                model=route_override.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
+            )
+
         try:
-            if self.provider == "opencode":
-                async for chunk in self._opencode_stream(messages, system):
+            if client_to_use.provider == "opencode":
+                async for chunk in client_to_use._opencode_stream(messages, system):
                     yield chunk
-            elif self.provider == "claude_code":
-                async for chunk in self._claude_code_stream(messages, system):
+            elif client_to_use.provider == "claude_code":
+                async for chunk in client_to_use._claude_code_stream(messages, system):
                     yield chunk
-            elif self.provider == "anthropic":
-                async for chunk in self._anthropic_stream(messages, system):
+            elif client_to_use.provider == "anthropic":
+                async for chunk in client_to_use._anthropic_stream(messages, system):
                     yield chunk
-            elif self.provider == "ollama":
-                if not self.base_url:
-                    self.base_url = "http://127.0.0.1:11434/v1"
-                async for chunk in self._openai_stream(messages, system):
+            elif client_to_use.provider == "ollama":
+                if not client_to_use.base_url:
+                    client_to_use.base_url = "http://127.0.0.1:11434/v1"
+                async for chunk in client_to_use._openai_stream(messages, system):
                     yield chunk
             else:
-                async for chunk in self._openai_stream(messages, system):
+                async for chunk in client_to_use._openai_stream(messages, system):
                     yield chunk
         except Exception as e:
             yield f"\n[LLM 调用出错: {type(e).__name__}: {str(e)[:200]}]"

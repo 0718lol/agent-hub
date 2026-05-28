@@ -574,7 +574,12 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
         "stream": False,
     })
 
+    # Trigger background memory reflection asynchronously after message generation
+    from app.services.memory_engine import trigger_background_reflection
+    asyncio.create_task(trigger_background_reflection(conversation_id))
+
     return assigned_agents, full_text
+
 
 
 def _register_custom_agent(config: dict):
@@ -738,11 +743,12 @@ async def toggle_prompt_layer(layer_id: str, body: dict):
 @app.post("/api/prompt/preview")
 async def preview_prompt(body: dict):
     """Preview the assembled prompt for a given agent and context.
-    Body: {"agent_id": "...", "message": "...", "task_type": "code|html|api|document"}
+    Body: {"agent_id": "...", "message": "...", "task_type": "code|html|api|document", "conversation_id": "..."}
     """
     agent_id = body.get("agent_id", "agent_frontend")
     message = body.get("message", "")
     task_type = body.get("task_type")
+    conversation_id = body.get("conversation_id")
 
     agent = AGENTS.get(agent_id)
     if not agent:
@@ -751,7 +757,7 @@ async def preview_prompt(body: dict):
     if not task_type and message:
         task_type = prompt_engine.detect_task_type(message, agent_id)
 
-    ctx = {"task_type": task_type}
+    ctx = {"task_type": task_type, "conversation_id": conversation_id}
     assembled = prompt_engine.build(agent, ctx)
     return {
         "agent_id": agent_id,
@@ -762,17 +768,83 @@ async def preview_prompt(body: dict):
     }
 
 
+# ---- Long-term Memory REST API ----
+
+class UpdateMemoryRequest(BaseModel):
+    key: str
+    value: str
+
+
+@app.get("/api/memory/{conversation_id}")
+async def list_project_memory(conversation_id: str):
+    from app.core.database import get_project_memory
+    mem = get_project_memory(conversation_id)
+    return {"status": "ok", "memory": mem}
+
+
+@app.post("/api/memory/{conversation_id}")
+async def update_project_memory(conversation_id: str, body: UpdateMemoryRequest):
+    from app.core.database import save_memory_item
+    save_memory_item(conversation_id, body.key, body.value, source="user")
+    return {"status": "ok", "message": "记忆已成功更新！"}
+
+
+@app.delete("/api/memory/{conversation_id}/{key}")
+async def delete_project_memory_item(conversation_id: str, key: str):
+    from app.core.database import delete_memory_item
+    delete_memory_item(conversation_id, key)
+    return {"status": "ok", "message": "记忆项已成功删除！"}
+
+
+# ---- Smart Router REST API ----
+
+class RouterSettingsUpdate(BaseModel):
+    auto_routing: bool
+    manual_routes: dict
+
+
+@app.get("/api/settings/router")
+async def get_router_settings():
+    from app.core.router import smart_router
+    return {
+        "auto_routing": smart_router.auto_routing,
+        "manual_routes": smart_router.manual_routes,
+        "agents": [
+            {"id": aid, "name": getattr(a, "name", aid), "avatar": getattr(a, "avatar", "🤖"), "role": getattr(a, "role", "助手")}
+            for aid, a in AGENTS.items()
+        ]
+    }
+
+
+@app.post("/api/settings/router")
+async def update_router_settings(s: RouterSettingsUpdate):
+    from app.core.router import smart_router
+    smart_router.auto_routing = s.auto_routing
+    smart_router.manual_routes = s.manual_routes
+    smart_router.save_config()
+    return {"status": "ok", "message": "智能路由配置已保存成功！"}
+
+
+
 @app.post("/api/deploy/open-folder")
-async def open_deploy_folder():
+async def open_deploy_folder(body: dict = None):
+    conversation_id = body.get("conversation_id") if body else None
     workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    export_dir = os.path.join(workspace_dir, "agenthub_export")
+    if conversation_id:
+        export_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
+    else:
+        export_dir = os.path.join(workspace_dir, "agenthub_export")
+
+    if not os.path.exists(export_dir) and conversation_id:
+        export_dir = os.path.join(workspace_dir, "agenthub_export")
+
     if os.path.exists(export_dir):
         try:
             os.startfile(export_dir)
             return {"status": "ok"}
         except Exception as e:
             return {"error": f"Failed to open folder: {str(e)}"}
-    return {"error": "Deploy folder not found"}
+    return {"error": f"Deploy folder not found: {export_dir}"}
 
 
 @app.post("/api/deploy/{conversation_id}")
@@ -842,9 +914,9 @@ async def _simulate_deploy(conversation_id: str):
 </body>
 </html>"""
 
-    # 2. Write files in workspace under "agenthub_export"
+    # 2. Write files in workspace under "agenthub_export/{conversation_id}"
     workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    export_dir = os.path.join(workspace_dir, "agenthub_export")
+    export_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
     try:
         os.makedirs(export_dir, exist_ok=True)
         
@@ -858,9 +930,9 @@ async def _simulate_deploy(conversation_id: str):
         with open(bat_file_path, "w", encoding="gbk") as f:
             f.write("@echo off\nstart index.html\n")
             
-        local_path_msg = f"📂 本地交付件已生成在项目根目录 /agenthub_export 下"
+        local_path_msg = f"📂 本地沙盒物理隔离目录已生成在项目根目录 /agenthub_export/{conversation_id} 下"
     except Exception as e:
-        local_path_msg = f"⚠️ 生成本地交付件出错: {str(e)}"
+        local_path_msg = f"⚠️ 生成本地沙盒隔离交付件出错: {str(e)}"
 
     logs = [
         "🚀 正在初始化云部署沙盒环境...",
@@ -871,7 +943,7 @@ async def _simulate_deploy(conversation_id: str):
         "☸️ Kubernetes 资源调度与健康状态检查...",
         "🌎 域名解析与 SSL 证书(Let's Encrypt) 自动配置...",
         local_path_msg,
-        "🎉 一键部署与本地离线交付包打包成功！"
+        "🎉 一键部署与本地隔离沙盒打包成功！"
     ]
     
     for i, log in enumerate(logs):
@@ -893,7 +965,12 @@ async def _simulate_deploy(conversation_id: str):
         "type": "message",
         "conversation_id": conversation_id,
         "sender": "agent_devops",
-        "content": {"text": f"✅ 报告！项目已成功打包并部署！\n\n🌎 模拟线上预览地址：{url}\n\n📂 **本地离线部署包已生成**！位置：`{export_dir}`\n\n💡 **如何运行**：\n您可以直接点击右侧面板中的 **「📂 打开本地部署文件夹」** 按钮，系统会立即为您打开该文件夹。您可以直接把这个文件夹复制到桌面，双击运行里面的 `双击运行.bat` 或 `index.html`，即可在任何电脑上完美离线打开与预览网页！"},
+        "content": {"text": f"✅ 报告！当前独立物理沙盒项目已成功打包并部署！\n\n🌎 模拟线上预览地址：{url}\n\n📂 **本地沙盒隔离目录已生成**！位置：`/agenthub_export/{conversation_id}`\n\n💡 **如何运行与协同**：\n您可以直接点击右侧面板中的 **「📂 打开本地文件夹」** 按钮，系统会立即为您弹开专门属于当前项目的物理沙盒文件夹！双击运行里面的 `双击运行.bat` 或 `index.html`，即可完美离线打开与预览网页，避免了与其他会话文件的覆盖污染！"},
         "stream": False
     })
+
+    # Trigger background memory reflection asynchronously after deployment
+    from app.services.memory_engine import trigger_background_reflection
+    asyncio.create_task(trigger_background_reflection(conversation_id))
+
 
