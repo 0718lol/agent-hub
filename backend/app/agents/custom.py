@@ -87,7 +87,7 @@ AVAILABLE_TOOLS = {
         "name": "赛博浏览器",
         "icon": "🌐",
         "description": "以视觉验证和DOM元素扁平压缩的形式在浏览器内模拟页面交互与视觉自校验",
-        "prompt_addon": "\n- 你可以使用赛博浏览器交互工具。使用 [tool_call:browser_action]{\"action\": \"goto\", \"url\": \"http://example.com\"}[/tool_call] 调用，支持 goto, click, type, scroll, screenshot 操作，结合网页截图及红底白字数字 ID 标签进行精确 of 坐标模拟和视觉校验自愈。",
+        "prompt_addon": "\n- 你可以使用赛博浏览器交互工具。使用 [tool_call:browser_action]{\"action\": \"goto\", \"url\": \"http://example.com\"}[/tool_call] 调用，支持 click, type, scroll 等操作。在点击/输入时，你既可以使用网页截图中的数字标签进行常规的 [tool_call:browser_action]{\"action\": \"click\", \"element_id\": ID}[/tool_call] 点击，也可以在无法确定 ID 或面对复杂Canvas/非标节点时，直接使用视觉自然语言描述进行定位：[tool_call:browser_action]{\"action\": \"click\", \"visual_description\": \"右侧绿色的登录按钮\"}[/tool_call]，系统将自动触发多模态 Vision-Loop 定位与模糊文本匹配自愈点按。",
     },
     "file_view_windowed": {
         "id": "file_view_windowed",

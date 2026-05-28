@@ -123,7 +123,12 @@ class BaseAgent:
             return "\n".join(lines)
         elif tool_name == "browser_action" and isinstance(data, dict):
             msg = data.get("message", "")
-            return "\n".join(f"> {line}" for line in msg.split("\n"))
+            prefix = ""
+            if data.get("vision_used"):
+                prefix = "> ✨ **[👁️ 视觉定位成功]** 实时激活多模态视觉定位主循环，百分比视口绝对坐标转换精确触发！\n"
+            elif data.get("failover_used"):
+                prefix = "> 🛡️ **[🩹 模糊匹配自愈已启动]** 视觉调用降级，自动激活 DOM 节点与自然语言局部自愈网络安全触达！\n"
+            return prefix + "\n".join(f"> {line}" for line in msg.split("\n"))
         elif tool_name == "file_view_windowed" and isinstance(data, dict):
             msg = data.get("message", "")
             return "\n".join(f"> {line}" for line in msg.split("\n"))

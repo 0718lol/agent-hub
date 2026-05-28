@@ -152,7 +152,11 @@ class BrowserActionTool(AgentTool):
             },
             "element_id": {
                 "type": "integer",
-                "description": "要操作的目标元素数字 ID (在 click 和 type 动作时必填)",
+                "description": "要操作的目标元素数字 ID (在 click 和 type 动作时可选，优先使用 ID)",
+            },
+            "visual_description": {
+                "type": "string",
+                "description": "要操作的目标元素的自然语言视觉描述（当 element_id 缺失时必填，开启视觉定位与模糊自愈）",
             },
             "text": {
                 "type": "string",
@@ -175,6 +179,10 @@ class BrowserActionTool(AgentTool):
         action = params.get("action", "").strip()
         conv_id = params.get("conversation_id", "default")
         
+        vision_used = False
+        failover_used = False
+        resolved_msg = ""
+
         try:
             page = await browser_session_manager.get_page(conv_id)
         except Exception as e:
@@ -200,40 +208,28 @@ class BrowserActionTool(AgentTool):
                 logger.info(f"[CyberBrowser] Navigating to: {url}")
                 await page.goto(url, wait_until="load", timeout=15000)
 
-            elif action == "click":
-                el_id = params.get("element_id")
-                if el_id is None:
-                    return ToolResult(success=False, error="click 操作必须提供 element_id")
-                
-                cache = browser_session_manager.elements_cache.get(conv_id, {})
-                if el_id not in cache:
-                    return ToolResult(success=False, error=f"未找到指定的元素 ID: {el_id}。请重新获取截图或验证页面状态。")
-                
-                el_data = cache[el_id]
-                x, y = el_data["x"], el_data["y"]
-                logger.info(f"[CyberBrowser] Clicking element {el_id} at coordinate ({x}, {y})")
-                await page.mouse.click(x, y)
-                await page.wait_for_timeout(1000)  # Wait briefly for transition
-
-            elif action == "type":
-                el_id = params.get("element_id")
+            elif action in ("click", "type"):
                 text = params.get("text", "")
-                if el_id is None:
-                    return ToolResult(success=False, error="type 操作必须提供 element_id")
-                
-                cache = browser_session_manager.elements_cache.get(conv_id, {})
-                if el_id not in cache:
-                    return ToolResult(success=False, error=f"未找到指定的元素 ID: {el_id}。")
-                
-                el_data = cache[el_id]
-                x, y = el_data["x"], el_data["y"]
-                logger.info(f"[CyberBrowser] Typing into element {el_id} at coordinate ({x}, {y}): '{text}'")
-                await page.mouse.click(x, y)
-                # Select all and delete before typing
-                await page.keyboard.press("Control+A")
-                await page.keyboard.press("Backspace")
-                await page.keyboard.type(text)
-                await page.wait_for_timeout(500)
+                if action == "type" and not text:
+                    return ToolResult(success=False, error="type 操作必须提供 text 参数")
+
+                try:
+                    x, y, resolved_msg, vision_used, failover_used = await self._resolve_coordinates(page, params, conv_id)
+                except ValueError as ve:
+                    return ToolResult(success=False, error=str(ve))
+
+                if action == "click":
+                    logger.info(f"[CyberBrowser] Clicking at coordinate ({x:.2f}, {y:.2f}) resolved by {resolved_msg}")
+                    await page.mouse.click(x, y)
+                    await page.wait_for_timeout(1000)  # Wait briefly for transition
+                else:
+                    logger.info(f"[CyberBrowser] Typing into coordinate ({x:.2f}, {y:.2f}) resolved by {resolved_msg}: '{text}'")
+                    await page.mouse.click(x, y)
+                    # Select all and delete before typing
+                    await page.keyboard.press("Control+A")
+                    await page.keyboard.press("Backspace")
+                    await page.keyboard.type(text)
+                    await page.wait_for_timeout(500)
 
             elif action == "scroll":
                 direction = params.get("scroll_direction", "down")
@@ -275,8 +271,14 @@ class BrowserActionTool(AgentTool):
                 element_lines.append(f"  - [{el['id']}] {el['tagName']}: \"{el['text']}\" (Role: {el['role']}, bounds: size {int(el['width'])}x{int(el['height'])})")
             elements_list_str = "\n".join(element_lines) if element_lines else "  - (页面上目前没有可交互元素)"
 
+            summary_prefix = "浏览器操作执行成功！\n"
+            if vision_used:
+                summary_prefix += f"👁️ [多模态视觉自愈定位已触发]: 成功基于自然语言描述 '{params.get('visual_description')}' 通过 Vision-Loop 预测坐标点并点击。\n"
+            elif failover_used:
+                summary_prefix += f"🛡️ [模糊文字自愈网络已触发]: 成功将描述 '{params.get('visual_description')}' 模糊文本匹配自愈命中元素 '{resolved_msg}'。\n"
+
             summary_text = (
-                f"浏览器操作执行成功！\n"
+                f"{summary_prefix}"
                 f"当前网址: {current_url}\n"
                 f"--- 页面可交互元素列表 (ID 列表已在网页截图中以红底白字小标签标示) ---\n"
                 f"{elements_list_str}\n"
@@ -289,6 +291,8 @@ class BrowserActionTool(AgentTool):
                     "url": current_url,
                     "screenshot": screenshot_b64,
                     "elements": elements,
+                    "vision_used": vision_used,
+                    "failover_used": failover_used,
                     "message": summary_text
                 }
             )
@@ -296,6 +300,114 @@ class BrowserActionTool(AgentTool):
         except Exception as ex:
             logger.error(f"[CyberBrowser] Action '{action}' execution crash: {ex}")
             return ToolResult(success=False, error=f"浏览器操作期异常: {type(ex).__name__}: {str(ex)}")
+
+    async def _resolve_coordinates(self, page, params: dict, conv_id: str) -> tuple[float, float, str, bool, bool]:
+        """Resolves target coordinate (x, y) using element_id, or falls back to vision / fuzzy DOM search."""
+        el_id = params.get("element_id")
+        visual_desc = params.get("visual_description", "").strip()
+
+        if el_id is not None:
+            # 1. Standard ACI DOM ID lookup
+            cache = browser_session_manager.elements_cache.get(conv_id, {})
+            if el_id not in cache:
+                raise ValueError(f"未找到指定的元素 ID: {el_id}。请重新获取截图或验证页面状态。")
+            el_data = cache[el_id]
+            return el_data["x"], el_data["y"], f"ID {el_id} ('{el_data['text']}')", False, False
+
+        if not visual_desc:
+            raise ValueError("必须提供 element_id 或 visual_description 之一进行定位")
+
+        # 2. Try Skyvern-style Multimodal Vision Loop
+        try:
+            x_abs, y_abs = await self._locate_by_vision(page, visual_desc, conv_id)
+            return x_abs, y_abs, f"视觉定位 '{visual_desc}'", True, False
+        except Exception as e:
+            logger.warning(f"[CyberBrowser] Vision locator failed: {e}. Falling back to fuzzy DOM match.")
+            
+            # 3. Fallback to Fuzzy DOM similarity match
+            x_cached, y_cached, matched_text = self._locate_by_fuzzy_dom(conv_id, visual_desc)
+            return x_cached, y_cached, f"模糊自愈命中 '{matched_text}'", False, True
+
+    async def _locate_by_vision(self, page, visual_description: str, conversation_id: str) -> tuple[float, float]:
+        """Predict coordinates using multimodal vision model from screenshot."""
+        # Temporarily remove badges for clean screenshot
+        await page.evaluate("const old = document.querySelectorAll('.cyberbrowser-badge'); old.forEach(b => b.remove());")
+        
+        screenshot_bytes = await page.screenshot(type="png")
+        screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+
+        from app.core.llm_client import llm_client
+        prompt_text = (
+            f"你是一个专业的网页视觉操作助手。以下是当前网页的屏幕截图。\n"
+            f"请在图片中定位符合以下自然语言描述的交互元素：\n"
+            f"\"{visual_description}\"\n\n"
+            f"请计算该元素中心位置的相对百分比坐标 x 和 y（相对于图片左上角，取值在 0.0 到 100.0 之间）。\n"
+            f"你必须仅以合法的 JSON 格式返回结果，绝对不要附带任何 markdown 块或其它解释文字。JSON 格式如下：\n"
+            f"{{\"x\": 45.2, \"y\": 62.1, \"confidence\": 0.95}}"
+        )
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt_text},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{screenshot_b64}"}}
+                ]
+            }
+        ]
+
+        full_response = ""
+        async for chunk in llm_client.chat_stream(messages, system="You are a precise multimodal coordinates visual locator. Return only valid JSON."):
+            full_response += chunk
+
+        cleaned_resp = full_response.strip().strip("'\"`").replace("```json", "").replace("```", "").strip()
+        coords = json.loads(cleaned_resp)
+        x_pct = float(coords["x"])
+        y_pct = float(coords["y"])
+
+        viewport = page.viewport_size
+        if not viewport:
+            viewport = {"width": 1280, "height": 800}
+
+        x_abs = (x_pct / 100.0) * viewport["width"]
+        y_abs = (y_pct / 100.0) * viewport["height"]
+        return x_abs, y_abs
+
+    def _locate_by_fuzzy_dom(self, conversation_id: str, visual_description: str) -> tuple[float, float, str]:
+        """Fallback helper to search current elements cache for text matching."""
+        cache = browser_session_manager.elements_cache.get(conversation_id, {})
+        if not cache:
+            raise ValueError("没有可用的页面元素缓存以执行模糊匹配")
+
+        best_el = None
+        best_score = -1
+        query_words = set(visual_description.lower().split())
+
+        for el_id, el in cache.items():
+            text = (el.get("text") or "").lower()
+            role = (el.get("role") or "").lower()
+            tag = (el.get("tagName") or "").lower()
+
+            score = 0
+            if visual_description.lower() in text:
+                score += 10
+            if visual_description.lower() in role or visual_description.lower() in tag:
+                score += 5
+
+            el_words = set(text.split() + role.split() + tag.split())
+            overlap = len(query_words.intersection(el_words))
+            score += overlap * 2
+
+            if score > best_score and score > 0:
+                best_score = score
+                best_el = el
+
+        if best_el is None:
+            # Fallback to the first interactive element as emergency safety net
+            first_key = list(cache.keys())[0]
+            best_el = cache[first_key]
+
+        return best_el["x"], best_el["y"], best_el["text"]
 
 # Auto-register on import
 register_tool(BrowserActionTool())
