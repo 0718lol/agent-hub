@@ -60,7 +60,9 @@ app = FastAPI(title="AgentHub API")
 @app.on_event("shutdown")
 async def shutdown_event():
     from app.tools.browser_tools import browser_session_manager
+    from app.core.terminal import stateful_terminal_manager
     await browser_session_manager.close_all()
+    await stateful_terminal_manager.close_all()
 
 # ---- 文件上传目录 ----
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")

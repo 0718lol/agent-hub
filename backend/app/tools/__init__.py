@@ -12,3 +12,4 @@ from . import http_request  # noqa: F401
 from . import file_ops  # noqa: F401
 from . import code_agent_tools  # noqa: F401
 from . import browser_tools  # noqa: F401
+from . import stateful_terminal_tool  # noqa: F401

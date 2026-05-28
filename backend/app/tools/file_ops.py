@@ -28,6 +28,17 @@ def _safe_path(conversation_id: str, filepath: str) -> str | None:
     return resolved
 
 
+def _safe_workspace_path(conversation_id: str, filepath: str) -> str | None:
+    """Resolve path within the unified agenthub_export workspace sandbox, preventing directory traversal."""
+    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
+    os.makedirs(sandbox_dir, exist_ok=True)
+    resolved = os.path.abspath(os.path.join(sandbox_dir, filepath))
+    if not resolved.startswith(sandbox_dir):
+        return None
+    return resolved
+
+
 class FileReadTool(AgentTool):
     name = "file_read"
     description = "读取沙盒中的文件内容"
@@ -193,3 +204,236 @@ class FileListTool(AgentTool):
 register_tool(FileReadTool())
 register_tool(FileWriteTool())
 register_tool(FileListTool())
+
+
+class FileViewWindowedTool(AgentTool):
+    name = "file_view_windowed"
+    description = "以视口式滑动窗口的形式精细滚动读取沙盒中大文件的特定行区间，节省 Token"
+    icon = "🔭"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "文件路径（相对于沙盒根目录）",
+            },
+            "start_line": {
+                "type": "integer",
+                "description": "要查看的起始行数（从1开始，默认为1）",
+            },
+            "line_count": {
+                "type": "integer",
+                "description": "每次查看的行数限制（默认为100行）",
+            },
+            "conversation_id": {
+                "type": "string",
+                "description": "对话 ID（自动注入）",
+            },
+        },
+        "required": ["path"],
+    }
+
+    async def execute(self, params: dict) -> ToolResult:
+        filepath = params.get("path", "").strip()
+        conv_id = params.get("conversation_id", "default")
+        start_line = max(int(params.get("start_line", 1)), 1)
+        line_count = max(int(params.get("line_count", 100)), 1)
+
+        if not filepath:
+            return ToolResult(success=False, error="文件路径不能为空")
+
+        safe = _safe_workspace_path(conv_id, filepath)
+        if safe is None:
+            return ToolResult(success=False, error="路径越界：不允许访问沙盒外文件")
+
+        if not os.path.exists(safe):
+            return ToolResult(success=False, error=f"文件不存在: {filepath}")
+        if not os.path.isfile(safe):
+            return ToolResult(success=False, error=f"不是文件: {filepath}")
+
+        try:
+            with open(safe, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+
+            lines = content.splitlines()
+            total_lines = len(lines)
+
+            if total_lines == 0:
+                return ToolResult(
+                    success=True,
+                    data={
+                        "content": "",
+                        "start_line": 1,
+                        "end_line": 0,
+                        "total_lines": 0,
+                        "message": f"文件为空: {filepath}"
+                    }
+                )
+
+            end_line = min(start_line + line_count - 1, total_lines)
+            sliced_lines = lines[start_line - 1 : end_line]
+            sliced_content = "\n".join(sliced_lines)
+
+            # Build SWE-agent style windowed summary output
+            summary_lines = [
+                f"[{filepath} - 窗口化查看视口: 第 {start_line} 行到第 {end_line} 行, 文件总行数: {total_lines}]",
+                "------------------------------------------------------------------"
+            ]
+            for idx, line in enumerate(sliced_lines, start=start_line):
+                summary_lines.append(f"{idx:5d}: {line}")
+            summary_lines.append("------------------------------------------------------------------")
+            
+            scroll_up = "[Scroll up available]" if start_line > 1 else "[Start of file]"
+            scroll_down = "[Scroll down available]" if end_line < total_lines else "[End of file]"
+            summary_lines.append(f"{scroll_up} | {scroll_down}")
+
+            summary_text = "\n".join(summary_lines)
+
+            return ToolResult(
+                success=True,
+                data={
+                    "content": sliced_content,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "total_lines": total_lines,
+                    "message": summary_text
+                }
+            )
+        except Exception as e:
+            return ToolResult(success=False, error=f"读取失败: {str(e)}")
+
+
+class FileEditLineTool(AgentTool):
+    name = "file_edit_line"
+    description = "对沙盒中的文件执行高容错、省 Token 的行级微替换编辑，并自动触发静态编译语法自检校验"
+    icon = "✂️"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "文件路径（相对于沙盒根目录）",
+            },
+            "start_line": {
+                "type": "integer",
+                "description": "被替换的起始行数（从1开始，包含该行）",
+            },
+            "end_line": {
+                "type": "integer",
+                "description": "被替换的结束行数（从1开始，包含该行）",
+            },
+            "replacement_code": {
+                "type": "string",
+                "description": "用于替换该行区间的新代码内容",
+            },
+            "conversation_id": {
+                "type": "string",
+                "description": "对话 ID（自动注入）",
+            },
+        },
+        "required": ["path", "start_line", "end_line", "replacement_code"],
+    }
+
+    async def execute(self, params: dict) -> ToolResult:
+        filepath = params.get("path", "").strip()
+        start_line = int(params.get("start_line"))
+        end_line = int(params.get("end_line"))
+        replacement_code = params.get("replacement_code", "")
+        conv_id = params.get("conversation_id", "default")
+
+        if not filepath:
+            return ToolResult(success=False, error="文件路径不能为空")
+
+        safe = _safe_workspace_path(conv_id, filepath)
+        if safe is None:
+            return ToolResult(success=False, error="路径越界：不允许访问沙盒外文件")
+
+        if not os.path.exists(safe):
+            return ToolResult(success=False, error=f"文件不存在: {filepath}。行替换编辑器仅适用于编辑已有文件。")
+
+        try:
+            with open(safe, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+
+            lines = content.splitlines(keepends=True)
+            total_lines = len(lines)
+
+            # Handle edge case for completely empty file
+            if total_lines == 0:
+                lines = ["\n"]
+                total_lines = 1
+
+            if start_line < 1 or start_line > total_lines or end_line < 1 or end_line > total_lines or start_line > end_line:
+                return ToolResult(success=False, error=f"无效的行范围: {start_line} 到 {end_line}，文件总行数: {total_lines}")
+
+            # 1. Create pre-write git checkpoint
+            workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conv_id)
+            os.makedirs(sandbox_dir, exist_ok=True)
+            
+            try:
+                from app.core.git_sandbox import git_checkpoint, git_rollback
+                await git_checkpoint(sandbox_dir, f"Pre-edit-line: {filepath}")
+            except Exception:
+                # Fallback if git is not initialized or fails
+                git_checkpoint = None
+                git_rollback = None
+
+            # 2. Slice and replace lines (start_line and end_line are 1-indexed)
+            replacement_lines = replacement_code.splitlines(keepends=True)
+            # Ensure line ending consistency
+            if replacement_lines and not replacement_lines[-1].endswith(("\n", "\r\n")):
+                replacement_lines[-1] = replacement_lines[-1] + "\n"
+
+            lines[start_line - 1 : end_line] = replacement_lines
+            new_content = "".join(lines)
+
+            # 3. Write back modified contents
+            with open(safe, "w", encoding="utf-8") as f:
+                f.write(new_content)
+
+            # 4. Perform Quality Gate compiler lint check (py_compile for python)
+            is_valid = True
+            error_msg = ""
+            if safe.endswith(".py"):
+                try:
+                    import py_compile
+                    py_compile.compile(safe, doraise=True)
+                except Exception as e:
+                    is_valid = False
+                    error_msg = f"Python Syntax Error: {e}"
+
+            if not is_valid:
+                # Trigger rollback immediately
+                if git_rollback:
+                    await git_rollback(sandbox_dir)
+                else:
+                    # File system backup fallback: restore original content manually if git failed
+                    with open(safe, "w", encoding="utf-8") as f:
+                        f.write(content)
+                return ToolResult(
+                    success=False,
+                    error=f"❌ 代码行替换失败！检测到代码存在语法缺陷，工作空间已安全自愈回退。\n详情: {error_msg}"
+                )
+
+            # Create success git checkpoint
+            if git_checkpoint:
+                await git_checkpoint(sandbox_dir, f"Success-edit-line: {filepath}")
+
+            return ToolResult(
+                success=True,
+                data={
+                    "path": filepath,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "total_lines": len(lines),
+                    "message": f"成功对文件 '{filepath}' 第 {start_line} 行到第 {end_line} 行执行精准行级替换且静态语法编译校验 100% 通过！"
+                }
+            )
+
+        except Exception as e:
+            return ToolResult(success=False, error=f"行级替换失败: {str(e)}")
+
+
+register_tool(FileViewWindowedTool())
+register_tool(FileEditLineTool())

@@ -1,7 +1,7 @@
 from .base import BaseAgent
 
 # Runtime executable tool IDs that can be assigned to custom agents
-RUNTIME_TOOL_IDS = ["web_search", "http_request", "file_read", "file_write", "file_list", "safe_python_executor", "browser_action"]
+RUNTIME_TOOL_IDS = ["web_search", "http_request", "file_read", "file_write", "file_list", "safe_python_executor", "browser_action", "file_view_windowed", "file_edit_line", "run_stateful_command"]
 
 
 AVAILABLE_TOOLS = {
@@ -87,7 +87,28 @@ AVAILABLE_TOOLS = {
         "name": "赛博浏览器",
         "icon": "🌐",
         "description": "以视觉验证和DOM元素扁平压缩的形式在浏览器内模拟页面交互与视觉自校验",
-        "prompt_addon": "\n- 你可以使用赛博浏览器交互工具。使用 [tool_call:browser_action]{\"action\": \"goto\", \"url\": \"http://example.com\"}[/tool_call] 调用，支持 goto, click, type, scroll, screenshot 操作，结合网页截图及红底白字数字 ID 标签进行精确的坐标模拟和视觉校验自愈。",
+        "prompt_addon": "\n- 你可以使用赛博浏览器交互工具。使用 [tool_call:browser_action]{\"action\": \"goto\", \"url\": \"http://example.com\"}[/tool_call] 调用，支持 goto, click, type, scroll, screenshot 操作，结合网页截图及红底白字数字 ID 标签进行精确 of 坐标模拟和视觉校验自愈。",
+    },
+    "file_view_windowed": {
+        "id": "file_view_windowed",
+        "name": "窗口化查看器",
+        "icon": "🔭",
+        "description": "以视口式滑动窗口的形式精细滚动读取沙盒中大文件的特定行区间，节省 Token",
+        "prompt_addon": "\n- 你可以使用窗口化查看器精细读取文件片段（不推荐全量 file_read 读大文件）。使用 [tool_call:file_view_windowed]{\"path\": \"文件路径\", \"start_line\": 1, \"line_count\": 100}[/tool_call] 调用，根据末尾提示的 [Scroll up/down available] 决定是否翻页滚动。",
+    },
+    "file_edit_line": {
+        "id": "file_edit_line",
+        "name": "行级微编辑器",
+        "icon": "✂️",
+        "description": "对沙盒中的文件执行高容错、省 Token 的行级微替换编辑，并自动触发静态编译语法自检校验",
+        "prompt_addon": "\n- 你可以使用行级微编辑器来修改已有文件（强烈推荐代替 replace_file_content）。使用 [tool_call:file_edit_line]{\"path\": \"文件路径\", \"start_line\": 起始行, \"end_line\": 结束行, \"replacement_code\": \"新代码\"}[/tool_call] 调用，系统在物理保存前会自动执行 linter 静态编译校验，若语法损坏则会自动回滚防写烂。",
+    },
+    "run_stateful_command": {
+        "id": "run_stateful_command",
+        "name": "有状态命令行",
+        "icon": "💻",
+        "description": "在物理沙盒工作空间内持久地、有状态地执行指定的 Shell 命令行，支持多步环境状态继承",
+        "prompt_addon": "\n- 你可以使用有状态命令行（比 workspace_run_command 更有状态）。使用 [tool_call:run_stateful_command]{\"command\": \"命令行指令\"}[/tool_call] 调用，支持跨步骤继承路径目录状态（如先 cd 后运行测试）与激活的环境变量状态，带 15 秒命令超时保护。",
     },
 }
 

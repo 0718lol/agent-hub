@@ -60,8 +60,8 @@ class BaseAgent:
                 # Execute the first tool call found
                 tool_name, params, start_pos, end_pos = tool_calls[0]
 
-                # Inject conversation_id for file/browser tools
-                if tool_name in ("file_read", "file_write", "file_list", "browser_action") and conversation_id:
+                # Inject conversation_id for ACI and file/browser tools
+                if tool_name in ("file_read", "file_write", "file_list", "browser_action", "file_view_windowed", "file_edit_line", "run_stateful_command") and conversation_id:
                     params.setdefault("conversation_id", conversation_id)
 
                 logger.info(f"Agent '{self.agent_id}' calling tool: {tool_name}({params})")
@@ -124,6 +124,15 @@ class BaseAgent:
         elif tool_name == "browser_action" and isinstance(data, dict):
             msg = data.get("message", "")
             return "\n".join(f"> {line}" for line in msg.split("\n"))
+        elif tool_name == "file_view_windowed" and isinstance(data, dict):
+            msg = data.get("message", "")
+            return "\n".join(f"> {line}" for line in msg.split("\n"))
+        elif tool_name == "file_edit_line" and isinstance(data, dict):
+            msg = data.get("message", "")
+            return f"> {msg}"
+        elif tool_name == "run_stateful_command" and isinstance(data, dict):
+            output = data.get("output", "")[:1000]
+            return f"> **有状态命令执行输出**:\n> ```\n" + "\n".join(f"> {line}" for line in output.split("\n")) + "\n> ```"
         elif tool_name in ("file_write", "file_list") and isinstance(data, dict):
             return f"> {json.dumps(data, ensure_ascii=False, indent=2)}"
         else:
