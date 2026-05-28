@@ -13,6 +13,7 @@ class StateGraph:
         self.nodes: Dict[str, Callable[[dict], Any]] = {}
         self.edges: Dict[str, str] = {}
         self.conditional_edges: Dict[str, Callable[[dict], str]] = {}
+        self.guards: Dict[str, List[Any]] = {}
         
     def add_node(self, name: str, func: Callable[[dict], Any]):
         self.nodes[name] = func
@@ -22,6 +23,11 @@ class StateGraph:
         
     def add_conditional_edge(self, from_node: str, router_func: Callable[[dict], str]):
         self.conditional_edges[from_node] = router_func
+
+    def add_guard(self, node_name: str, guard_func: Callable[[dict], bool], error_fallback_node: str = None):
+        if node_name not in self.guards:
+            self.guards[node_name] = []
+        self.guards[node_name].append((guard_func, error_fallback_node))
         
     async def run(self, initial_state: dict, conversation_id: str, stop_event: asyncio.Event = None) -> dict:
         from app.core.websocket import manager
@@ -62,10 +68,15 @@ class StateGraph:
                 
             logger.info(f"[StateGraph] Executing node: {current_node}")
             try:
-                # Node executes and returns a State Update dictionary
-                update = await node_func(state)
+                # Node executes and returns a State Update dictionary or nested graph state
+                if isinstance(node_func, StateGraph):
+                    logger.info(f"[StateGraph] Executing nested sub-graph: {current_node}")
+                    update = await node_func.run(state, conversation_id, stop_event)
+                else:
+                    update = await node_func(state)
                 # Merge update into State
-                state.update(update)
+                if update and isinstance(update, dict):
+                    state.update(update)
                 if current_node not in state["completed_nodes"]:
                     state["completed_nodes"].append(current_node)
             except Exception as e:
@@ -103,6 +114,39 @@ class StateGraph:
             elif current_node in self.edges:
                 next_node = self.edges[current_node]
                 logger.info(f"[StateGraph] Static transition: {current_node} -> {next_node}")
+
+            # 4.5 Transition Guard Gate Check (Deterministic Statechart Rules)
+            if next_node and next_node != "END" and next_node in self.guards:
+                failed_guard_fallback = None
+                for guard_func, fallback in self.guards[next_node]:
+                    try:
+                        if not guard_func(state):
+                            failed_guard_fallback = fallback or "agent_pm"
+                            break
+                    except Exception as e:
+                        logger.error(f"[StateGraph] Guard exception: {e}")
+                        failed_guard_fallback = fallback or "agent_pm"
+                        break
+                        
+                if failed_guard_fallback:
+                    current_agent_name = current_node.replace("agent_", "").upper()
+                    target_agent_name = next_node.replace("agent_", "").upper()
+                    fallback_agent_name = failed_guard_fallback.replace("agent_", "").upper()
+                    
+                    veto_message = f"⚠️ **[状态守卫强拦截]** 智能体 **{target_agent_name}** 未满足准入前置条件！已安全自动重定向至纠偏节点 **{fallback_agent_name}**。"
+                    logger.warning(f"[StateGraph] Guard vetoed transition to '{next_node}', redirecting to '{failed_guard_fallback}'")
+                    
+                    # Broadcast warning to WebSocket
+                    await manager.broadcast(conversation_id, {
+                        "type": "message",
+                        "conversation_id": conversation_id,
+                        "sender": "system",
+                        "content": {"text": veto_message},
+                        "stream": False,
+                    })
+                    
+                    # Redirect node
+                    next_node = failed_guard_fallback
 
             # 5. Human-in-the-loop Intercept Check
             if next_node and stop_event and not stop_event.is_set():

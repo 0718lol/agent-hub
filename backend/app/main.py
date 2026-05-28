@@ -612,6 +612,18 @@ async def _run_user_message_flow(conversation_id: str, text: str, target_agent: 
             graph.add_conditional_edge("agent_tester", select_next_speaker)
             graph.add_edge("agent_devops", "END")
 
+            # 3.5 Register Statechart Transition Guards (Guards & Fallbacks)
+            graph.add_guard(
+                "agent_devops",
+                lambda state: "agent_tester" in state.get("completed_nodes", []),
+                error_fallback_node="agent_tester"
+            )
+            graph.add_guard(
+                "agent_tester",
+                lambda state: any(n in state.get("completed_nodes", []) for n in ["agent_frontend", "agent_backend"]),
+                error_fallback_node="agent_frontend"
+            )
+
             # 4. Run StateGraph orchestration
             await graph.run({}, conversation_id, stop_event)
     finally:
