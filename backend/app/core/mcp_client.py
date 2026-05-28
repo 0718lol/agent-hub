@@ -252,13 +252,43 @@ class SystemMCPServer:
                 if not target_file.startswith(sandbox_dir):
                     return {"isError": True, "content": [{"type": "text", "text": "Error: Path traversal protection triggered"}]}
 
+                # 1. Create pre-write checkpoint
+                from app.core.git_sandbox import git_checkpoint, git_rollback
+                await git_checkpoint(sandbox_dir, f"Pre-write: {sub_path}")
+
+                # 2. Write the file physically
                 os.makedirs(os.path.dirname(target_file), exist_ok=True)
                 with open(target_file, "w", encoding="utf-8") as f:
                     f.write(content)
+
+                # 3. Perform implicit Quality Gate / compile checks on written file
+                is_valid = True
+                error_msg = ""
+                if target_file.endswith(".py"):
+                    try:
+                        import py_compile
+                        py_compile.compile(target_file, doraise=True)
+                    except Exception as e:
+                        is_valid = False
+                        error_msg = f"Python Syntax Error: {e}"
+
+                if not is_valid:
+                    # Trigger auto-healing rollback
+                    await git_rollback(sandbox_dir)
+                    return {"isError": True, "content": [{"type": "text", "text": f"❌ 写入失败！检测到代码语法缺陷，沙盒工作空间已安全自愈回滚。\n详情: {error_msg}"}]}
+
+                # Create success checkpoint
+                await git_checkpoint(sandbox_dir, f"Success-write: {sub_path}")
                 return {"content": [{"type": "text", "text": f"Success: File successfully written to sandbox: {sub_path}"}]}
 
             elif tool_name == "workspace_run_command":
                 cmd = arguments.get("command", "")
+                
+                # 1. Create pre-command checkpoint
+                from app.core.git_sandbox import git_checkpoint, git_rollback
+                await git_checkpoint(sandbox_dir, f"Pre-command: {cmd}")
+
+                # 2. Execute command
                 proc = await asyncio.create_subprocess_shell(
                     cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -275,6 +305,15 @@ class SystemMCPServer:
                     result += f"--- STDOUT ---\n{out_str}\n"
                 if err_str:
                     result += f"--- STDERR ---\n{err_str}\n"
+
+                # 3. Quality Gate check: Rollback on command failure (non-zero code)
+                if proc.returncode != 0:
+                    # Trigger auto-healing rollback
+                    await git_rollback(sandbox_dir)
+                    return {"isError": True, "content": [{"type": "text", "text": f"❌ 指令执行失败！沙盒工作空间已安全自动回滚至修改前状态以防止文件损坏。\n{result}"}]}
+
+                # Create success checkpoint
+                await git_checkpoint(sandbox_dir, f"Success-command: {cmd}")
                 return {"content": [{"type": "text", "text": result}]}
 
             else:

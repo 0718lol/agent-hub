@@ -1039,3 +1039,27 @@ async def list_mcp_tools():
     return {"status": "ok", "tools": tools}
 
 
+# Sandbox Git Versioning & Rollback APIs
+class RollbackRequest(BaseModel):
+    commit_hash: str
+
+@app.get("/api/sandbox/{conversation_id}/commits")
+async def get_sandbox_commits(conversation_id: str):
+    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
+    from app.core.git_sandbox import git_log, git_init
+    await git_init(sandbox_dir)
+    logs = await git_log(sandbox_dir)
+    return {"status": "ok", "commits": logs}
+
+@app.post("/api/sandbox/{conversation_id}/rollback")
+async def rollback_sandbox(conversation_id: str, r: RollbackRequest):
+    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
+    from app.core.git_sandbox import git_rollback_to
+    success = await git_rollback_to(sandbox_dir, r.commit_hash)
+    if success:
+        return {"status": "ok", "message": f"工作空间已成功回滚至版本: {r.commit_hash[:7]}"}
+    return {"status": "error", "message": "工作区回退操作失败，请确认该 commit 节点是否有效"}
+
+

@@ -366,6 +366,54 @@ export default function SettingsPanel({ onClose }) {
     }
   }, [tab])
 
+  // Sandbox version control states
+  const [sandboxCommits, setSandboxCommits] = useState([])
+  const [sandboxLoading, setSandboxLoading] = useState(false)
+
+  const fetchSandboxCommits = async () => {
+    if (!activeConversationId) return
+    setSandboxLoading(true)
+    try {
+      const resp = await fetch(`/api/sandbox/${activeConversationId}/commits`)
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setSandboxCommits(d.commits || [])
+      }
+    } catch (e) {
+      console.error("Failed to fetch sandbox commits:", e)
+    }
+    setSandboxLoading(false)
+  }
+
+  const handleRollbackSandbox = async (commitHash) => {
+    if (!activeConversationId) return
+    setSaving(true)
+    setMsg('')
+    try {
+      const resp = await fetch(`/api/sandbox/${activeConversationId}/rollback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commit_hash: commitHash })
+      })
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setMsg(d.message)
+        fetchSandboxCommits()
+      } else {
+        setMsg('回退失败：' + d.message)
+      }
+    } catch {
+      setMsg('回退请求异常')
+    }
+    setSaving(false)
+  }
+
+  useEffect(() => {
+    if (tab === 'sandbox' && activeConversationId) {
+      fetchSandboxCommits()
+    }
+  }, [tab, activeConversationId])
+
 
 
   // AI Detector state
@@ -460,6 +508,7 @@ export default function SettingsPanel({ onClose }) {
     { id: 'llm', label: '🤖 LLM 模型' },
     { id: 'router', label: '🔀 智能路由' },
     { id: 'mcp', label: '🔌 MCP 工具' },
+    { id: 'sandbox', label: '📂 沙盒版本' },
     { id: 'quality', label: '🎯 质量门' },
     { id: 'prompt', label: '📐 Prompt 分层' },
     { id: 'memory', label: '💡 长期记忆' },
@@ -1294,6 +1343,141 @@ export default function SettingsPanel({ onClose }) {
                 )}
               </div>
             </div>
+          </>
+        )}
+
+        {/* ====== TAB: Sandbox Version Control ====== */}
+        {tab === 'sandbox' && (
+          <>
+            <div style={{
+              padding: '12px 16px', borderRadius: 10, marginBottom: 20,
+              background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)',
+              fontSize: 12, color: '#a5b4fc', lineHeight: '1.5', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+            }}>
+              <span>📂 <b>事务级影子 Git 版本控制系统 (Versioning OS)</b> — 实时记录并拦截智能体的写入行为</span>
+              <button
+                onClick={fetchSandboxCommits}
+                disabled={sandboxLoading}
+                style={{
+                  padding: '5px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.2)', cursor: 'pointer',
+                  opacity: sandboxLoading ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 4
+                }}
+              >
+                {sandboxLoading ? '🔄' : '🔄 刷新'}
+              </button>
+            </div>
+
+            {sandboxLoading ? (
+              <div style={{ padding: '40px 0', textAlign: 'center', color: '#64748b' }}>
+                <span style={{ fontSize: 24, display: 'block', marginBottom: 12 }}>🔄</span>
+                <span>正在扫描沙盒 Git 影子分支状态...</span>
+              </div>
+            ) : (
+              <div style={{ position: 'relative', paddingLeft: 32, paddingRight: 4, maxHeight: '60vh', overflowY: 'auto' }}>
+                {sandboxCommits.length === 0 ? (
+                  <div style={{
+                    padding: '30px', border: '1px dashed rgba(255,255,255,0.1)',
+                    borderRadius: 12, textAlign: 'center', color: '#64748b', fontSize: 12, marginLeft: -32
+                  }}>
+                    🛡️ 当前沙盒尚未产生任何版本控制数据。
+                    <br /><span style={{ fontSize: 11, color: '#475569', marginTop: 6, display: 'inline-block' }}>当智能体开始为您修改代码或运行终端指令时，系统会自动在此沉淀事务版本。</span>
+                  </div>
+                ) : (
+                  <>
+                    {/* Glowing timeline track line */}
+                    <div style={{
+                      position: 'absolute', left: 14, top: 12, bottom: 12, width: 2,
+                      background: 'linear-gradient(180deg, #6366f1 0%, rgba(99,102,241,0.1) 100%)',
+                      boxShadow: '0 0 8px rgba(99,102,241,0.3)'
+                    }} />
+
+                    {sandboxCommits.map((c) => {
+                      const msg = c.message;
+                      // Categorize commit nodes
+                      let color = '#3b82f6'; // default blue
+                      let category = '👤 手动操作';
+                      let icon = '🔵';
+
+                      if (msg.includes('Pre-write') || msg.includes('Pre-command')) {
+                        color = '#eab308'; // yellow
+                        category = '🟡 事务前备份 (Pre-Action Checkpoint)';
+                        icon = '🟡';
+                      } else if (msg.includes('Success-write') || msg.includes('Success-command')) {
+                        color = '#10b981'; // green
+                        category = '🟢 安全编译通过 (Success Checkpoint)';
+                        icon = '🟢';
+                      } else if (msg.includes('自愈') || msg.includes('rollback') || msg.includes('failed')) {
+                        color = '#ef4444'; // red
+                        category = '🔴 自动自愈回滚 (Self-healed Rollback)';
+                        icon = '🔴';
+                      } else if (msg.includes('Initial Commit')) {
+                        color = '#a855f7'; // purple
+                        category = '💜 沙盒初始化 (Workspace Initialized)';
+                        icon = '💜';
+                      }
+
+                      return (
+                        <div key={c.hash} style={{ position: 'relative', marginBottom: 20 }}>
+                          {/* Glowing node dot */}
+                          <div style={{
+                            position: 'absolute', left: -24, top: 16, width: 12, height: 12,
+                            borderRadius: '50%', background: color, border: '2px solid #1e293b',
+                            boxShadow: `0 0 10px ${color}`, zIndex: 10
+                          }} />
+
+                          {/* Commit Details Card */}
+                          <div style={{
+                            padding: 14, borderRadius: 12, background: 'rgba(255,255,255,0.02)',
+                            border: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', gap: 6
+                          }}>
+                            {/* Card Header */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: color }}>
+                                {category}
+                              </span>
+                              <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>
+                                {new Date(c.timestamp * 1000).toLocaleTimeString()}
+                              </span>
+                            </div>
+
+                            {/* Hash & Date details */}
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 10, color: '#475569' }}>
+                              <span style={{ fontFamily: 'monospace', background: 'rgba(0,0,0,0.2)', padding: '1px 5px', borderRadius: 4, color: '#94a3b8' }}>
+                                Hash: {c.hash.substring(0, 7)}
+                              </span>
+                              <span>•</span>
+                              <span>{new Date(c.timestamp * 1000).toLocaleDateString()}</span>
+                            </div>
+
+                            {/* Message Description */}
+                            <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#e2e8f0', lineHeight: '1.4', fontFamily: 'monospace' }}>
+                              {msg}
+                            </p>
+
+                            {/* Action Rollback Trigger */}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                              <button
+                                onClick={() => handleRollbackSandbox(c.hash)}
+                                disabled={saving}
+                                style={{
+                                  padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                                  background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)',
+                                  color: '#a5b4fc', cursor: 'pointer', transition: 'all 0.2s',
+                                  display: 'flex', alignItems: 'center', gap: 4
+                                }}
+                              >
+                                🔄 撤销并还原到此版本
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
+            )}
           </>
         )}
 
