@@ -1,7 +1,7 @@
 from .base import BaseAgent
 
 # Runtime executable tool IDs that can be assigned to custom agents
-RUNTIME_TOOL_IDS = ["web_search", "http_request", "file_read", "file_write", "file_list", "safe_python_executor"]
+RUNTIME_TOOL_IDS = ["web_search", "http_request", "file_read", "file_write", "file_list", "safe_python_executor", "browser_action"]
 
 
 AVAILABLE_TOOLS = {
@@ -81,6 +81,13 @@ AVAILABLE_TOOLS = {
         "icon": "🛡️",
         "description": "安全执行 Python 脚本，以单步自愈和自校验的方式批量读写文件及运行测试",
         "prompt_addon": "\n- 你可以使用安全代码沙箱。使用 [tool_call:safe_python_executor]{\"code\": \"python代码\"}[/tool_call] 调用，允许单步多工具运行、循环自测与纠错。",
+    },
+    "browser_action": {
+        "id": "browser_action",
+        "name": "赛博浏览器",
+        "icon": "🌐",
+        "description": "以视觉验证和DOM元素扁平压缩的形式在浏览器内模拟页面交互与视觉自校验",
+        "prompt_addon": "\n- 你可以使用赛博浏览器交互工具。使用 [tool_call:browser_action]{\"action\": \"goto\", \"url\": \"http://example.com\"}[/tool_call] 调用，支持 goto, click, type, scroll, screenshot 操作，结合网页截图及红底白字数字 ID 标签进行精确的坐标模拟和视觉校验自愈。",
     },
 }
 

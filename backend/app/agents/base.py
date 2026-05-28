@@ -60,8 +60,8 @@ class BaseAgent:
                 # Execute the first tool call found
                 tool_name, params, start_pos, end_pos = tool_calls[0]
 
-                # Inject conversation_id for file tools
-                if tool_name in ("file_read", "file_write", "file_list") and conversation_id:
+                # Inject conversation_id for file/browser tools
+                if tool_name in ("file_read", "file_write", "file_list", "browser_action") and conversation_id:
                     params.setdefault("conversation_id", conversation_id)
 
                 logger.info(f"Agent '{self.agent_id}' calling tool: {tool_name}({params})")
@@ -121,6 +121,9 @@ class BaseAgent:
             if not lines:
                 lines.append("> (执行成功，无任何输出与返回值)")
             return "\n".join(lines)
+        elif tool_name == "browser_action" and isinstance(data, dict):
+            msg = data.get("message", "")
+            return "\n".join(f"> {line}" for line in msg.split("\n"))
         elif tool_name in ("file_write", "file_list") and isinstance(data, dict):
             return f"> {json.dumps(data, ensure_ascii=False, indent=2)}"
         else:

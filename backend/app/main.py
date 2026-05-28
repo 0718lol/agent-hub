@@ -57,6 +57,11 @@ import app.tools  # noqa: F401 — trigger auto-registration of runtime tools
 
 app = FastAPI(title="AgentHub API")
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    from app.tools.browser_tools import browser_session_manager
+    await browser_session_manager.close_all()
+
 # ---- 文件上传目录 ----
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
