@@ -138,6 +138,22 @@ class BaseAgent:
         elif tool_name == "run_stateful_command" and isinstance(data, dict):
             output = data.get("output", "")[:1000]
             return f"> **有状态命令执行输出**:\n> ```\n" + "\n".join(f"> {line}" for line in output.split("\n")) + "\n> ```"
+        elif tool_name == "e2b_python_interpreter" and isinstance(data, dict):
+            stdout = data.get("stdout", "")
+            stderr = data.get("stderr", "")
+            images = data.get("images", [])
+            lines = []
+            if stdout:
+                lines.append(f"> **标准输出 (stdout)**:\n> ```\n> {stdout.strip()}\n> ```")
+            if stderr:
+                lines.append(f"> ❌ **错误输出 (stderr)**:\n> ```\n> {stderr.strip()}\n> ```")
+            if images:
+                lines.append("> ✨ **[📊 E2B 代码解释器绘图成功]** 已自动拦截并捕捉科学计算可视化成果：")
+                for img in images:
+                    lines.append(f"> ![Generated Visualization](data:image/png;base64,{img})")
+            if not lines:
+                lines.append("> (执行成功，无任何文本输出)")
+            return "\n".join(lines)
         elif tool_name in ("file_write", "file_list") and isinstance(data, dict):
             return f"> {json.dumps(data, ensure_ascii=False, indent=2)}"
         else:
