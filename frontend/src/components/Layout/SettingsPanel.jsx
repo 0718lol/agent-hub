@@ -144,6 +144,7 @@ export default function SettingsPanel({ onClose }) {
   useEffect(() => {
     if (tab === 'cron') fetchCronTasks()
     if (tab === 'knowledge') fetchKnowledgeDocs()
+    if (tab === 'tools') fetchRuntimeTools()
   }, [tab])
 
   // Knowledge base state
@@ -304,10 +305,59 @@ export default function SettingsPanel({ onClose }) {
     setModel(p.model)
   }
 
+  // Runtime tools state
+  const [rtTools, setRtTools] = useState([])
+  const [rtLoading, setRtLoading] = useState(false)
+  const [rtTestName, setRtTestName] = useState('')
+  const [rtTestParams, setRtTestParams] = useState('')
+  const [rtTestResult, setRtTestResult] = useState(null)
+
+  const fetchRuntimeTools = async () => {
+    setRtLoading(true)
+    try {
+      const resp = await fetch('/api/runtime-tools')
+      const d = await resp.json()
+      setRtTools(d || [])
+    } catch (e) {
+      console.error("Failed to fetch runtime tools:", e)
+    }
+    setRtLoading(false)
+  }
+
+  const handleToggleRtTool = async (toolName) => {
+    try {
+      await fetch(`/api/runtime-tools/${toolName}/toggle`, { method: 'POST' })
+      fetchRuntimeTools()
+    } catch {}
+  }
+
+  const handleTestRtTool = async () => {
+    if (!rtTestName) return
+    setSaving(true)
+    setRtTestResult(null)
+    try {
+      let params = {}
+      if (rtTestParams.trim()) {
+        params = JSON.parse(rtTestParams)
+      }
+      const resp = await fetch(`/api/runtime-tools/${rtTestName}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      })
+      const d = await resp.json()
+      setRtTestResult(d)
+    } catch (e) {
+      setRtTestResult({ error: '请求失败: ' + e.message })
+    }
+    setSaving(false)
+  }
+
   const tabs = [
     { id: 'llm', label: 'LLM 模型' },
     { id: 'quality', label: '质量门' },
     { id: 'prompt', label: 'Prompt 分层' },
+    { id: 'tools', label: '🔧 工具' },
     { id: 'cron', label: '📅 自治' },
     { id: 'knowledge', label: '📚 知识库' },
   ]
@@ -734,6 +784,106 @@ export default function SettingsPanel({ onClose }) {
                   {saving ? '正在处理...' : '创建常驻离线自治任务'}
                 </button>
               </div>
+            </div>
+          </>
+        )}
+
+        {/* ====== TAB: Runtime Tools ====== */}
+        {tab === 'tools' && (
+          <>
+            <div style={{
+              padding: '10px 14px', borderRadius: 8, marginBottom: 20,
+              background: '#eef2ff', border: '1px solid #c7d2fe',
+              fontSize: 13, color: '#4338ca',
+            }}>
+              Agent 可通过 <code>[tool_call:name]</code> 标签调用以下工具，系统自动执行并返回结果
+            </div>
+
+            {/* Tool List */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={labelStyle}>已注册工具 ({rtTools.length})</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {rtLoading ? (
+                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: 16, fontSize: 12 }}>加载中...</div>
+                ) : rtTools.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: 16, fontSize: 12 }}>暂无工具</div>
+                ) : (
+                  rtTools.map((tool) => (
+                    <div key={tool.name} style={{
+                      padding: '12px 14px', borderRadius: 10, background: '#f9fafb',
+                      border: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#1f2937' }}>
+                          {tool.icon} {tool.name}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                          {tool.description}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <span style={{
+                          fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                          background: tool.enabled ? '#ecfdf5' : '#fef2f2',
+                          color: tool.enabled ? '#059669' : '#dc2626',
+                          border: `1px solid ${tool.enabled ? '#a7f3d0' : '#fecaca'}`,
+                        }}>{tool.enabled ? '启用' : '禁用'}</span>
+                        <button onClick={() => handleToggleRtTool(tool.name)} style={{
+                          padding: '4px 10px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
+                          background: tool.enabled ? '#fef2f2' : '#ecfdf5',
+                          border: `1px solid ${tool.enabled ? '#fecaca' : '#a7f3d0'}`,
+                          color: tool.enabled ? '#dc2626' : '#059669',
+                        }}>{tool.enabled ? '禁用' : '启用'}</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Test Tool */}
+            <div style={{ padding: '16px', borderRadius: 12, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+              <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>工具测试</label>
+              <div style={{ marginBottom: 10 }}>
+                <select
+                  value={rtTestName}
+                  onChange={(e) => setRtTestName(e.target.value)}
+                  style={{ ...inputStyle, marginBottom: 8 }}
+                >
+                  <option value="">选择工具...</option>
+                  {rtTools.filter(t => t.enabled).map((t) => (
+                    <option key={t.name} value={t.name}>{t.icon} {t.name}</option>
+                  ))}
+                </select>
+                <textarea
+                  value={rtTestParams}
+                  onChange={(e) => setRtTestParams(e.target.value)}
+                  style={{ ...inputStyle, minHeight: 60, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
+                  placeholder='参数 JSON，如: {"query": "FastAPI 教程"}'
+                />
+              </div>
+              <button onClick={handleTestRtTool} disabled={saving || !rtTestName} style={{
+                ...btnStyle, background: '#059669',
+                opacity: (saving || !rtTestName) ? 0.6 : 1,
+              }}>执行测试</button>
+              {rtTestResult && (
+                <div style={{
+                  marginTop: 12, padding: '10px', borderRadius: 8,
+                  background: rtTestResult.success ? '#f0fdf4' : '#fef2f2',
+                  border: `1px solid ${rtTestResult.success ? '#bbf7d0' : '#fecaca'}`,
+                  maxHeight: '25vh', overflowY: 'auto',
+                }}>
+                  <div style={{ fontSize: 11, color: rtTestResult.success ? '#166534' : '#dc2626', fontWeight: 600, marginBottom: 4 }}>
+                    {rtTestResult.success ? '✅ 成功' : '❌ 失败'} {rtTestResult.usage?.time_ms ? `(${rtTestResult.usage.time_ms}ms)` : ''}
+                  </div>
+                  <pre style={{
+                    fontSize: 11, color: '#374151', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                    margin: 0, maxHeight: '20vh', overflow: 'auto',
+                  }}>
+                    {JSON.stringify(rtTestResult.data || rtTestResult.error, null, 2)}
+                  </pre>
+                </div>
+              )}
             </div>
           </>
         )}

@@ -1,5 +1,8 @@
 from .base import BaseAgent
 
+# Runtime executable tool IDs that can be assigned to custom agents
+RUNTIME_TOOL_IDS = ["web_search", "http_request", "file_read", "file_write", "file_list"]
+
 
 AVAILABLE_TOOLS = {
     "code_gen": {
@@ -86,6 +89,8 @@ class CustomAgent(BaseAgent):
         self.role = role
         self.style = style
         self.tools = tools or []
+        # Separate prompt-addon tools from executable runtime tools
+        self.enabled_tools = [t for t in self.tools if t in RUNTIME_TOOL_IDS] or None
         # Build the final system prompt with tool capabilities
         self.system_prompt = self._build_full_prompt(system_prompt)
 

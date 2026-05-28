@@ -34,6 +34,7 @@ from app.agents.devops import DevopsAgent
 from app.agents.designer import DesignerAgent
 from app.agents.builder import AgentBuilderAgent
 from app.agents.custom import CustomAgent, AVAILABLE_TOOLS
+import app.tools  # noqa: F401 — trigger auto-registration of runtime tools
 
 app = FastAPI(title="AgentHub API")
 
@@ -491,7 +492,7 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
         _use_stream = not (quality_gate.enabled and quality_gate.best_of_n > 1
                            and agent.agent_id not in ("agent_builder", "agent_pm"))
         if _use_stream:
-            async for chunk in agent.stream_reply(effective_text, history=history):
+            async for chunk in agent.stream_reply(effective_text, history=history, conversation_id=conversation_id):
                 # Check stop signal
                 if stop_event and stop_event.is_set():
                     print(f"[STOP] breaking stream loop for agent={agent.agent_id}", flush=True)
@@ -775,10 +776,45 @@ async def remove_custom_agent(agent_id: str):
 
 @app.get("/api/tools")
 async def list_available_tools():
+    """List prompt-addon tools (for custom agent builder UI)."""
     return [
         {"id": tid, "name": t["name"], "icon": t["icon"], "description": t["description"]}
         for tid, t in AVAILABLE_TOOLS.items()
     ]
+
+
+# ---- Runtime Tools (executable) REST API ----
+
+@app.get("/api/runtime-tools")
+async def list_runtime_tools():
+    """List all registered executable runtime tools."""
+    from app.tools import list_tools as _list_tools
+    return _list_tools()
+
+
+@app.post("/api/runtime-tools/{tool_name}/test")
+async def test_runtime_tool(tool_name: str, body: dict = {}):
+    """Manually test an executable tool with given params."""
+    from app.tools import execute_tool_call
+    result = await execute_tool_call(tool_name, body)
+    return {
+        "tool": tool_name,
+        "success": result.success,
+        "data": result.data,
+        "error": result.error,
+        "usage": result.usage,
+    }
+
+
+@app.post("/api/runtime-tools/{tool_name}/toggle")
+async def toggle_runtime_tool(tool_name: str):
+    """Enable/disable a runtime tool."""
+    from app.tools import get_tool
+    tool = get_tool(tool_name)
+    if not tool:
+        return {"error": f"Tool not found: {tool_name}"}
+    tool.enabled = not tool.enabled
+    return {"tool": tool_name, "enabled": tool.enabled}
 
 
 # ---- File Upload API ----

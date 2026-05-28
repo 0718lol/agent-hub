@@ -1,4 +1,5 @@
 import asyncio
+import json
 import random
 import logging
 from typing import AsyncGenerator
@@ -10,6 +11,8 @@ logger = logging.getLogger("base_agent")
 
 # Maximum characters for conversation history context (~4000 tokens ≈ 12000 chars)
 _MAX_HISTORY_CHARS = 12000
+# Maximum tool call rounds per reply (prevent infinite loops)
+_MAX_TOOL_ROUNDS = 5
 
 
 class BaseAgent:
@@ -19,23 +22,97 @@ class BaseAgent:
     role: str = ""
     style: str = ""
     system_prompt: str = ""
+    # Runtime tools enabled for this agent (None = all enabled tools)
+    enabled_tools: list[str] | None = None
 
     async def stream_reply(self, message: str, context: list = None,
-                           history: list = None, attachments: list = None) -> AsyncGenerator[str, None]:
+                           history: list = None, attachments: list = None,
+                           conversation_id: str = "") -> AsyncGenerator[str, None]:
         if llm_client.is_configured() and self.system_prompt:
             messages = self._build_messages(message, context, history, attachments)
             # Structured layered prompt injection
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
             prompt_context = {"task_type": task_type}
             full_prompt = prompt_engine.build(self, prompt_context)
-            async for chunk in llm_client.chat_stream(messages, full_prompt):
-                yield chunk
+
+            # Inject tool descriptions into system prompt
+            tools_prompt = self._get_tools_prompt()
+            if tools_prompt:
+                full_prompt = full_prompt + tools_prompt
+
+            # Stream with tool call interception loop
+            round_count = 0
+            while True:
+                accumulated = ""
+                async for chunk in llm_client.chat_stream(messages, full_prompt):
+                    accumulated += chunk
+                    yield chunk
+
+                # Check if output contains tool_call tags
+                from app.tools.registry import parse_tool_calls, execute_tool_call
+                tool_calls = parse_tool_calls(accumulated)
+
+                if not tool_calls or round_count >= _MAX_TOOL_ROUNDS:
+                    break  # No tool calls or max rounds reached
+
+                round_count += 1
+                # Execute the first tool call found
+                tool_name, params, start_pos, end_pos = tool_calls[0]
+
+                # Inject conversation_id for file tools
+                if tool_name in ("file_read", "file_write", "file_list") and conversation_id:
+                    params.setdefault("conversation_id", conversation_id)
+
+                logger.info(f"Agent '{self.agent_id}' calling tool: {tool_name}({params})")
+                result = await execute_tool_call(tool_name, params)
+
+                # Format tool result for display
+                result_text = self._format_tool_result(tool_name, result)
+                yield f"\n\n> 🔧 **工具调用**: `{tool_name}`\n{result_text}\n\n"
+
+                # Add assistant output + tool result to messages for next round
+                messages.append({"role": "assistant", "content": accumulated})
+                messages.append({"role": "user", "content": f"[工具结果: {tool_name}]\n{json.dumps(result.data if result.success else {'error': result.error}, ensure_ascii=False, indent=2)}\n\n请基于以上工具结果继续回复用户。"})
         else:
             reply = self._generate_reply(message, context)
             for char in reply:
                 delay = random.uniform(0.04, 0.10)
                 await asyncio.sleep(delay)
                 yield char
+
+    def _get_tools_prompt(self) -> str:
+        """Get tools prompt block for this agent."""
+        try:
+            from app.tools.registry import get_tools_prompt
+            return get_tools_prompt(self.enabled_tools)
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _format_tool_result(tool_name: str, result) -> str:
+        """Format a ToolResult for inline display in chat."""
+        if not result.success:
+            return f"> ❌ 错误: {result.error}"
+        data = result.data
+        if tool_name == "web_search" and isinstance(data, dict):
+            items = data.get("results", [])
+            if not items:
+                return "> 未找到相关结果"
+            lines = []
+            for i, item in enumerate(items[:5], 1):
+                lines.append(f"> {i}. **{item['title']}**\n>    {item['snippet'][:100]}")
+            return "\n".join(lines)
+        elif tool_name == "http_request" and isinstance(data, dict):
+            status = data.get("status_code", "?")
+            body = data.get("body", "")[:500]
+            return f"> 状态码: {status}\n> ```\n> {body}\n> ```"
+        elif tool_name == "file_read" and isinstance(data, dict):
+            content = data.get("content", "")[:500]
+            return f"> ```\n{content}\n> ```"
+        elif tool_name in ("file_write", "file_list") and isinstance(data, dict):
+            return f"> {json.dumps(data, ensure_ascii=False, indent=2)}"
+        else:
+            return f"> {json.dumps(data, ensure_ascii=False)[:500]}"
 
     def _build_messages(self, message: str, context: list = None,
                         history: list = None, attachments: list = None) -> list[dict]:
