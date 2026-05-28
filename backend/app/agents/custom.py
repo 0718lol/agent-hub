@@ -1,7 +1,7 @@
 from .base import BaseAgent
 
 # Runtime executable tool IDs that can be assigned to custom agents
-RUNTIME_TOOL_IDS = ["web_search", "http_request", "file_read", "file_write", "file_list", "safe_python_executor", "browser_action", "file_view_windowed", "file_edit_line", "run_stateful_command", "e2b_python_interpreter"]
+RUNTIME_TOOL_IDS = ["web_search", "http_request", "file_read", "file_write", "file_list", "safe_python_executor", "browser_action", "file_view_windowed", "file_edit_line", "run_stateful_command", "e2b_python_interpreter", "file_patch_block"]
 
 
 AVAILABLE_TOOLS = {
@@ -116,6 +116,13 @@ AVAILABLE_TOOLS = {
         "icon": "📊",
         "description": "在完全物理隔离的本地安全沙箱中执行任意 Python/数据科学代码，支持 Matplotlib/Pandas 绘图及生成 CSV",
         "prompt_addon": "\n- 你可以使用 E2B 代码解释器。使用 [tool_call:e2b_python_interpreter]{\"code\": \"python代码\"}[/tool_call] 调用，允许执行包含 numpy、pandas、matplotlib 等高级数学与数据科学库的任意 Python 脚本。如果需要进行数据可视化绘图，请直接在代码尾部调用 plt.show()，系统将自动捕获生成的图表图片并直接展示在聊天气泡中呈现给用户。",
+    },
+    "file_patch_block": {
+        "id": "file_patch_block",
+        "name": "块级微编辑器",
+        "icon": "🩹",
+        "description": "对指定文件执行 Aider 格式高容错 SEARCH/REPLACE 块微调修改，支持单次多块替换与编译静态守卫门禁",
+        "prompt_addon": "\n- 你可以使用块级微编辑器（极其推荐代替整文件覆写）。使用 [tool_call:file_patch_block]{\"path\": \"文件路径\", \"patch_blocks\": \"<<<<<<< SEARCH\\n旧代码\\n=======\\n新代码\\n>>>>>>> REPLACE\"}[/tool_call] 调用。支持一次对同一个文件进行多处块微调，系统在写盘后会自动编译校验，若语法损坏则会自动回档，极度安全防写烂。",
     },
 }
 

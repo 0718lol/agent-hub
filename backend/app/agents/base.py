@@ -42,7 +42,7 @@ class BaseAgent:
 
             # Structured layered prompt injection
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
-            prompt_context = {"task_type": task_type}
+            prompt_context = {"task_type": task_type, "conversation_id": conversation_id}
             full_prompt = prompt_engine.build(self, prompt_context)
 
             # Inject tool descriptions into system prompt
