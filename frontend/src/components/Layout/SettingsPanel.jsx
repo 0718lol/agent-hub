@@ -284,6 +284,88 @@ export default function SettingsPanel({ onClose }) {
     return 'custom'
   }
 
+  // MCP integration states
+  const [mcpServers, setMcpServers] = useState([])
+  const [mcpTools, setMcpTools] = useState([])
+  const [mcpLoading, setMcpLoading] = useState(false)
+  const [newMcpName, setNewMcpName] = useState('')
+  const [newMcpCmd, setNewMcpCmd] = useState('')
+  const [newMcpArgs, setNewMcpArgs] = useState('')
+
+  const fetchMcpData = async () => {
+    setMcpLoading(true)
+    try {
+      const r1 = await fetch('/api/mcp/servers')
+      const d1 = await r1.json()
+      if (d1.status === 'ok') setMcpServers(d1.servers || [])
+
+      const r2 = await fetch('/api/mcp/tools')
+      const d2 = await r2.json()
+      if (d2.status === 'ok') setMcpTools(d2.tools || [])
+    } catch (e) {
+      console.error("Failed to fetch MCP configs:", e)
+    }
+    setMcpLoading(false)
+  }
+
+  const handleAddMcpServer = async () => {
+    if (!newMcpName || !newMcpCmd) {
+      setMsg('请填写完整的服务器名称与执行指令')
+      return
+    }
+    setSaving(true)
+    setMsg('')
+    try {
+      const parsedArgs = newMcpArgs.split(' ').filter(Boolean)
+      const resp = await fetch('/api/mcp/servers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newMcpName,
+          command: newMcpCmd,
+          args: parsedArgs
+        })
+      })
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setMsg(d.message)
+        setNewMcpName('')
+        setNewMcpCmd('')
+        setNewMcpArgs('')
+        fetchMcpData()
+      } else {
+        setMsg('启动失败：' + d.message)
+      }
+    } catch {
+      setMsg('添加服务器异常')
+    }
+    setSaving(false)
+  }
+
+  const handleDeleteMcpServer = async (name) => {
+    setSaving(true)
+    setMsg('')
+    try {
+      const resp = await fetch(`/api/mcp/servers/${name}`, { method: 'DELETE' })
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setMsg(d.message)
+        fetchMcpData()
+      } else {
+        setMsg('卸载失败：' + d.message)
+      }
+    } catch {
+      setMsg('卸载异常')
+    }
+    setSaving(false)
+  }
+
+  useEffect(() => {
+    if (tab === 'mcp') {
+      fetchMcpData()
+    }
+  }, [tab])
+
 
 
   // AI Detector state
@@ -377,6 +459,7 @@ export default function SettingsPanel({ onClose }) {
   const tabs = [
     { id: 'llm', label: '🤖 LLM 模型' },
     { id: 'router', label: '🔀 智能路由' },
+    { id: 'mcp', label: '🔌 MCP 工具' },
     { id: 'quality', label: '🎯 质量门' },
     { id: 'prompt', label: '📐 Prompt 分层' },
     { id: 'memory', label: '💡 长期记忆' },
@@ -1053,6 +1136,164 @@ export default function SettingsPanel({ onClose }) {
             <button onClick={handleSaveRouterSettings} disabled={saving} style={{ ...btnStyle, marginBottom: 12 }}>
               {saving ? '保存中...' : '💾 保存路由配置'}
             </button>
+          </>
+        )}
+
+        {/* ====== TAB: MCP Tools ====== */}
+        {tab === 'mcp' && (
+          <>
+            <div style={{
+              padding: '12px 16px', borderRadius: 10, marginBottom: 20,
+              background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)',
+              fontSize: 12, color: '#a5b4fc', lineHeight: '1.5', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+            }}>
+              <span>🔌 <b>Model Context Protocol (MCP)</b> 原生工具链管理中心，实现物理级工具装载与执行</span>
+              <button
+                onClick={fetchMcpData}
+                disabled={mcpLoading}
+                style={{
+                  padding: '5px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.2)', cursor: 'pointer',
+                  opacity: mcpLoading ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 4
+                }}
+              >
+                {mcpLoading ? '🔄' : '🔄 刷新'}
+              </button>
+            </div>
+
+            {/* Configured MCP Servers */}
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ ...labelStyle, fontSize: 14, fontWeight: 600, color: '#f8fafc', marginBottom: 12 }}>⚡ 运行中的 MCP 服务器 (Servers)</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: '25vh', overflowY: 'auto', paddingRight: 4 }}>
+                {mcpServers.map((srv) => {
+                  const isActive = srv.status === 'active';
+                  return (
+                    <div key={srv.name} style={{
+                      padding: 12, borderRadius: 10, background: 'rgba(255,255,255,0.02)',
+                      border: `1px solid ${isActive ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      boxShadow: isActive ? '0 0 10px rgba(16,185,129,0.02)' : 'none'
+                    }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 13, color: '#f8fafc', fontWeight: 600 }}>{srv.name}</span>
+                          <span style={{
+                            fontSize: 9, fontWeight: 600, padding: '2px 6px', borderRadius: 4,
+                            background: isActive ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                            color: isActive ? '#34d399' : '#f87171'
+                          }}>
+                            {isActive ? '🟢 活跃在线' : '🔴 离线异常'}
+                          </span>
+                          {srv.is_system && (
+                            <span style={{ fontSize: 9, background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', padding: '2px 6px', borderRadius: 4 }}>
+                              🛡️ 系统核心
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#64748b', marginTop: 4, fontFamily: 'monospace' }}>
+                          Command: {srv.command} {srv.args.join(' ')}
+                        </div>
+                      </div>
+                      {!srv.is_system && (
+                        <button
+                          onClick={() => handleDeleteMcpServer(srv.name)}
+                          disabled={saving}
+                          style={{
+                            padding: '4px 8px', borderRadius: 6, fontSize: 11, background: 'rgba(239, 68, 68, 0.05)',
+                            border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171', cursor: 'pointer', transition: 'all 0.2s'
+                          }}
+                        >
+                          🗑️ 卸载
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Register External Stdio Server */}
+            <div style={{
+              padding: 16, borderRadius: 12, background: 'rgba(0,0,0,0.15)',
+              border: '1px solid rgba(255,255,255,0.04)', marginBottom: 24
+            }}>
+              <label style={{ ...labelStyle, fontSize: 12, fontWeight: 600, color: '#f8fafc', marginBottom: 10 }}>🔌 注册外部 Stdio 服务器 (JSON-RPC 协议)</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    value={newMcpName}
+                    onChange={(e) => setNewMcpName(e.target.value)}
+                    placeholder="服务器名称 (如 sqlite)"
+                    style={{ ...inputStyle, flex: 1, padding: '8px 12px', fontSize: 12 }}
+                  />
+                  <input
+                    value={newMcpCmd}
+                    onChange={(e) => setNewMcpCmd(e.target.value)}
+                    placeholder="执行命令 (如 npx 或 python)"
+                    style={{ ...inputStyle, flex: 1, padding: '8px 12px', fontSize: 12 }}
+                  />
+                </div>
+                <input
+                  value={newMcpArgs}
+                  onChange={(e) => setNewMcpArgs(e.target.value)}
+                  placeholder="命令参数，以空格分隔 (如 -y @modelcontextprotocol/server-sqlite --db sqlite.db)"
+                  style={{ ...inputStyle, padding: '8px 12px', fontSize: 12 }}
+                />
+                <button
+                  onClick={handleAddMcpServer}
+                  disabled={saving}
+                  style={{
+                    padding: '8px', borderRadius: 8, background: '#6366f1',
+                    border: 'none', color: 'white', fontSize: 12, fontWeight: 600,
+                    cursor: 'pointer', transition: 'all 0.2s'
+                  }}
+                >
+                  {saving ? '正在启动并连接...' : '🔌 启动并注册此 MCP 服务'}
+                </button>
+              </div>
+            </div>
+
+            {/* Consolidated Tools List */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ ...labelStyle, fontSize: 14, fontWeight: 600, color: '#f8fafc', marginBottom: 12 }}>🔍 聚合工具中心 (Active Tools: {mcpTools.length})</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: '35vh', overflowY: 'auto', paddingRight: 4 }}>
+                {mcpTools.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: '#64748b', padding: '20px 0', fontSize: 12 }}>
+                    暂无可用工具，请刷新或检查服务器是否活跃
+                  </div>
+                ) : (
+                  mcpTools.map((t) => (
+                    <div key={t.name} style={{
+                      padding: 14, borderRadius: 10, background: 'rgba(255,255,255,0.01)',
+                      border: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', gap: 6
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 13, color: '#38bdf8', fontWeight: 600, fontFamily: 'monospace' }}>
+                          {t.name}
+                        </span>
+                        <span style={{ fontSize: 10, background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8', padding: '1px 5px', borderRadius: 4 }}>
+                          {t.server_name}
+                        </span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: 12, color: '#94a3b8', lineHeight: '1.4' }}>
+                        {t.description}
+                      </p>
+                      {t.inputSchema && Object.keys(t.inputSchema.properties || {}).length > 0 && (
+                        <div style={{ marginTop: 4 }}>
+                          <pre style={{
+                            margin: 0, padding: '6px 10px', background: 'rgba(0,0,0,0.2)',
+                            borderRadius: 6, fontSize: 10, color: '#64748b', fontFamily: 'monospace',
+                            overflowX: 'auto', border: '1px solid rgba(255,255,255,0.02)'
+                          }}>
+                            Schema: {JSON.stringify(t.inputSchema.properties, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </>
         )}
 

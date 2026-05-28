@@ -1,4 +1,5 @@
 import asyncio
+import json
 import random
 from typing import AsyncGenerator
 
@@ -38,8 +39,75 @@ class BaseAgent:
             # Stream beautiful route indicator to user
             yield f"\n[thinking]🤖 智能路由调度: 正在调用 {route.model} ({route.provider}) 执行任务...[/thinking]\n"
             
-            async for chunk in llm_client.chat_stream(messages, full_prompt, route_override=route):
+            # Load active MCP tools from manager
+            from app.core.mcp_client import mcp_manager
+            mcp_tools = await mcp_manager.get_all_tools()
+            
+            tool_calls_out = []
+            async for chunk in llm_client.chat_stream(
+                messages, full_prompt, route_override=route, tools=mcp_tools, tool_calls_out=tool_calls_out
+            ):
                 yield chunk
+                
+            # Process tool calls in a recursive loop
+            while tool_calls_out:
+                active_calls = list(tool_calls_out)
+                tool_calls_out.clear()
+                
+                for tc in active_calls:
+                    tc_id = tc.get("id")
+                    tc_name = tc.get("name")
+                    tc_args_str = tc.get("arguments", "{}")
+                    
+                    if not tc_name:
+                        continue
+                    
+                    try:
+                        tc_args = json.loads(tc_args_str) if tc_args_str.strip() else {}
+                    except Exception:
+                        tc_args = {}
+                        
+                    # Stream execution trace bubble
+                    yield f"\n[tool_execution]🔌 MCP 工具调用: 正在请求 {tc_name}，参数：{tc_args_str}...[/tool_execution]\n"
+                    
+                    # Execute tool through manager
+                    result = await mcp_manager.execute_tool(tc_name, tc_args, conversation_id=conv_id)
+                    
+                    is_error = result.get("isError", False)
+                    result_content = result.get("content", [])
+                    result_text = result_content[0].get("text", "") if result_content else "无返回结果"
+                    
+                    status_icon = "❌" if is_error else "✅"
+                    yield f"\n[tool_execution]{status_icon} MCP 执行结果: {result_text[:400]}...[/tool_execution]\n"
+                    
+                    # Inject tool interaction into conversation history
+                    messages.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": tc_id or f"call_{tc_name}",
+                                "type": "function",
+                                "function": {
+                                    "name": tc_name,
+                                    "arguments": tc_args_str
+                                }
+                            }
+                        ]
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id or f"call_{tc_name}",
+                        "name": tc_name,
+                        "content": json.dumps(result, ensure_ascii=False)
+                    })
+                    
+                # Invoke LLM again with injected tool history context
+                yield f"\n[thinking]🤖 路由调度 (多轮推理中): 正在调用 {route.model}...[/thinking]\n"
+                async for chunk in llm_client.chat_stream(
+                    messages, full_prompt, route_override=route, tools=mcp_tools, tool_calls_out=tool_calls_out
+                ):
+                    yield chunk
         else:
             reply = self._generate_reply(message, context)
             for char in reply:

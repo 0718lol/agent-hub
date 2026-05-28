@@ -974,3 +974,68 @@ async def _simulate_deploy(conversation_id: str):
     asyncio.create_task(trigger_background_reflection(conversation_id))
 
 
+# Startup/Shutdown Lifespan hooks
+@app.on_event("startup")
+async def startup_event():
+    from app.core.mcp_client import mcp_manager
+    await mcp_manager.start_all()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    from app.core.mcp_client import mcp_manager
+    await mcp_manager.stop_all()
+
+
+# MCP REST APIs
+class MCPServerCreate(BaseModel):
+    name: str
+    command: str
+    args: list[str] = []
+    env: dict = {}
+
+@app.get("/api/mcp/servers")
+async def list_mcp_servers():
+    from app.core.mcp_client import mcp_manager
+    res = []
+    for name, srv in mcp_manager.servers.items():
+        is_connected = getattr(srv, "is_connected", False)
+        cmd = getattr(srv, "command", "内置内存服务")
+        args = getattr(srv, "args", [])
+        res.append({
+            "name": name,
+            "status": "active" if is_connected else "offline",
+            "command": cmd,
+            "args": args,
+            "is_system": name == "SystemServer"
+        })
+    return {"status": "ok", "servers": res}
+
+@app.post("/api/mcp/servers")
+async def add_mcp_server(s: MCPServerCreate):
+    from app.core.mcp_client import mcp_manager
+    if s.name == "SystemServer":
+        return {"status": "error", "message": "无法覆写内置核心 SystemServer"}
+    try:
+        await mcp_manager.add_server(s.name, s.command, s.args, s.env)
+        return {"status": "ok", "message": f"MCP 服务器 '{s.name}' 已成功注册并启动！"}
+    except Exception as e:
+        return {"status": "error", "message": f"注册失败: {e}"}
+
+@app.delete("/api/mcp/servers/{name}")
+async def delete_mcp_server(name: str):
+    from app.core.mcp_client import mcp_manager
+    if name == "SystemServer":
+        return {"status": "error", "message": "无法删除内置核心 SystemServer"}
+    try:
+        await mcp_manager.remove_server(name)
+        return {"status": "ok", "message": f"MCP 服务器 '{name}' 已卸载并停止"}
+    except Exception as e:
+        return {"status": "error", "message": f"删除失败: {e}"}
+
+@app.get("/api/mcp/tools")
+async def list_mcp_tools():
+    from app.core.mcp_client import mcp_manager
+    tools = await mcp_manager.get_all_tools()
+    return {"status": "ok", "tools": tools}
+
+

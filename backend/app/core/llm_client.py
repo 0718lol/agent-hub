@@ -34,7 +34,8 @@ class LLMClient:
             return bool(self.model)
         return bool(self.api_key and self.base_url and self.model)
 
-    async def chat_stream(self, messages: list[dict], system: str = "", route_override=None) -> AsyncGenerator[str, None]:
+    async def chat_stream(self, messages: list[dict], system: str = "", route_override=None,
+                          tools: list = None, tool_calls_out: list = None) -> AsyncGenerator[str, None]:
         client_to_use = self
         if route_override:
             client_to_use = LLMClient()
@@ -60,15 +61,16 @@ class LLMClient:
             elif client_to_use.provider == "ollama":
                 if not client_to_use.base_url:
                     client_to_use.base_url = "http://127.0.0.1:11434/v1"
-                async for chunk in client_to_use._openai_stream(messages, system):
+                async for chunk in client_to_use._openai_stream(messages, system, tools, tool_calls_out):
                     yield chunk
             else:
-                async for chunk in client_to_use._openai_stream(messages, system):
+                async for chunk in client_to_use._openai_stream(messages, system, tools, tool_calls_out):
                     yield chunk
         except Exception as e:
             yield f"\n[LLM 调用出错: {type(e).__name__}: {str(e)[:200]}]"
 
-    async def _openai_stream(self, messages: list[dict], system: str) -> AsyncGenerator[str, None]:
+    async def _openai_stream(self, messages: list[dict], system: str,
+                             tools: list = None, tool_calls_out: list = None) -> AsyncGenerator[str, None]:
         url = f"{self.base_url}/chat/completions"
         if not url.startswith("http"):
             url = f"https://{url}"
@@ -85,6 +87,20 @@ class LLMClient:
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
         }
+
+        if tools:
+            formatted_tools = []
+            for t in tools:
+                formatted_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t["description"],
+                        "parameters": t.get("inputSchema", t.get("schema", {"type": "object", "properties": {}}))
+                    }
+                })
+            payload["tools"] = formatted_tools
+            payload["tool_choice"] = "auto"
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -110,6 +126,24 @@ class LLMClient:
                         if not choices:
                             continue
                         delta = choices[0].get("delta", {})
+                        
+                        # Handle streaming tool calls
+                        tool_calls = delta.get("tool_calls", [])
+                        if tool_calls and tool_calls_out is not None:
+                            for tc in tool_calls:
+                                idx = tc.get("index", 0)
+                                while len(tool_calls_out) <= idx:
+                                    tool_calls_out.append({"id": "", "name": "", "arguments": ""})
+                                tc_out = tool_calls_out[idx]
+                                if "id" in tc:
+                                    tc_out["id"] = tc["id"]
+                                if "function" in tc:
+                                    fn = tc["function"]
+                                    if "name" in fn:
+                                        tc_out["name"] = fn["name"]
+                                    if "arguments" in fn:
+                                        tc_out["arguments"] += fn["arguments"]
+
                         content = delta.get("content", "")
                         if content:
                             yield content
