@@ -79,6 +79,17 @@ def init_db():
         );
 
         CREATE INDEX IF NOT EXISTS idx_cron_next_run ON cron_tasks(next_run) WHERE status = 'active';
+
+        CREATE TABLE IF NOT EXISTS knowledge_docs (
+            id TEXT PRIMARY KEY,
+            filename TEXT NOT NULL,
+            file_path TEXT DEFAULT '',
+            content_type TEXT DEFAULT '',
+            chunk_count INTEGER DEFAULT 0,
+            char_count INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'ready',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
     ''')
 
     default_convs = [
@@ -297,5 +308,35 @@ def update_cron_task_status(task_id: str, status: str):
 def delete_cron_task(task_id: str):
     conn = get_db()
     conn.execute('DELETE FROM cron_tasks WHERE id = ?', (task_id,))
+    conn.commit()
+    conn.close()
+
+
+# ---- Knowledge Base Documents CRUD ----
+
+def save_knowledge_doc(doc_id: str, filename: str, file_path: str = '',
+                       content_type: str = '', chunk_count: int = 0, char_count: int = 0):
+    conn = get_db()
+    conn.execute(
+        '''
+        INSERT OR REPLACE INTO knowledge_docs (id, filename, file_path, content_type, chunk_count, char_count, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'ready')
+        ''',
+        (doc_id, filename, file_path, content_type, chunk_count, char_count)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_knowledge_docs() -> list[dict]:
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM knowledge_docs ORDER BY created_at DESC').fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def delete_knowledge_doc(doc_id: str):
+    conn = get_db()
+    conn.execute('DELETE FROM knowledge_docs WHERE id = ?', (doc_id,))
     conn.commit()
     conn.close()

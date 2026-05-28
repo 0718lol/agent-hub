@@ -1186,3 +1186,97 @@ async def delete_cron_task_endpoint(task_id: str):
     delete_cron_task(task_id)
     return {"status": "ok", "message": "离线自治任务已成功删除！"}
 
+
+# ---- Knowledge Base (RAG) REST API ----
+
+@app.get("/api/knowledge")
+async def list_knowledge_docs():
+    from app.core.database import get_knowledge_docs
+    from app.core.rag_engine import rag_engine
+    docs = get_knowledge_docs()
+    stats = rag_engine.get_stats()
+    return {"status": "ok", "docs": docs, "stats": stats}
+
+
+@app.post("/api/knowledge/upload")
+async def upload_knowledge_doc(file: UploadFile = File(...)):
+    from app.core.document_parser import DocumentParser
+    from app.core.rag_engine import rag_engine
+    from app.core.database import save_knowledge_doc
+
+    if not DocumentParser.is_supported(file.filename):
+        return {"status": "error", "message": f"不支持的文件类型: {file.filename}"}
+
+    doc_id = f"kb_{uuid.uuid4().hex[:8]}"
+    content = await file.read()
+
+    # 保存文件到磁盘
+    kb_dir = os.path.join(os.path.dirname(__file__), "..", "data", "knowledge")
+    os.makedirs(kb_dir, exist_ok=True)
+    ext = os.path.splitext(file.filename)[1]
+    stored_path = os.path.join(kb_dir, f"{doc_id}{ext}")
+    with open(stored_path, "wb") as f:
+        f.write(content)
+
+    # 提取文本
+    text = DocumentParser.extract_text(stored_path, file.content_type or "")
+    if not text:
+        os.remove(stored_path)
+        return {"status": "error", "message": "无法从文件中提取文本内容"}
+
+    # 分块写入向量库
+    chunk_count = rag_engine.add_document(doc_id, text, metadata={
+        "source": "upload",
+        "filename": file.filename,
+    })
+
+    # 记录到 SQLite
+    save_knowledge_doc(
+        doc_id=doc_id,
+        filename=file.filename,
+        file_path=stored_path,
+        content_type=file.content_type or "",
+        chunk_count=chunk_count,
+        char_count=len(text),
+    )
+
+    return {
+        "status": "ok",
+        "doc_id": doc_id,
+        "filename": file.filename,
+        "chunk_count": chunk_count,
+        "char_count": len(text),
+        "message": f"文档已入库，生成 {chunk_count} 个知识块",
+    }
+
+
+@app.delete("/api/knowledge/{doc_id}")
+async def delete_knowledge_doc_endpoint(doc_id: str):
+    from app.core.rag_engine import rag_engine
+    from app.core.database import delete_knowledge_doc, get_knowledge_docs
+
+    # 删除向量库中的分块
+    rag_engine.remove_document(doc_id)
+
+    # 删除物理文件
+    docs = get_knowledge_docs()
+    doc = next((d for d in docs if d["id"] == doc_id), None)
+    if doc and doc.get("file_path") and os.path.isfile(doc["file_path"]):
+        os.remove(doc["file_path"])
+
+    # 删除数据库记录
+    delete_knowledge_doc(doc_id)
+    return {"status": "ok", "message": "知识文档已删除"}
+
+
+@app.post("/api/knowledge/query")
+async def query_knowledge(body: dict):
+    from app.core.rag_engine import rag_engine
+    query = body.get("query", "")
+    top_k = body.get("top_k", 5)
+    if not query.strip():
+        return {"status": "error", "message": "查询内容不能为空"}
+
+    hits = rag_engine.query(query, top_k=top_k)
+    return {"status": "ok", "results": hits}
+

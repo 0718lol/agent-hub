@@ -143,7 +143,78 @@ export default function SettingsPanel({ onClose }) {
 
   useEffect(() => {
     if (tab === 'cron') fetchCronTasks()
+    if (tab === 'knowledge') fetchKnowledgeDocs()
   }, [tab])
+
+  // Knowledge base state
+  const [kbDocs, setKbDocs] = useState([])
+  const [kbLoading, setKbLoading] = useState(false)
+  const [kbStats, setKbStats] = useState({})
+  const [kbUploading, setKbUploading] = useState(false)
+  const [kbQuery, setKbQuery] = useState('')
+  const [kbResults, setKbResults] = useState(null)
+
+  const fetchKnowledgeDocs = async () => {
+    setKbLoading(true)
+    try {
+      const resp = await fetch('/api/knowledge')
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setKbDocs(d.docs || [])
+        setKbStats(d.stats || {})
+      }
+    } catch (e) {
+      console.error("Failed to fetch knowledge docs:", e)
+    }
+    setKbLoading(false)
+  }
+
+  const handleKbUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setKbUploading(true)
+    setMsg('')
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const resp = await fetch('/api/knowledge/upload', { method: 'POST', body: formData })
+      const d = await resp.json()
+      if (d.status === 'ok') {
+        setMsg(`文档入库成功！生成 ${d.chunk_count} 个知识块`)
+        fetchKnowledgeDocs()
+      } else {
+        setMsg('上传失败：' + d.message)
+      }
+    } catch {
+      setMsg('上传失败，请检查后端')
+    }
+    setKbUploading(false)
+    e.target.value = ''
+  }
+
+  const handleKbDelete = async (docId) => {
+    setSaving(true)
+    try {
+      await fetch(`/api/knowledge/${docId}`, { method: 'DELETE' })
+      fetchKnowledgeDocs()
+    } catch {}
+    setSaving(false)
+  }
+
+  const handleKbQuery = async () => {
+    if (!kbQuery.trim()) return
+    setSaving(true)
+    try {
+      const resp = await fetch('/api/knowledge/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: kbQuery, top_k: 5 })
+      })
+      const d = await resp.json()
+      if (d.status === 'ok') setKbResults(d.results || [])
+    } catch {}
+    setSaving(false)
+  }
 
   useEffect(() => {
     fetch('/api/settings/llm')
@@ -238,6 +309,7 @@ export default function SettingsPanel({ onClose }) {
     { id: 'quality', label: '质量门' },
     { id: 'prompt', label: 'Prompt 分层' },
     { id: 'cron', label: '📅 自治' },
+    { id: 'knowledge', label: '📚 知识库' },
   ]
 
   // Light theme styles
@@ -662,6 +734,107 @@ export default function SettingsPanel({ onClose }) {
                   {saving ? '正在处理...' : '创建常驻离线自治任务'}
                 </button>
               </div>
+            </div>
+          </>
+        )}
+
+        {/* ====== TAB: Knowledge Base (RAG) ====== */}
+        {tab === 'knowledge' && (
+          <>
+            <div style={{
+              padding: '10px 14px', borderRadius: 8, marginBottom: 20,
+              background: '#f0fdf4', border: '1px solid #bbf7d0',
+              fontSize: 13, color: '#166534', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <span>知识库已索引 <b>{kbStats.total_chunks || 0}</b> 个知识块，Agent 回复时自动检索注入</span>
+              <button onClick={fetchKnowledgeDocs} disabled={kbLoading} style={{
+                padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                background: '#16a34a', color: 'white', border: 'none', cursor: 'pointer',
+                opacity: kbLoading ? 0.6 : 1,
+              }}>{kbLoading ? '...' : '刷新'}</button>
+            </div>
+
+            {/* Upload */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={labelStyle}>上传文档 (支持 txt/md/pdf/docx/json/csv)</label>
+              <label style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px',
+                borderRadius: 10, border: '2px dashed #d1d5db', cursor: 'pointer',
+                background: kbUploading ? '#f3f4f6' : 'white', transition: 'all 0.2s',
+              }}>
+                <input type="file" accept=".txt,.md,.pdf,.docx,.json,.csv" onChange={handleKbUpload} style={{ display: 'none' }} />
+                <span style={{ fontSize: 13, color: '#6b7280' }}>
+                  {kbUploading ? '正在处理...' : '点击选择文件上传到知识库'}
+                </span>
+              </label>
+            </div>
+
+            {/* Document List */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={labelStyle}>已入库文档</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '25vh', overflowY: 'auto' }}>
+                {kbDocs.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: '16px 0', fontSize: 12 }}>
+                    暂无文档，请上传文件到知识库
+                  </div>
+                ) : (
+                  kbDocs.map((doc) => (
+                    <div key={doc.id} style={{
+                      padding: '10px 14px', borderRadius: 10, background: '#f9fafb',
+                      border: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: '#1f2937' }}>{doc.filename}</div>
+                        <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                          {doc.chunk_count} 块 | {doc.char_count} 字符
+                        </div>
+                      </div>
+                      <button onClick={() => handleKbDelete(doc.id)} disabled={saving} style={{
+                        padding: '4px 10px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
+                        background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626',
+                      }}>删除</button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Test Query */}
+            <div style={{ padding: '16px', borderRadius: 12, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+              <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>检索测试</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  value={kbQuery}
+                  onChange={(e) => setKbQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleKbQuery()}
+                  style={{ ...inputStyle, flex: 1 }}
+                  placeholder="输入查询语句测试知识库检索..."
+                />
+                <button onClick={handleKbQuery} disabled={saving || !kbQuery.trim()} style={{
+                  padding: '8px 16px', borderRadius: 8, background: '#4f46e5',
+                  border: 'none', color: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  opacity: saving ? 0.6 : 1,
+                }}>检索</button>
+              </div>
+              {kbResults && (
+                <div style={{ marginTop: 12, maxHeight: '20vh', overflowY: 'auto' }}>
+                  {kbResults.length === 0 ? (
+                    <div style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', padding: 8 }}>未找到相关内容</div>
+                  ) : (
+                    kbResults.map((r, i) => (
+                      <div key={i} style={{
+                        padding: '8px 10px', borderRadius: 6, background: 'white', border: '1px solid #e5e7eb',
+                        marginBottom: 6, fontSize: 12, color: '#374151',
+                      }}>
+                        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                          相关度: {r.score} | 来源: {r.metadata?.filename || '未知'}
+                        </div>
+                        {r.text?.slice(0, 200)}{r.text?.length > 200 ? '...' : ''}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           </>
         )}

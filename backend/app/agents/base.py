@@ -1,9 +1,12 @@
 import asyncio
 import random
+import logging
 from typing import AsyncGenerator
 
 from app.core.llm_client import llm_client
 from app.core.prompt_engine import prompt_engine
+
+logger = logging.getLogger("base_agent")
 
 # Maximum characters for conversation history context (~4000 tokens ≈ 12000 chars)
 _MAX_HISTORY_CHARS = 12000
@@ -67,6 +70,16 @@ class BaseAgent:
                 if text:
                     messages.append({"role": role, "content": text})
 
+        # RAG 知识库检索注入
+        rag_context = ""
+        try:
+            from app.core.rag_engine import rag_engine
+            rag_context = rag_engine.build_context_prompt(message)
+            if rag_context:
+                logger.debug(f"RAG: injecting context for query '{message[:50]}...'")
+        except Exception as e:
+            logger.debug(f"RAG: skipped ({e})")
+
         # 附件文件内容注入：将 extracted_text 追加到用户消息中
         enhanced_message = message
         if attachments:
@@ -79,6 +92,11 @@ class BaseAgent:
                     )
             if file_contexts:
                 enhanced_message = message + "\n\n" + "\n\n".join(file_contexts)
+
+        # 将 RAG 上下文作为 system 级参考，插在用户消息前
+        if rag_context:
+            messages.append({"role": "user", "content": rag_context})
+            messages.append({"role": "assistant", "content": "好的，我已了解参考资料，请继续提问。"})
 
         messages.append({"role": "user", "content": enhanced_message})
         return messages
