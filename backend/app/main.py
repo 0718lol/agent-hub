@@ -20,6 +20,7 @@ from app.core.quality_retry import evaluate_and_retry
 from app.core.prompt_engine import prompt_engine
 from app.routers import agents as agents_router
 from app.routers import uploads as uploads_router
+from app.routers.harness_handler import try_intercept_with_harness
 
 LLM_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "llm_config.json")
 from app.agents.pm import PMAgent
