@@ -1,0 +1,242 @@
+/* AgentCharacter — 通用角色渲染层
+   桌宠和虚拟办公室共用，仅通过 props 区分行为
+   位置 / 尺寸 / 是否可拖 都由外层容器控制 */
+
+.ac-root {
+  position: absolute;
+  user-select: none;
+  cursor: pointer;
+  pointer-events: auto;
+  transform-origin: center bottom;
+  transition: transform 0.3s ease;
+  --ac-theme: var(--accent, #6366f1);
+}
+
+.ac-sprite {
+  display: block;
+  overflow: visible;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.08));
+}
+
+/* ---- 默认 idle 动作：呼吸 + 偶尔眨眼 ---- */
+.ac-body {
+  transform-origin: 50% 100%;
+  animation: ac-breath 2.4s ease-in-out infinite;
+}
+
+.ac-head {
+  transform-origin: 50% 100%;
+  animation: ac-head-breath 2.4s ease-in-out infinite;
+}
+
+.ac-antenna {
+  transform-origin: 50px 18px;
+  animation: ac-antenna-sway 4s ease-in-out infinite;
+}
+
+.ac-eye {
+  transform-origin: center;
+  animation: ac-blink 5s ease-in-out infinite;
+}
+
+.ac-eye-right {
+  animation-delay: 0.05s;
+}
+
+@keyframes ac-breath {
+  0%, 100% { transform: scaleY(1); }
+  50%      { transform: scaleY(1.015); }
+}
+
+@keyframes ac-head-breath {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-1.5px); }
+}
+
+@keyframes ac-antenna-sway {
+  0%, 100% { transform: rotate(-6deg); }
+  50%      { transform: rotate(6deg); }
+}
+
+@keyframes ac-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  94%, 98%      { transform: scaleY(0.1); }
+}
+
+/* ---- work：敲键盘，手臂抖动 ---- */
+.ac-work .ac-arm-left {
+  transform-origin: 18px 65px;
+  animation: ac-arm-type 0.4s ease-in-out infinite;
+}
+
+.ac-work .ac-arm-right {
+  transform-origin: 82px 65px;
+  animation: ac-arm-type 0.4s ease-in-out infinite;
+  animation-delay: 0.2s;
+}
+
+.ac-work .ac-mouth {
+  d: path("M 44 52 L 56 52");
+}
+
+@keyframes ac-arm-type {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  50%      { transform: rotate(-8deg) translateY(-3px); }
+}
+
+/* ---- talk：嘴巴张合 + 微微点头 ---- */
+.ac-talk .ac-mouth {
+  animation: ac-mouth-talk 0.35s ease-in-out infinite;
+}
+
+.ac-talk .ac-head {
+  animation: ac-head-nod 0.7s ease-in-out infinite;
+}
+
+@keyframes ac-mouth-talk {
+  0%, 100% { d: path("M 44 52 Q 50 56 56 52"); }
+  50%      { d: path("M 44 52 Q 50 58 56 52"); transform: scaleY(1.3); }
+}
+
+@keyframes ac-head-nod {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2px); }
+}
+
+/* ---- sleep：眼睛闭起来，整体下沉 ---- */
+.ac-sleep .ac-eye {
+  animation: none;
+  transform: scaleY(0.1);
+}
+
+.ac-sleep .ac-mouth {
+  d: path("M 44 52 L 56 52");
+}
+
+.ac-sleep .ac-body,
+.ac-sleep .ac-head {
+  animation-duration: 4s;
+}
+
+.ac-zzz {
+  animation: ac-zzz-float 2s ease-in-out infinite;
+}
+
+@keyframes ac-zzz-float {
+  0%   { transform: translate(0, 0); opacity: 0; }
+  30%  { opacity: 1; }
+  100% { transform: translate(8px, -10px); opacity: 0; }
+}
+
+/* ---- walk：左右轻摆 ---- */
+.ac-walk {
+  animation: ac-walk-sway 0.6s ease-in-out infinite;
+}
+
+@keyframes ac-walk-sway {
+  0%, 100% { transform: scale(var(--ac-scale, 1)) rotate(-2deg); }
+  50%      { transform: scale(var(--ac-scale, 1)) rotate(2deg); }
+}
+
+/* ---- coffee / gym：留给 VirtualOffice 后续扩展 ---- */
+
+/* ---- 头顶气泡 ---- */
+.ac-bubble {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 220px;
+  padding: 8px 12px;
+  background: var(--bg-elevated, #ffffff);
+  color: var(--text-primary, #1d1d1f);
+  border: 1px solid var(--border, #e5e5ea);
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  animation: ac-bubble-in 0.25s ease-out;
+  z-index: 1;
+}
+
+.ac-bubble::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--bg-elevated, #ffffff);
+}
+
+.ac-bubble-text {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes ac-bubble-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ---- 右下角的 emoji 头像徽章（标识哪个 agent） ---- */
+.ac-avatar-badge {
+  position: absolute;
+  bottom: -4px;
+  right: -6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--bg-elevated, #ffffff);
+  border: 2px solid var(--ac-theme);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+/* ---- 名牌（hover 显示） ---- */
+.ac-nameplate {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 10px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+
+.ac-root:hover .ac-nameplate {
+  opacity: 1;
+}
+
+/* ---- hover 弹起 ---- */
+.ac-root:hover {
+  transform: scale(calc(var(--ac-scale, 1) * 1.05));
+}
+
+/* ---- 暗色主题适配 ---- */
+[data-theme="tech-dark"] .ac-bubble {
+  background: rgba(30, 30, 40, 0.95);
+  color: #f8fafc;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="tech-dark"] .ac-bubble::after {
+  border-top-color: rgba(30, 30, 40, 0.95);
+}
+
+[data-theme="tech-dark"] .ac-avatar-badge {
+  background: #2a2a35;
+}

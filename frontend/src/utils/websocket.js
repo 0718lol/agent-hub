@@ -60,6 +60,31 @@ class WSClient {
     }
   }
 
+  /**
+   * 强制发送：保证消息送达。如果 ws 未连接到 targetConvId，先连接再发。
+   * 比 send() 安全，不会因 disconnect 丢失队列。
+   */
+  sendTo(targetConvId, data) {
+    const json = JSON.stringify(data)
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.currentConvId === targetConvId) {
+      this.ws.send(json)
+      return
+    }
+    // 先连，连上后立刻发
+    const onceOpen = () => {
+      try { this.ws.send(json) } catch (e) { console.error('sendTo failed:', e) }
+      this.ws.removeEventListener('open', onceOpen)
+    }
+    this.connect(targetConvId)
+    if (this.ws) {
+      if (this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(json)
+      } else {
+        this.ws.addEventListener('open', onceOpen)
+      }
+    }
+  }
+
   onMessage(handler) {
     this.handlers.add(handler)
     return () => {
