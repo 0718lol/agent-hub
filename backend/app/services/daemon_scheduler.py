@@ -54,8 +54,12 @@ class DaemonScheduler:
         task_prompt = task["task_prompt"]
         interval = task["interval_seconds"]
 
+        # 配置安全阀阈值 (Guardrails Config)
+        MAX_EXECUTION_TIME_SECONDS = 90.0  # 单次任务最大运行时间（防死循环）
+        MAX_OUTPUT_CHARACTERS = 15000     # 单次最大生成文本长度（防刷爆 Token）
+
         update_cron_task_status(task_id, "running")
-        logger.info(f"Triggering background autonomous agent {agent_id} for cron job {task_id}...")
+        logger.info(f"Triggering background autonomous agent {agent_id} for cron job {task_id} with guardrails...")
 
         try:
             from app.main import AGENTS, _stream_agent_reply
@@ -66,22 +70,46 @@ class DaemonScheduler:
 
             stop_event = asyncio.Event()
 
-            assigned_agents, full_text = await _stream_agent_reply(
-                conversation_id=conversation_id,
-                agent=agent,
-                user_text=task_prompt,
-                stop_event=stop_event
-            )
+            # 1. 时间预算安全阀：使用 asyncio.wait_for 强制限制最大运行时间
+            try:
+                assigned_agents, full_text = await asyncio.wait_for(
+                    _stream_agent_reply(
+                        conversation_id=conversation_id,
+                        agent=agent,
+                        user_text=task_prompt,
+                        stop_event=stop_event
+                    ),
+                    timeout=MAX_EXECUTION_TIME_SECONDS
+                )
+            except asyncio.TimeoutError:
+                stop_event.set()  # 终止底层大模型流
+                raise TimeoutError(f"后台任务执行超出安全时长限制 ({MAX_EXECUTION_TIME_SECONDS}秒)，安全熔断阀已自动介入拦截，防止无限循环及费用失控！")
+
+            # 2. 文本长度/Token预算安全阀
+            if len(full_text) > MAX_OUTPUT_CHARACTERS:
+                logger.warning(f"Cron job {task_id} generated text too long ({len(full_text)} chars). Triggering truncation guardrail.")
+                from app.core.database import save_message
+                save_message(
+                    conversation_id,
+                    agent_id,
+                    {"text": f"⚠️ [安全警示]: 后台任务生成文本异常过长 ({len(full_text)} 字符)，已被熔断器截断，防止刷爆 Token 额度。"},
+                    streaming=False
+                )
 
             logger.info(f"Background cron job {task_id} successfully completed autonomous run.")
 
         except Exception as e:
             logger.error(f"Error running background cron job {task_id}: {e}")
             from app.core.database import save_message
+            
+            # 判断是否是我们的安全阀触发的异常
+            is_guardrail = "安全熔断" in str(e) or "TimeoutError" in type(e).__name__
+            badge_title = "🛑 [后台自治安全熔断]" if is_guardrail else "⚠️ [后台自治运行异常]"
+            
             save_message(
                 conversation_id,
                 agent_id,
-                {"text": f"\u26a0\ufe0f [\u540e\u53f0\u81ea\u6cbb\u8fd0\u884c\u5f02\u5e38]: {type(e).__name__}: {str(e)[:200]}"},
+                {"text": f"{badge_title}: {str(e)[:400]}"},
                 streaming=False
             )
 
