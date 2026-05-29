@@ -41,6 +41,53 @@ def _has_code_block(text: str) -> bool:
     return bool(_CODE_BLOCK_RE.search(text))
 
 
+async def _evaluate_code_with_sandbox(task: str, output: str, llm_client: Any) -> dict:
+    """
+    1. 进行静态分析和 LLM 逻辑评审打分。
+    2. 将代码放进 Sandbox 安全沙盒实际运行，如果运行报错或超时，强制扣分判定不及格，并返回运行时 Traceback 报错。
+    """
+    # 静态评估 + LLM 打分
+    report = await execute_automated_evaluation(task, output, llm_client)
+
+    from app.agents.auto_evaluator import extract_code_from_text
+    from app.core.sandbox import execute_code
+
+    code = await extract_code_from_text(output)
+    lang_match = re.search(r'```(\w+)', output)
+    language = lang_match.group(1).lower() if lang_match else "python"
+
+    runnable_langs = {"python", "py", "javascript", "js", "typescript", "ts", "shell", "sh", "bash"}
+    if language in runnable_langs:
+        # 在安全沙盒中真实执行它！
+        sandbox_res = await execute_code(code, language=language)
+
+        if sandbox_res.status != "success":
+            # 运行失败（有 Runtime 报错或超时）
+            penalty = 35
+            report["evaluation_passed"] = False
+            report["total_score"] = max(0, report["total_score"] - penalty)
+            report["sandbox_run"] = {
+                "passed": False,
+                "status": sandbox_res.status,
+                "stderr": sandbox_res.stderr,
+                "stdout": sandbox_res.stdout,
+                "exit_code": sandbox_res.exit_code,
+            }
+            err_msg = sandbox_res.stderr.strip() or f"未知运行错误 (exit: {sandbox_res.exit_code})"
+            report["summary"] = f"❌ 沙盒真实运行失败 ({sandbox_res.status})！\n运行时错误:\n{err_msg}\n\n" + report.get("summary", "")
+        else:
+            # 运行成功
+            report["sandbox_run"] = {
+                "passed": True,
+                "status": "success",
+                "stdout": sandbox_res.stdout,
+                "duration_ms": sandbox_res.duration_ms,
+            }
+            report["summary"] = f"✅ 沙盒运行成功 ({sandbox_res.duration_ms}ms)！\n" + report.get("summary", "")
+
+    return report
+
+
 async def evaluate_and_retry(
     conversation_id: str,
     agent,
@@ -111,8 +158,8 @@ async def evaluate_and_retry(
             "report": {"skipped_reason": "no_code_block"},
         }
 
-    # Step 1: 首次评估
-    report = await execute_automated_evaluation(task, raw_output, llm_client)
+    # Step 1: 首次评估 (包含沙盒运行检测)
+    report = await _evaluate_code_with_sandbox(task, raw_output, llm_client)
 
     # 广播评估状态
     await manager.broadcast(conversation_id, {
@@ -152,27 +199,29 @@ async def evaluate_and_retry(
             "conversation_id": conversation_id,
             "sender": agent_id,
             "content": {
-                "text": f"⚠️ 质量门禁未通过（{current_report['total_score']}分），正在反思修正...（{retry_count}/{MAX_RETRIES}）"
+                "text": f"⚠️ 质量与运行测试未通过（{current_report['total_score']}分），正在自动反思修正...（{retry_count}/{MAX_RETRIES}）"
             },
             "stream": False,
         })
 
-        # 构造反思 prompt：原始任务 + 扣分反馈
+        # 构造反思 prompt：原始任务 + 扣分反馈 (结合编译期 AST 错误与运行期报错)
         feedback_parts = []
         if current_report.get("static_check", {}).get("error"):
-            feedback_parts.append(f"语法错误: {current_report['static_check']['error']}")
+            feedback_parts.append(f"静态语法错误 (Syntax Error):\n{current_report['static_check']['error']}")
+        if current_report.get("sandbox_run", {}).get("stderr"):
+            feedback_parts.append(f"沙盒实际执行报错 (Runtime Error):\n{current_report['sandbox_run']['stderr']}")
         if current_report.get("llm_feedback"):
-            feedback_parts.append(f"LLM 审查意见: {current_report['llm_feedback']}")
+            feedback_parts.append(f"模型审查意见:\n{current_report['llm_feedback']}")
         if current_report.get("summary"):
-            feedback_parts.append(f"综合评语: {current_report['summary']}")
+            feedback_parts.append(f"综合评语:\n{current_report['summary']}")
 
-        feedback_text = "\n".join(feedback_parts)
+        feedback_text = "\n\n".join(feedback_parts)
 
         retry_prompt = (
-            f"{task}\n\n"
-            f"【质量门禁未通过 — 你的代码得了 {current_report['total_score']} 分（60分及格）】\n"
-            f"扣分原因如下：\n{feedback_text}\n\n"
-            f"请基于以上反馈修正你的代码，重新输出完整方案。"
+            f"你的原始任务是: {task}\n\n"
+            f"【🚨 自动化质量测试未通过 — 你的代码只得了 {current_report['total_score']} 分（60分及格）】\n"
+            f"测试不通过的原因及运行时错误如下：\n{feedback_text}\n\n"
+            f"请深入反思报错根源，修正你的代码，重新输出一份完美的、可直接运行的完整代码方案。"
         )
 
         # 流式重试生成
@@ -185,7 +234,7 @@ async def evaluate_and_retry(
                 "type": "message",
                 "conversation_id": conversation_id,
                 "sender": agent_id,
-                "content": {"text": "[反思修正中...] " + retry_output.strip()[:100]},
+                "content": {"text": "[自愈反思修正中...] " + retry_output.strip()[:100]},
                 "stream": True,
             })
 
@@ -204,8 +253,8 @@ async def evaluate_and_retry(
             }
             break
 
-        # 重新评估
-        current_report = await execute_automated_evaluation(task, current_output, llm_client)
+        # 重新评估 (包含沙盒运行检测)
+        current_report = await _evaluate_code_with_sandbox(task, current_output, llm_client)
 
         # 广播重试后的评估报告
         await manager.broadcast(conversation_id, {
@@ -232,8 +281,8 @@ async def evaluate_and_retry(
             "sender": agent_id,
             "content": {
                 "text": (
-                    f"⚠️ 质量门禁警告：该方案存在潜在缺陷（{current_report['total_score']}分），"
-                    f"已重试 {retry_count} 次仍未达标。以下方案交由您裁决。"
+                    f"⚠️ 自动修复警示：该方案经过自动反思重试后，运行测试仍存在报错（{current_report['total_score']}分）。"
+                    f"以下代码已强制放行，交由人类决策审查。"
                 )
             },
             "stream": False,
