@@ -27,3 +27,14 @@ backend/report.html
 
 # Personal scratch
 xmz/
+
+# 本地沙箱与测试运行产物
+agenthub_export/
+
+# 临时脑暴状态与设计残留
+.superpowers/
+
+# 所有日志文件
+*.log
+backend/*.log
+
