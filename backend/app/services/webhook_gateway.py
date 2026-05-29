@@ -212,12 +212,14 @@ class WebhookGatewayManager:
                 
             if checkpoint:
                 logger.info(f"[WebhookGateway] Resilient recovery triggered. Restoring state checkpoint from database for conversation {checkpoint['conversation_id']}")
-                # Locally import resumption helper from app.main to avoid circular imports
-                from app.main import resume_graph_from_checkpoint
+                # Locally import resumption helpers from app.main to avoid circular imports
+                from app.main import resume_graph_from_checkpoint, create_tracked_task
                 
-                # Run the resumption flow
-                import asyncio
-                asyncio.create_task(resume_graph_from_checkpoint(checkpoint["conversation_id"], action))
+                # Run the resumption flow with strong tracking to avoid GC premature collection
+                create_tracked_task(
+                    resume_graph_from_checkpoint(checkpoint["conversation_id"], action),
+                    name=f"webhook_resume_{checkpoint['conversation_id']}"
+                )
                 return True
         except Exception as db_ex:
             logger.error(f"[WebhookGateway] Resilient recovery failed to load checkpoint from database: {db_ex}")

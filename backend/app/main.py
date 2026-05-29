@@ -29,6 +29,16 @@ from app.routers import uploads as uploads_router
 LLM_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "llm_config.json")
 HIL_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "hil_config.json")
 
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+def create_tracked_task(coro, name: str = None) -> asyncio.Task:
+    """创建并强引用一个后台 asyncio 任务，防止被 GC 垃圾回收器神秘销毁"""
+    task = asyncio.create_task(coro, name=name)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
+
+
 def get_hil_settings() -> dict:
     try:
         if os.path.exists(HIL_CONFIG_PATH):
@@ -91,7 +101,7 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -146,27 +156,39 @@ _load_custom_agents()
 
 def _load_llm_config():
     try:
+        cfg = {}
         if os.path.exists(LLM_CONFIG_PATH):
             with open(LLM_CONFIG_PATH, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            llm_client.configure(
-                provider=cfg.get("provider", "openai"),
-                api_key=cfg.get("api_key", ""),
-                base_url=cfg.get("base_url", ""),
-                model=cfg.get("model", ""),
-                temperature=cfg.get("temperature"),
-                max_tokens=cfg.get("max_tokens"),
-            )
+        
+        provider = cfg.get("provider") or settings.llm_provider
+        api_key = cfg.get("api_key") or settings.llm_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        base_url = cfg.get("base_url") or settings.llm_base_url
+        model = cfg.get("model") or settings.llm_model
+        
+        llm_client.configure(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            temperature=cfg.get("temperature"),
+            max_tokens=cfg.get("max_tokens"),
+        )
     except Exception:
         pass
 
 
 def _save_llm_config():
     os.makedirs(os.path.dirname(LLM_CONFIG_PATH), exist_ok=True)
+    api_key_to_save = llm_client.api_key
+    # 如果 API Key 与系统默认 Pydantic Key 或者是系统环境变量 Key 相同，安全地对落盘值进行置空过滤
+    if api_key_to_save == settings.llm_api_key or api_key_to_save == os.environ.get("ANTHROPIC_API_KEY", ""):
+        api_key_to_save = ""
+        
     with open(LLM_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump({
             "provider": llm_client.provider,
-            "api_key": llm_client.api_key,
+            "api_key": api_key_to_save,
             "base_url": llm_client.base_url,
             "model": llm_client.model,
             "temperature": llm_client.temperature,
@@ -408,7 +430,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                         fut.set_result(reply_text)
                 else:
                     # Recovery path: trigger asynchronous recovery task
-                    asyncio.create_task(resume_graph_from_checkpoint(conversation_id, reply_text))
+                    create_tracked_task(resume_graph_from_checkpoint(conversation_id, reply_text), name=f"resume_graph_{conversation_id}")
                     
                 # We still want to save and broadcast this message to display it in the Chat UI as a user reply
                 save_message(conversation_id, sender, content, streaming=False)
@@ -1682,7 +1704,7 @@ async def start_benchmark():
             quality_gate=quality_gate,
         )
 
-    asyncio.create_task(_run())
+    create_tracked_task(_run(), name="benchmark_run")
     return {"status": "started", "message": "Benchmark 已启动，请轮询 /api/benchmark/status"}
 
 
@@ -1697,7 +1719,7 @@ async def benchmark_status():
 
 @app.post("/api/deploy/{conversation_id}")
 async def deploy_project(conversation_id: str):
-    asyncio.create_task(_simulate_deploy(conversation_id))
+    create_tracked_task(_simulate_deploy(conversation_id), name=f"deploy_{conversation_id}")
     return {"status": "started"}
 
 
@@ -1794,7 +1816,7 @@ async def run_cron_task_now(task_id: str):
         return {"status": "error", "message": "自治任务未找到"}
 
     from app.services.daemon_scheduler import daemon_scheduler
-    asyncio.create_task(daemon_scheduler._run_task(task))
+    create_tracked_task(daemon_scheduler._run_task(task), name=f"manual_cron_{task_id}")
     return {"status": "ok", "message": "已手动触发后台自治作业运行！"}
 
 
