@@ -1089,6 +1089,11 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
                         break
                     lang = code_match.group(1) or "html"
                     code = code_match.group(2).strip()
+                    
+                    # 自动拦截代码并注册为交付物 Artifact（异步线程存储，保障高吞吐）
+                    from app.core.database import save_artifact
+                    await asyncio.to_thread(save_artifact, conversation_id, agent.agent_id, lang, code)
+
                     await manager.broadcast(conversation_id, {
                         "type": "code",
                         "conversation_id": conversation_id,
@@ -1185,6 +1190,28 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
         if eval_result["final_output"]:
             raw_text = eval_result["final_output"]
             full_text = eval_result["final_output"].strip()
+
+        # 将质检评分和沙盒运行状态自动绑定并反写回刚才匹配的所有交付件 Artifacts 中
+        try:
+            report_data = eval_result.get("report") or {}
+            sandbox_data = report_data.get("sandbox_run") or {}
+            sandbox_status = "skipped"
+            sandbox_output = None
+            if sandbox_data:
+                sandbox_status = "success" if sandbox_data.get("status") == "success" else "failed"
+                sandbox_output = sandbox_data.get("stderr") or sandbox_data.get("stdout")
+
+            from app.core.database import update_latest_artifact_quality
+            await asyncio.to_thread(
+                update_latest_artifact_quality,
+                conversation_id,
+                agent.agent_id,
+                eval_result.get("total_score", 100),
+                sandbox_status,
+                sandbox_output
+            )
+        except Exception as e_art:
+            logger.error(f"Error updating artifact quality metrics: {e_art}")
 
     # Don't persist LLM error responses — they pollute history and cause the
     # model to parrot the error string back on the next turn.
@@ -1568,6 +1595,55 @@ async def sandbox_run(req: CodeRunRequest):
     # Record metrics
     metrics.record_sandbox(req.language, result.status, result.duration_ms)
     return result.to_dict()
+
+
+class CodeHealRequest(BaseModel):
+    code: str
+    language: str
+    error_output: str
+
+@app.post("/api/sandbox/heal")
+async def sandbox_heal(req: CodeHealRequest):
+    """Ask backend agent to heal broken code."""
+    from app.core.llm_client import llm_client
+    
+    prompt = f"""你是一个专门修复代码报错的 AI 专家。
+用户运行了一段 {req.language} 代码，但是失败了。
+请分析报错原因，并只输出修复后的完整可运行代码。
+不要任何多余的解释，必须包含在 ```{req.language} ... ``` 代码块中。
+
+### 原始代码
+```{req.language}
+{req.code}
+```
+
+### 报错信息
+```text
+{req.error_output}
+```
+"""
+    
+    response = ""
+    # 调用 LLM 生成修复代码
+    async for chunk in llm_client.chat_stream([{"role": "user", "content": prompt}], system="你只能输出修复后的代码块。"):
+        response += chunk
+        
+    import re
+    # 提取代码块
+    match = re.search(r"```[a-zA-Z]*\n(.*?)```", response, re.DOTALL)
+    healed_code = match.group(1).strip() if match else response.strip()
+    
+    return {"healed_code": healed_code}
+
+
+# ---- Artifacts API ----
+
+@app.get("/api/artifacts")
+async def list_artifacts(conversation_id: str = None, limit: int = 50):
+    """List generated code artifacts from SQLite DB."""
+    from app.core.database import get_artifacts
+    artifacts = await asyncio.to_thread(get_artifacts, conversation_id, limit)
+    return artifacts
 
 
 # ---- Metrics / Dashboard API ----

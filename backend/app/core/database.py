@@ -149,6 +149,20 @@ class PendingHil(SQLModel, table=True):
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
+class Artifact(SQLModel, table=True):
+    __tablename__ = "artifacts"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    conversation_id: str = Field(foreign_key="conversations.id")
+    agent_id: str
+    name: str
+    language: str
+    code: str
+    quality_score: Optional[int] = Field(default=None)
+    sandbox_status: str = Field(default="untested")
+    sandbox_output: Optional[str] = Field(default=None)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+
 # ============================================================
 # Database Initializers & Base Connection
 # ============================================================
@@ -205,6 +219,7 @@ def init_db():
 # ============================================================
 # Type-Safe CRUD Operations
 # ============================================================
+
 
 def save_message(conversation_id: str, sender: str, content: dict, streaming: bool = False):
     with Session(engine) as session:
@@ -542,7 +557,6 @@ def clear_event_items(conversation_id: str):
             session.delete(item)
         session.commit()
 
-
 # ---- HIL Checkpoints CRUD ----
 
 def save_hil_checkpoint(conversation_id: str, current_node: str, next_node: str,
@@ -616,3 +630,127 @@ def delete_hil_checkpoint(conversation_id: str):
         if item:
             session.delete(item)
             session.commit()
+
+# ---- Artifacts CRUD ----
+
+def save_artifact(conversation_id: str, agent_id: str, language: str, code: str, name: str = None) -> dict:
+    import re
+    if not name:
+        # Smart dynamic name generation based on language & content
+        if language.lower() in ("python", "py"):
+            class_match = re.search(r'class\s+(\w+)', code)
+            if class_match:
+                name = f"{class_match.group(1)}.py"
+            else:
+                def_match = re.search(r'def\s+(\w+)', code)
+                if def_match:
+                    name = f"{def_match.group(1)}()"
+                else:
+                    name = "script.py"
+        elif language.lower() in ("javascript", "js", "typescript", "ts", "jsx", "tsx"):
+            component_match = re.search(r'function\s+(\w+)|class\s+(\w+)|const\s+(\w+)\s*=\s*\(\)\s*=>', code)
+            if component_match:
+                name_val = next(g for g in component_match.groups() if g is not None)
+                name = f"{name_val}.jsx"
+            else:
+                name = "component.jsx"
+        elif language.lower() in ("html", "htm"):
+            title_match = re.search(r'<title>(.*?)</title>', code, re.IGNORECASE)
+            if title_match:
+                name = f"{title_match.group(1)}.html"
+            else:
+                name = "index.html"
+        else:
+            name = f"code_snippet.{language}"
+
+    with Session(engine) as session:
+        art = Artifact(
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            name=name,
+            language=language,
+            code=code
+        )
+        session.add(art)
+        session.commit()
+        session.refresh(art)
+        return art.model_dump()
+
+
+def get_artifacts(conversation_id: str = None, limit: int = 50) -> list[dict]:
+    with Session(engine) as session:
+        if conversation_id:
+            statement = select(Artifact).where(Artifact.conversation_id == conversation_id).order_by(Artifact.created_at.desc()).limit(limit)
+        else:
+            statement = select(Artifact).order_by(Artifact.created_at.desc()).limit(limit)
+        results = session.exec(statement).all()
+        return [row.model_dump() for row in results]
+
+
+def update_latest_artifact_quality(conversation_id: str, agent_id: str, score: int, sandbox_status: str, sandbox_output: str = None):
+    with Session(engine) as session:
+        statement = select(Artifact).where(
+            Artifact.conversation_id == conversation_id,
+            Artifact.agent_id == agent_id,
+            Artifact.quality_score == None
+        )
+        results = session.exec(statement).all()
+        for art in results:
+            art.quality_score = score
+            art.sandbox_status = sandbox_status
+            art.sandbox_output = sandbox_output
+            session.add(art)
+        session.commit()
+
+
+def get_artifacts_grouped(conversation_id: str = None, limit: int = 50) -> list[dict]:
+    with Session(engine) as session:
+        if conversation_id:
+            statement = select(Artifact).where(Artifact.conversation_id == conversation_id).order_by(Artifact.created_at.asc())
+        else:
+            statement = select(Artifact).order_by(Artifact.created_at.asc())
+        rows = session.exec(statement).all()
+    
+    grouped = {}
+    for row in rows:
+        key = (row.conversation_id, row.name)
+        if key not in grouped:
+            grouped[key] = []
+        grouped[key].append(row.model_dump())
+        
+    result = []
+    for (conv_id, name), versions in grouped.items():
+        latest = versions[-1]
+        
+        history = []
+        for idx, v in enumerate(versions):
+            v_num = f"v{idx + 1}"
+            history.append({
+                "version_label": v_num,
+                "id": v["id"],
+                "agent_id": v["agent_id"],
+                "created_at": v["created_at"],
+                "code": v["code"],
+                "quality_score": v["quality_score"],
+                "sandbox_status": v["sandbox_status"],
+                "sandbox_output": v["sandbox_output"]
+            })
+            
+        result.append({
+            "name": name,
+            "conversation_id": conv_id,
+            "agent_id": latest["agent_id"],
+            "language": latest["language"],
+            "code": latest["code"],
+            "quality_score": latest["quality_score"],
+            "sandbox_status": latest["sandbox_status"],
+            "sandbox_output": latest["sandbox_output"],
+            "created_at": latest["created_at"],
+            "latest_id": latest["id"],
+            "total_versions": len(versions),
+            "history": history[::-1]  # latest version first
+        })
+        
+    result.sort(key=lambda x: x["created_at"], reverse=True)
+    return result[:limit]
+
