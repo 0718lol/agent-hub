@@ -1,0 +1,188 @@
+/* VirtualOffice — 多 Agent 可视化工作室 */
+
+.virtual-office-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: vo-fade-in 0.2s ease-out;
+}
+
+@keyframes vo-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.virtual-office-panel {
+  background: var(--bg-elevated, #ffffff);
+  border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: vo-pop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes vo-pop-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.vo-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border, #e5e5ea);
+  background: var(--bg-subtle, #f5f5f7);
+}
+
+.vo-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #1d1d1f);
+}
+
+.vo-stats {
+  font-size: 12px;
+  color: var(--text-secondary, #86868b);
+  margin-left: auto;
+}
+
+.vo-stats b {
+  color: var(--accent, #6366f1);
+  font-weight: 600;
+  margin: 0 2px;
+}
+
+.vo-close {
+  background: none;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-secondary, #86868b);
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.vo-close:hover {
+  color: var(--text-primary, #1d1d1f);
+}
+
+/* ---- 主舞台：办公室场景 ---- */
+.vo-stage {
+  position: relative;
+  background: linear-gradient(180deg, #fafafa 0%, #f0f0f3 100%);
+  overflow: hidden;
+}
+
+[data-theme="tech-dark"] .vo-stage {
+  background: linear-gradient(180deg, #1a1a22 0%, #2a2a35 100%);
+}
+
+/* ---- 区域分割 ---- */
+.vo-zone {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.vo-zone-work {
+  top: 60px;
+  height: 200px;
+  border-bottom: 1px dashed var(--border, #d1d1d6);
+}
+
+.vo-zone-rest {
+  top: 260px;
+  height: 200px;
+}
+
+.vo-zone-label {
+  position: absolute;
+  top: 8px;
+  left: 16px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-secondary, #86868b);
+  opacity: 0.6;
+  text-transform: uppercase;
+}
+
+/* ---- 工位桌面（每个工位下方一条小桌） ---- */
+.vo-desk {
+  position: absolute;
+  width: 92px;
+  height: 12px;
+  background: linear-gradient(180deg, #d4d4d8 0%, #a1a1aa 100%);
+  border-radius: 4px 4px 0 0;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="tech-dark"] .vo-desk {
+  background: linear-gradient(180deg, #3a3a4a 0%, #25252f 100%);
+}
+
+/* ---- 休息区家具：emoji 大字符 ---- */
+.vo-furniture {
+  position: absolute;
+  font-size: 24px;
+  line-height: 1;
+  opacity: 0.7;
+  pointer-events: none;
+  user-select: none;
+}
+
+.vo-furniture-sofa  { font-size: 28px; }
+.vo-furniture-coffee { font-size: 22px; }
+.vo-furniture-gym    { font-size: 24px; }
+.vo-furniture-walk   { font-size: 24px; }
+
+/* ---- 工位/休息位通用 ---- */
+.office-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.office-slot-label {
+  font-size: 10px;
+  color: var(--text-secondary, #86868b);
+  opacity: 0;
+  margin-top: 2px;
+}
+
+.office-slot:hover .office-slot-label {
+  opacity: 1;
+}
+
+.office-slot-highlight {
+  filter: drop-shadow(0 0 8px var(--accent, #6366f1));
+}
+
+/* ---- 底部提示 ---- */
+.vo-footer {
+  padding: 10px 20px;
+  border-top: 1px solid var(--border, #e5e5ea);
+  background: var(--bg-subtle, #f5f5f7);
+}
+
+.vo-hint {
+  font-size: 11px;
+  color: var(--text-secondary, #86868b);
+}
+
+[data-theme="tech-dark"] .virtual-office-panel {
+  background: rgba(20, 20, 28, 0.98);
+}
+
+[data-theme="tech-dark"] .vo-header,
+[data-theme="tech-dark"] .vo-footer {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+}

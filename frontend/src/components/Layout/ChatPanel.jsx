@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react'
-import { MessageSquare, Code2, GitBranch, LayoutList, Menu, X, Search } from 'lucide-react'
+import { MessageSquare, Code2, GitBranch, LayoutList, Menu, X, Search, Building2 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -311,6 +311,14 @@ export default function ChatPanel({ onToggleSidebar }) {
           {typingAgentIds.length > 0 && !activeTypingAgent && (
             <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
           )}
+          <button
+            className="header-icon-btn"
+            onClick={() => window.dispatchEvent(new Event('agenthub:toggle-office'))}
+            title="虚拟办公室"
+          >
+            <Building2 size={20} />
+            <span className="icon-tooltip">虚拟办公室</span>
+          </button>
           <button
             className="header-icon-btn"
             onClick={() => toggleSlidePanel('search')}
