@@ -1,6 +1,14 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+import { Sun, Moon, Trash2 } from 'lucide-react'
+import { useThemeStore } from '../../stores/themeStore'
+import { useChatStore } from '../../stores/chatStore'
 
 export default function SettingsPanel({ onClose }) {
+  const theme = useThemeStore((s) => s.theme)
+  const toggleTheme = useThemeStore((s) => s.toggleTheme)
+  const activeId = useChatStore((s) => s.activeConversationId)
+  const clearMessages = useChatStore((s) => s.clearMessages)
+
   const [tab, setTab] = useState('llm') // 'llm' | 'quality' | 'prompt'
   const [provider, setProvider] = useState('openai')
   const [apiKey, setApiKey] = useState('')
@@ -11,6 +19,10 @@ export default function SettingsPanel({ onClose }) {
   const [configured, setConfigured] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
+  const [activeProvider, setActiveProvider] = useState('')
+  const [activeModel, setActiveModel] = useState('')
+  const [highlightPresets, setHighlightPresets] = useState(false)
+  const presetsRef = useRef(null)
 
   // Ollama integration states
   const [ollamaModels, setOllamaModels] = useState([])
@@ -69,6 +81,8 @@ export default function SettingsPanel({ onClose }) {
         setTemperature(d.temperature ?? 0.5)
         setMaxTokens(d.max_tokens ?? 8192)
         setConfigured(d.configured)
+        setActiveProvider(d.provider || '')
+        setActiveModel(d.model || '')
       })
       .catch(() => {})
     fetch('/api/settings/quality')
@@ -98,7 +112,11 @@ export default function SettingsPanel({ onClose }) {
       const d = await resp.json()
       setConfigured(d.configured)
       setMsg(d.configured ? '配置成功！Agent 现在会使用真实 LLM 回复' : '请填写完整信息')
-      if (d.configured && provider !== 'ollama') setApiKey('')
+      if (d.configured) {
+        setActiveProvider(provider)
+        setActiveModel(model)
+        if (provider !== 'ollama') setApiKey('')
+      }
     } catch {
       setMsg('保存失败，请检查后端是否运行')
     }
@@ -145,6 +163,49 @@ export default function SettingsPanel({ onClose }) {
     setProvider(p.provider)
     setBaseUrl(p.base_url)
     setModel(p.model)
+  }
+
+  const providerLabels = {
+    ollama: 'Ollama 本地',
+    openai: 'OpenAI 兼容',
+    anthropic: 'Anthropic',
+  }
+
+  const getProviderDisplayName = (prov, mdl) => {
+    const match = presets.find((p) => p.base_url === baseUrl && p.provider === prov)
+    if (match) return `${match.label} (${mdl || match.model})`
+    return `${providerLabels[prov] || prov} (${mdl || '...'})`
+  }
+
+  const handleDisconnect = async () => {
+    setSaving(true)
+    try {
+      await fetch('/api/settings/llm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'openai', api_key: '', base_url: '', model: '' }),
+      })
+      setConfigured(false)
+      setActiveProvider('')
+      setActiveModel('')
+      setProvider('openai')
+      setBaseUrl('')
+      setModel('')
+      setApiKey('')
+      setMsg('已断开 LLM 连接，Agent 将使用 Mock 回复')
+    } catch {
+      setMsg('断开失败')
+    }
+    setSaving(false)
+  }
+
+  const handleClearHistory = async () => {
+    if (!activeId) return
+    if (!window.confirm('确定要清空当前会话的全部历史消息吗？此操作不可撤销。')) return
+    try {
+      await fetch(`/api/conversations/${activeId}/messages`, { method: 'DELETE' })
+      clearMessages(activeId)
+    } catch {}
   }
 
   const tabs = [
@@ -205,12 +266,13 @@ export default function SettingsPanel({ onClose }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       zIndex: 1000,
     }} onClick={onClose}>
-      <div style={{
+      <div className="settings-modal-scroll" style={{
         width: 500, maxHeight: '88vh', overflow: 'auto',
         background: 'white',
         border: '1px solid #e5e7eb',
         borderRadius: 16, padding: 28,
         boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+        scrollbarWidth: 'none', msOverflowStyle: 'none',
       }} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -219,6 +281,52 @@ export default function SettingsPanel({ onClose }) {
             background: 'none', border: 'none', color: '#9ca3af',
             fontSize: 20, cursor: 'pointer', padding: '0 4px',
           }}>×</button>
+        </div>
+
+        {/* 常规设置：主题切换 + 清空历史 */}
+        <div style={{ marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* 主题切换 */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '12px 14px', borderRadius: 10,
+            background: '#f9fafb', border: '1px solid #e5e7eb',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {theme === 'light' ? <Sun size={16} color="#f59e0b" /> : <Moon size={16} color="#6366f1" />}
+              <div>
+                <div style={{ fontSize: 14, color: '#1f2937', fontWeight: 500 }}>界面主题</div>
+                <div style={{ fontSize: 12, color: '#6b7280' }}>
+                  {theme === 'light' ? '浅色模式' : '深色模式'}
+                </div>
+              </div>
+            </div>
+            <ToggleSwitch checked={theme === 'dark'} onChange={() => toggleTheme()} />
+          </div>
+
+          {/* 清空历史 */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '12px 14px', borderRadius: 10,
+            background: '#f9fafb', border: '1px solid #e5e7eb',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Trash2 size={16} color="#ef4444" />
+              <div>
+                <div style={{ fontSize: 14, color: '#1f2937', fontWeight: 500 }}>清空当前会话历史</div>
+                <div style={{ fontSize: 12, color: '#6b7280' }}>删除所有消息，不可恢复</div>
+              </div>
+            </div>
+            <button
+              onClick={handleClearHistory}
+              style={{
+                padding: '6px 14px', borderRadius: 8, fontSize: 12,
+                background: '#fef2f2', border: '1px solid #fecaca',
+                color: '#ef4444', cursor: 'pointer', fontWeight: 500,
+              }}
+            >
+              清空
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -242,12 +350,43 @@ export default function SettingsPanel({ onClose }) {
               background: configured ? '#ecfdf5' : '#fffbeb',
               border: `1px solid ${configured ? '#a7f3d0' : '#fde68a'}`,
               fontSize: 13, color: configured ? '#059669' : '#d97706',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
             }}>
-              {configured ? '✅ 已连接 LLM — Agent 使用真实模型回复' : '⚠️ 未配置 — Agent 使用 Mock 回复'}
+              <span style={{ flex: 1, minWidth: 0 }}>
+                {configured
+                  ? `✅ 已连接 ${getProviderDisplayName(activeProvider, activeModel)}`
+                  : '⚠️ 未配置 — Agent 使用 Mock 回复'}
+              </span>
+              {configured && (
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button onClick={handleDisconnect} disabled={saving} style={{
+                    padding: '4px 10px', borderRadius: 6, fontSize: 11,
+                    background: 'white', border: '1px solid #a7f3d0',
+                    color: '#059669', cursor: 'pointer', fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                  }}>断开接入</button>
+                  <button onClick={() => {
+                    setHighlightPresets(true)
+                    presetsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                    setTimeout(() => setHighlightPresets(false), 1500)
+                  }} style={{
+                    padding: '4px 10px', borderRadius: 6, fontSize: 11,
+                    background: '#059669', border: '1px solid #059669',
+                    color: 'white', cursor: 'pointer', fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                  }}>切换 LLM</button>
+                </div>
+              )}
             </div>
 
             {/* Presets */}
-            <div style={{ marginBottom: 20 }}>
+            <div ref={presetsRef} style={{
+              marginBottom: 20, padding: highlightPresets ? '8px' : 0,
+              borderRadius: 8,
+              background: highlightPresets ? '#ecfdf5' : 'transparent',
+              border: highlightPresets ? '1px solid #a7f3d0' : '1px solid transparent',
+              transition: 'all 0.3s',
+            }}>
               <label style={labelStyle}>快速选择</label>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {presets.map((p) => (

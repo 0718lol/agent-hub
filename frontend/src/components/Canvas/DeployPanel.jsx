@@ -55,27 +55,25 @@ export default function DeployPanel() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 20 }}>🚀</span>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>云端部署控制中心</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>云端部署控制中心</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>提供一键上线及高可靠云原生环境交付</div>
           </div>
         </div>
         <button
           onClick={handleDeploy}
           disabled={isDeploying || deployStatus === 'success'}
-          className={`deploy-main-btn ${isDeploying ? 'deploying' : ''}`}
           style={{
             padding: '8px 16px',
             background: deployStatus === 'success'
-              ? 'rgba(16, 185, 129, 0.15)'
-              : 'linear-gradient(135deg, var(--accent), var(--cyan))',
-            color: deployStatus === 'success' ? 'var(--green)' : 'white',
+              ? 'var(--accent-bg)'
+              : 'var(--accent)',
+            color: deployStatus === 'success' ? 'var(--green)' : '#fff',
             border: deployStatus === 'success' ? '1px solid var(--green)' : 'none',
             borderRadius: 8,
             fontSize: 13,
             fontWeight: 600,
             cursor: (isDeploying || deployStatus === 'success') ? 'not-allowed' : 'pointer',
             transition: 'all 0.3s ease',
-            boxShadow: deployStatus === 'success' ? 'none' : '0 4px 14px rgba(99, 102, 241, 0.3)',
             display: 'flex',
             alignItems: 'center',
             gap: 8
@@ -100,13 +98,12 @@ export default function DeployPanel() {
       {/* Terminal View Container */}
       <div style={{
         flex: 1,
-        background: '#090d16',
+        background: 'var(--code-bg)',
         borderRadius: 12,
-        border: '1px solid rgba(255, 255, 255, 0.05)',
+        border: '1px solid var(--border)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
         position: 'relative',
         height: 'calc(100vh - 250px)'
       }}>
@@ -116,14 +113,14 @@ export default function DeployPanel() {
           alignItems: 'center',
           gap: 6,
           padding: '10px 16px',
-          background: '#0e1524',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+          background: 'var(--bg-tertiary)',
+          borderBottom: '1px solid var(--border)',
           flexShrink: 0
         }}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#ef4444', display: 'inline-block' }} />
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#f59e0b', display: 'inline-block' }} />
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
-          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace', marginLeft: 12, letterSpacing: 0.5 }}>
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--red)', display: 'inline-block' }} />
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--orange)', display: 'inline-block' }} />
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--green)', display: 'inline-block' }} />
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginLeft: 12, letterSpacing: 0.5 }}>
             CLOUD_TERMINAL@AGENTS_SERVER
           </span>
         </div>
@@ -133,10 +130,10 @@ export default function DeployPanel() {
           flex: 1,
           padding: 20,
           overflowY: 'auto',
-          fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+          fontFamily: 'var(--font-mono)',
           fontSize: 12,
           lineHeight: 1.8,
-          color: '#38bdf8'
+          color: 'var(--accent)'
         }}>
           {deployLogs.length === 0 ? (
             <div style={{ color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8 }}>
@@ -149,14 +146,14 @@ export default function DeployPanel() {
               const isInfo = log.includes('编译') || log.includes('运行') || log.includes('Docker')
               return (
                 <div key={index} style={{
-                  color: isSuccess ? '#10b981' : isInfo ? '#38bdf8' : '#94a3b8',
+                  color: isSuccess ? 'var(--green)' : isInfo ? 'var(--accent)' : 'var(--text-secondary)',
                   marginBottom: 6,
                   wordBreak: 'break-word',
                   display: 'flex',
                   alignItems: 'flex-start',
                   gap: 8
                 }}>
-                  <span style={{ color: 'rgba(255, 255, 255, 0.2)', userSelect: 'none' }}>
+                  <span style={{ color: 'var(--text-muted)', userSelect: 'none', opacity: 0.5 }}>
                     [{new Date().toLocaleTimeString()}]
                   </span>
                   <span>{log}</span>
@@ -178,7 +175,8 @@ export default function DeployPanel() {
           <div style={{
             position: 'absolute',
             top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(9, 13, 22, 0.85)',
+            background: 'var(--bg-primary)',
+            opacity: 0.92,
             backdropFilter: 'blur(12px)',
             display: 'flex',
             alignItems: 'center',
@@ -186,12 +184,12 @@ export default function DeployPanel() {
             padding: 24,
             animation: 'fadeIn 0.4s ease-out'
           }}>
-            <div className="deploy-success-card" style={{
+            <div style={{
               width: '100%',
               maxWidth: 420,
-              background: 'rgba(30, 41, 59, 0.7)',
-              border: '1px solid rgba(16, 185, 129, 0.25)',
-              boxShadow: '0 8px 32px rgba(16, 185, 129, 0.15)',
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              boxShadow: 'var(--shadow-lg)',
               borderRadius: 16,
               padding: 28,
               textAlign: 'center',
@@ -202,15 +200,14 @@ export default function DeployPanel() {
             }}>
               <div style={{
                 width: 64, height: 64, borderRadius: '50%',
-                background: 'rgba(16, 185, 129, 0.15)',
+                background: 'var(--accent-bg)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 0 20px rgba(16, 185, 129, 0.3)',
                 animation: 'pulseGlow 2s infinite'
               }}>
-                <span style={{ fontSize: 32, color: '#10b981' }}>✓</span>
+                <span style={{ fontSize: 32, color: 'var(--green)' }}>✓</span>
               </div>
               <div>
-                <h3 style={{ fontSize: 18, fontWeight: 700, color: '#f8fafc', marginBottom: 4 }}>部署发布成功！</h3>
+                <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>部署发布成功！</h3>
                 <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>项目已在全球分布式 CDN 边缘节点上线。</p>
               </div>
 
@@ -218,12 +215,12 @@ export default function DeployPanel() {
               <div style={{
                 width: '100%',
                 padding: '12px 14px',
-                background: 'rgba(15, 23, 42, 0.6)',
+                background: 'var(--bg-tertiary)',
                 border: '1px solid var(--border)',
                 borderRadius: 10,
                 fontSize: 12,
-                fontFamily: 'monospace',
-                color: '#22d3ee',
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--cyan)',
                 wordBreak: 'break-all',
                 textAlign: 'left',
                 display: 'flex',
@@ -234,7 +231,7 @@ export default function DeployPanel() {
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                   {deployedUrl}
                 </span>
-                <span style={{ fontSize: 10, background: 'rgba(34, 211, 238, 0.15)', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>
+                <span style={{ fontSize: 10, background: 'var(--accent-bg)', padding: '2px 6px', borderRadius: 4, flexShrink: 0, color: 'var(--green)' }}>
                   Active
                 </span>
               </div>
@@ -245,13 +242,12 @@ export default function DeployPanel() {
                   style={{
                     flex: 1,
                     padding: '10px 16px',
-                    background: 'linear-gradient(135deg, #10b981, #059669)',
-                    color: 'white',
+                    background: 'var(--green)',
+                    color: '#fff',
                     border: 'none',
                     fontWeight: 600,
                     fontSize: 13,
                     borderRadius: 8,
-                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
                     transition: 'all 0.2s',
                     cursor: 'pointer'
                   }}
@@ -263,7 +259,7 @@ export default function DeployPanel() {
                   style={{
                     flex: 1,
                     padding: '10px 16px',
-                    background: 'rgba(255, 255, 255, 0.05)',
+                    background: 'var(--bg-tertiary)',
                     border: '1px solid var(--border)',
                     color: 'var(--text-primary)',
                     fontWeight: 600,

@@ -1,11 +1,12 @@
 import React from 'react'
-import { Terminal, ExternalLink, ChevronRight } from 'lucide-react'
+import { Terminal, ExternalLink, ChevronRight, X } from 'lucide-react'
 import { useCanvasStore } from '../../stores/canvasStore'
 
 export default function InlineDeployCard() {
   const logs = useCanvasStore((s) => s.deployLogs)
   const status = useCanvasStore((s) => s.deployStatus)
   const url = useCanvasStore((s) => s.deployedUrl)
+  const resetDeploy = useCanvasStore((s) => s.resetDeploy)
 
   if (status === 'idle') return null
 
@@ -20,6 +21,18 @@ export default function InlineDeployCard() {
         }}>
           {status === 'running' ? '部署中...' : status === 'success' ? '部署成功' : '部署失败'}
         </span>
+        {status !== 'running' && (
+          <button
+            onClick={(e) => { e.stopPropagation(); resetDeploy() }}
+            title="关闭"
+            style={{
+              background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
+              padding: 2, display: 'flex', alignItems: 'center', marginRight: 4,
+            }}
+          >
+            <X size={14} />
+          </button>
+        )}
         <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
       </summary>
       <div style={{

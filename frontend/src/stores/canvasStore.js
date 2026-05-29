@@ -48,6 +48,8 @@ export const useCanvasStore = create((set) => ({
     set({ isDeploying: false, deployStatus: 'success', deployedUrl: url }),
   failDeploy: () =>
     set({ isDeploying: false, deployStatus: 'failed' }),
+  resetDeploy: () =>
+    set({ isDeploying: false, deployStatus: 'idle', deployLogs: [], deployedUrl: '' }),
 
   tasks: [
     { id: 1, title: '设计页面 UI', assignee: 'agent_designer', status: 'todo' },

@@ -2,17 +2,23 @@ import React, { useState, useMemo, useCallback } from 'react'
 import { Plus, Settings, Pin, MoreHorizontal, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
+import { useTabStore } from '../../stores/tabStore'
 import SettingsPanel from './SettingsPanel'
 import IconAvatar from '../IconAvatar'
 import AgentSelector from '../Chat/AgentSelector'
 
 export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
   const conversations = useChatStore((s) => s.conversations)
-  const activeId = useChatStore((s) => s.activeConversationId)
-  const setActive = useChatStore((s) => s.setActiveConversation)
   const togglePin = useChatStore((s) => s.togglePin)
   const archiveConversation = useChatStore((s) => s.archiveConversation)
   const reorderConversations = useChatStore((s) => s.reorderConversations)
+  const typingAgents = useChatStore((s) => s.typingAgents)
+
+  const openTab = useTabStore((s) => s.openTab)
+  const activeTabId = useTabStore((s) => s.activeTabId)
+  const openTabs = useTabStore((s) => s.openTabs)
+  const activeTab = openTabs.find((t) => t.id === activeTabId)
+  const activeId = activeTab?.convId || 'conv_pm'
 
   const [collapsed, setCollapsed] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -20,15 +26,21 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
   const [contextMenu, setContextMenu] = useState(null)
   const [dragIndex, setDragIndex] = useState(null)
 
-  // Sort: pinned first, then by updatedAt desc. Filter archived.
+  // 所有已打开标签的 convId 集合
+  const openConvIds = useMemo(() => new Set(openTabs.map((t) => t.convId)), [openTabs])
+
+  // Sort: opened tabs first, then pinned, then by updatedAt desc. Filter archived.
   const sorted = useMemo(() => {
     return conversations
       .filter((c) => !c.archived)
       .sort((a, b) => {
+        const aOpen = openConvIds.has(a.id)
+        const bOpen = openConvIds.has(b.id)
+        if (aOpen !== bOpen) return aOpen ? -1 : 1
         if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
         return (b.updatedAt || 0) - (a.updatedAt || 0)
       })
-  }, [conversations])
+  }, [conversations, openConvIds])
 
   const handleContextMenu = useCallback((e, convId) => {
     e.preventDefault()
@@ -90,8 +102,8 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
           {sorted.map((conv, i) => (
             <div
               key={conv.id}
-              className={`conversation-item ${activeId === conv.id ? 'active' : ''}`}
-              onClick={() => setActive(conv.id)}
+              className={`conversation-item ${openConvIds.has(conv.id) ? 'active' : ''}`}
+              onClick={() => { openTab(conv.id, conv.name, conv.agentId) }}
               onContextMenu={(e) => handleContextMenu(e, conv.id)}
               draggable={!collapsed}
               onDragStart={(e) => handleDragStart(e, i)}
@@ -111,6 +123,20 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
                 <>
                   <div className="conv-info">
                     <div className={`conv-name ${conv.unread ? 'unread' : ''}`}>{conv.name}</div>
+                    {activeId === conv.id && (
+                      <div className="conv-status">
+                        {(typingAgents[conv.id]?.size > 0) ? (
+                          <span className="conv-status-typing">
+                            正在输入
+                            <span className="typing-dots">
+                              <span /><span /><span />
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="conv-status-idle">空闲中</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <span className="conv-time">{formatTime(conv.updatedAt)}</span>
                   {conv.unread && <span className="unread-dot" />}
@@ -196,7 +222,7 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
               unread: false,
               updatedAt: Date.now(),
             })
-            setActive(convId)
+            openTab(convId, agent?.name || '新对话', agentId)
           }}
           onClose={() => setShowNewDialog(false)}
         />
