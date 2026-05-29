@@ -933,6 +933,28 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
             raw_text = eval_result["final_output"]
             full_text = eval_result["final_output"].strip()
 
+        # 将质检评分和沙盒运行状态自动绑定并反写回刚才匹配的所有交付件 Artifacts 中
+        try:
+            report_data = eval_result.get("report") or {}
+            sandbox_data = report_data.get("sandbox_run") or {}
+            sandbox_status = "skipped"
+            sandbox_output = None
+            if sandbox_data:
+                sandbox_status = "success" if sandbox_data.get("status") == "success" else "failed"
+                sandbox_output = sandbox_data.get("stderr") or sandbox_data.get("stdout")
+
+            from app.core.database import update_latest_artifact_quality
+            await asyncio.to_thread(
+                update_latest_artifact_quality,
+                conversation_id,
+                agent.agent_id,
+                eval_result.get("total_score", 100),
+                sandbox_status,
+                sandbox_output
+            )
+        except Exception as e_art:
+            logger.error(f"Error updating artifact quality metrics: {e_art}")
+
     # Don't persist LLM error responses — they pollute history and cause the
     # model to parrot the error string back on the next turn.
     is_llm_error = ("[LLM Error" in raw_text) or ("[LLM 调用出错" in raw_text) or ("[Agent 回复出错" in raw_text)

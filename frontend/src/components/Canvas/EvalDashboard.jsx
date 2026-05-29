@@ -146,8 +146,32 @@ export default function EvalDashboard() {
                       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={art.name}>
                         {art.name}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
                         由 {art.agent_id.replace('agent_', '')} 交付
+                      </div>
+                      <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+                        {art.quality_score !== null && (
+                          <span style={{
+                            fontSize: 10, padding: '1px 5px', borderRadius: 4,
+                            background: art.quality_score >= 80 ? 'rgba(16,185,129,0.06)' : art.quality_score >= 60 ? 'rgba(245,158,11,0.06)' : 'rgba(239,68,68,0.06)',
+                            color: art.quality_score >= 80 ? '#10b981' : art.quality_score >= 60 ? '#f59e0b' : '#ef4444',
+                            border: art.quality_score >= 80 ? '1px solid rgba(16,185,129,0.15)' : art.quality_score >= 60 ? '1px solid rgba(245,158,11,0.15)' : '1px solid rgba(239,68,68,0.15)',
+                            fontWeight: 500
+                          }}>
+                            ⭐ {art.quality_score}分
+                          </span>
+                        )}
+                        {art.sandbox_status && (
+                          <span style={{
+                            fontSize: 10, padding: '1px 5px', borderRadius: 4,
+                            background: art.sandbox_status === 'success' ? 'rgba(16,185,129,0.06)' : art.sandbox_status === 'failed' ? 'rgba(239,68,68,0.06)' : 'rgba(156,163,175,0.06)',
+                            color: art.sandbox_status === 'success' ? '#10b981' : art.sandbox_status === 'failed' ? '#ef4444' : 'var(--text-muted)',
+                            border: art.sandbox_status === 'success' ? '1px solid rgba(16,185,129,0.15)' : art.sandbox_status === 'failed' ? '1px solid rgba(239,68,68,0.15)' : '1px solid rgba(156,163,175,0.15)',
+                            fontWeight: 500
+                          }}>
+                            {art.sandbox_status === 'success' ? '✅ 沙盒安全' : art.sandbox_status === 'failed' ? '⚠️ 运行报错' : '⏳ 未测试'}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>

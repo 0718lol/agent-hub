@@ -121,11 +121,28 @@ def init_db():
             name TEXT NOT NULL,
             language TEXT NOT NULL,
             code TEXT NOT NULL,
+            quality_score INTEGER DEFAULT NULL,
+            sandbox_status TEXT DEFAULT 'untested',
+            sandbox_output TEXT DEFAULT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (conversation_id) REFERENCES conversations(id)
         );
         CREATE INDEX IF NOT EXISTS idx_artifacts_conv ON artifacts(conversation_id);
     ''')
+
+    # Safe migrations for existing DB instances (ALTER TABLE)
+    try:
+        conn.execute('ALTER TABLE artifacts ADD COLUMN quality_score INTEGER DEFAULT NULL')
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE artifacts ADD COLUMN sandbox_status TEXT DEFAULT 'untested'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute('ALTER TABLE artifacts ADD COLUMN sandbox_output TEXT DEFAULT NULL')
+    except sqlite3.OperationalError:
+        pass
 
     default_convs = [
         ('conv_pm', 'single', 'PM 小助手', '📋', 'agent_pm', None, '需求分析与任务拆解'),
@@ -534,9 +551,26 @@ def get_artifacts(conversation_id: str = None, limit: int = 50) -> list[dict]:
             "name": row["name"],
             "language": row["language"],
             "code": row["code"],
+            "quality_score": row["quality_score"],
+            "sandbox_status": row["sandbox_status"],
+            "sandbox_output": row["sandbox_output"],
             "created_at": row["created_at"]
         }
         for row in rows
     ]
+
+
+def update_latest_artifact_quality(conversation_id: str, agent_id: str, score: int, sandbox_status: str, sandbox_output: str = None):
+    conn = get_db()
+    conn.execute(
+        '''
+        UPDATE artifacts 
+        SET quality_score = ?, sandbox_status = ?, sandbox_output = ? 
+        WHERE conversation_id = ? AND agent_id = ? AND quality_score IS NULL
+        ''',
+        (score, sandbox_status, sandbox_output, conversation_id, agent_id)
+    )
+    conn.commit()
+    conn.close()
 
 
