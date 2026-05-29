@@ -831,6 +831,11 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
                         break
                     lang = code_match.group(1) or "html"
                     code = code_match.group(2).strip()
+                    
+                    # 自动拦截代码并注册为交付物 Artifact（异步线程存储，保障高吞吐）
+                    from app.core.database import save_artifact
+                    await asyncio.to_thread(save_artifact, conversation_id, agent.agent_id, lang, code)
+
                     await manager.broadcast(conversation_id, {
                         "type": "code",
                         "conversation_id": conversation_id,
@@ -1349,6 +1354,16 @@ async def sandbox_heal(req: CodeHealRequest):
     healed_code = match.group(1).strip() if match else response.strip()
     
     return {"healed_code": healed_code}
+
+
+# ---- Artifacts API ----
+
+@app.get("/api/artifacts")
+async def list_artifacts(conversation_id: str = None, limit: int = 50):
+    """List generated code artifacts from SQLite DB."""
+    from app.core.database import get_artifacts
+    artifacts = await asyncio.to_thread(get_artifacts, conversation_id, limit)
+    return artifacts
 
 
 # ---- Metrics / Dashboard API ----

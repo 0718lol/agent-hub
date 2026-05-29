@@ -113,6 +113,18 @@ def init_db():
             FOREIGN KEY (conversation_id) REFERENCES conversations(id)
         );
         CREATE INDEX IF NOT EXISTS idx_event_stream_conv ON project_event_stream(conversation_id);
+
+        CREATE TABLE IF NOT EXISTS artifacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            language TEXT NOT NULL,
+            code TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_artifacts_conv ON artifacts(conversation_id);
     ''')
 
     default_convs = [
@@ -444,4 +456,87 @@ def clear_event_items(conversation_id: str):
     conn.execute('DELETE FROM project_event_stream WHERE conversation_id = ?', (conversation_id,))
     conn.commit()
     conn.close()
+
+
+# ---- Artifacts CRUD ----
+
+def save_artifact(conversation_id: str, agent_id: str, language: str, code: str, name: str = None) -> dict:
+    import re
+    if not name:
+        # Smart dynamic name generation based on language & content
+        if language.lower() in ("python", "py"):
+            class_match = re.search(r'class\s+(\w+)', code)
+            if class_match:
+                name = f"{class_match.group(1)}.py"
+            else:
+                def_match = re.search(r'def\s+(\w+)', code)
+                if def_match:
+                    name = f"{def_match.group(1)}()"
+                else:
+                    name = "script.py"
+        elif language.lower() in ("javascript", "js", "typescript", "ts", "jsx", "tsx"):
+            component_match = re.search(r'function\s+(\w+)|class\s+(\w+)|const\s+(\w+)\s*=\s*\(\)\s*=>', code)
+            if component_match:
+                name_val = next(g for g in component_match.groups() if g is not None)
+                name = f"{name_val}.jsx"
+            else:
+                name = "component.jsx"
+        elif language.lower() in ("html", "htm"):
+            title_match = re.search(r'<title>(.*?)</title>', code, re.IGNORECASE)
+            if title_match:
+                name = f"{title_match.group(1)}.html"
+            else:
+                name = "index.html"
+        else:
+            name = f"code_snippet.{language}"
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        INSERT INTO artifacts (conversation_id, agent_id, name, language, code)
+        VALUES (?, ?, ?, ?, ?)
+        ''',
+        (conversation_id, agent_id, name, language, code)
+    )
+    artifact_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return {
+        "id": artifact_id,
+        "conversation_id": conversation_id,
+        "agent_id": agent_id,
+        "name": name,
+        "language": language,
+        "code": code
+    }
+
+
+def get_artifacts(conversation_id: str = None, limit: int = 50) -> list[dict]:
+    conn = get_db()
+    if conversation_id:
+        rows = conn.execute(
+            'SELECT * FROM artifacts WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?',
+            (conversation_id, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            'SELECT * FROM artifacts ORDER BY created_at DESC LIMIT ?',
+            (limit,)
+        ).fetchall()
+    conn.close()
+    return [
+        {
+            "id": row["id"],
+            "conversation_id": row["conversation_id"],
+            "agent_id": row["agent_id"],
+            "name": row["name"],
+            "language": row["language"],
+            "code": row["code"],
+            "created_at": row["created_at"]
+        }
+        for row in rows
+    ]
+
 

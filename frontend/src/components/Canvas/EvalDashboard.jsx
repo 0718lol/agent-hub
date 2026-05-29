@@ -1,15 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { Download, Code, FileCode, Terminal, ExternalLink, Box, X } from 'lucide-react'
 
 /**
  * EvalDashboard — Evaluation metrics visualization panel.
  * Shows: Agent scores, Best-of-N stats, Quality Gate pass rates,
  * Sandbox execution stats, and recent traces.
+ * Refactored to include: Agentic Deliverables (Artifacts System) inspired by Prefect.
  */
 export default function EvalDashboard() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [benchStatus, setBenchStatus] = useState(null)
   const [benchRunning, setBenchRunning] = useState(false)
+  
+  // Artifacts State
+  const [artifacts, setArtifacts] = useState([])
+  const [selectedArtifact, setSelectedArtifact] = useState(null)
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -20,11 +26,23 @@ export default function EvalDashboard() {
     setLoading(false)
   }, [])
 
+  const fetchArtifacts = useCallback(async () => {
+    try {
+      const resp = await fetch('/api/artifacts?limit=15')
+      const arr = await resp.json()
+      setArtifacts(arr)
+    } catch {}
+  }, [])
+
   useEffect(() => {
     fetchMetrics()
-    const interval = setInterval(fetchMetrics, 5000)
+    fetchArtifacts()
+    const interval = setInterval(() => {
+      fetchMetrics()
+      fetchArtifacts()
+    }, 5000)
     return () => clearInterval(interval)
-  }, [fetchMetrics])
+  }, [fetchMetrics, fetchArtifacts])
 
   const startBenchmark = async () => {
     setBenchRunning(true)
@@ -39,6 +57,7 @@ export default function EvalDashboard() {
           clearInterval(poll)
           setBenchRunning(false)
           fetchMetrics()
+          fetchArtifacts()
         }
       }, 2000)
     } catch {
@@ -46,12 +65,24 @@ export default function EvalDashboard() {
     }
   }
 
+  const downloadFile = (artifact) => {
+    const blob = new Blob([artifact.code], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = artifact.name
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
   if (loading) {
     return <div style={{ padding: 24, color: 'var(--text-muted)' }}>加载评估数据...</div>
   }
 
   return (
-    <div style={{ padding: 20, overflow: 'auto', height: '100%' }}>
+    <div style={{ padding: 20, overflow: 'auto', height: '100%', position: 'relative' }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <h3 style={{ margin: 0, fontSize: 16, color: 'var(--text-primary)' }}>📊 评估 Dashboard</h3>
@@ -87,6 +118,68 @@ export default function EvalDashboard() {
           color="#8b5cf6"
         />
       </div>
+
+      {/* Artifacts Deliverable Showcase (Prefect Inspired) */}
+      {artifacts.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <SectionTitle>📦 智能体交付产物 (Generated Artifacts)</SectionTitle>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+            {artifacts.map((art) => {
+              const isCode = ["python", "py", "javascript", "js", "typescript", "ts", "jsx", "tsx", "html"].includes(art.language.toLowerCase())
+              return (
+                <div key={art.id} style={{
+                  padding: 12, borderRadius: 10,
+                  background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  transition: 'all 0.2s',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                    <div style={{
+                      width: 32, height: 32, borderRadius: 6,
+                      background: 'rgba(99, 102, 241, 0.1)',
+                      color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      flexShrink: 0
+                    }}>
+                      <FileCode size={16} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={art.name}>
+                        {art.name}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        由 {art.agent_id.replace('agent_', '')} 交付
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                    <button
+                      onClick={() => setSelectedArtifact(art)}
+                      title="预览代码"
+                      style={{
+                        padding: 6, borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.03)',
+                        color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex'
+                      }}
+                    >
+                      <Code size={13} />
+                    </button>
+                    <button
+                      onClick={() => downloadFile(art)}
+                      title="一键下载"
+                      style={{
+                        padding: 6, borderRadius: 6, border: 'none', background: 'rgba(16,185,129,0.1)',
+                        color: '#10b981', cursor: 'pointer', display: 'flex'
+                      }}
+                    >
+                      <Download size={13} />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Agent Performance Table */}
       {data?.agent_summary && Object.keys(data.agent_summary).length > 0 && (
@@ -200,7 +293,7 @@ export default function EvalDashboard() {
       )}
 
       {/* Empty state */}
-      {!data?.agent_summary || Object.keys(data.agent_summary).length === 0 ? (
+      {(!data?.agent_summary || Object.keys(data.agent_summary).length === 0) && artifacts.length === 0 ? (
         <div style={{
           padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13,
         }}>
@@ -209,6 +302,45 @@ export default function EvalDashboard() {
           <div style={{ marginTop: 8, fontSize: 12 }}>与 Agent 对话或运行 Benchmark 后，数据将自动展示</div>
         </div>
       ) : null}
+
+      {/* Code Preview Drawer Modal (Overlay) */}
+      {selectedArtifact && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(13,17,23,0.95)', zIndex: 100, padding: 20,
+          display: 'flex', flexDirection: 'column',
+          borderLeft: '1px solid var(--border)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                🔍 {selectedArtifact.name}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                语言: {selectedArtifact.language} | 提交于 {selectedArtifact.created_at}
+              </div>
+            </div>
+            <button
+              onClick={() => setSelectedArtifact(null)}
+              style={{
+                background: 'none', border: 'none', color: 'var(--text-muted)',
+                cursor: 'pointer', padding: 4, borderRadius: 4, display: 'flex'
+              }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          
+          <pre style={{
+            flex: 1, margin: 0, padding: 14, borderRadius: 8,
+            background: '#0d1117', border: '1px solid var(--border)',
+            overflow: 'auto', fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
+            color: '#e6edf3', lineHeight: 1.5,
+          }}>
+            <code>{selectedArtifact.code}</code>
+          </pre>
+        </div>
+      )}
     </div>
   )
 }
