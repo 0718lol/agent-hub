@@ -1312,6 +1312,45 @@ async def sandbox_run(req: CodeRunRequest):
     return result.to_dict()
 
 
+class CodeHealRequest(BaseModel):
+    code: str
+    language: str
+    error_output: str
+
+@app.post("/api/sandbox/heal")
+async def sandbox_heal(req: CodeHealRequest):
+    """Ask backend agent to heal broken code."""
+    from app.core.llm_client import llm_client
+    
+    prompt = f"""你是一个专门修复代码报错的 AI 专家。
+用户运行了一段 {req.language} 代码，但是失败了。
+请分析报错原因，并只输出修复后的完整可运行代码。
+不要任何多余的解释，必须包含在 ```{req.language} ... ``` 代码块中。
+
+### 原始代码
+```{req.language}
+{req.code}
+```
+
+### 报错信息
+```text
+{req.error_output}
+```
+"""
+    
+    response = ""
+    # 调用 LLM 生成修复代码
+    async for chunk in llm_client.chat_stream([{"role": "user", "content": prompt}], system="你只能输出修复后的代码块。"):
+        response += chunk
+        
+    import re
+    # 提取代码块
+    match = re.search(r"```[a-zA-Z]*\n(.*?)```", response, re.DOTALL)
+    healed_code = match.group(1).strip() if match else response.strip()
+    
+    return {"healed_code": healed_code}
+
+
 # ---- Metrics / Dashboard API ----
 
 @app.get("/api/metrics")
