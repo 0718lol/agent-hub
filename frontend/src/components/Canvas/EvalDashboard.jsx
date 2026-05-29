@@ -1,11 +1,62 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Download, Code, FileCode, Terminal, ExternalLink, Box, X } from 'lucide-react'
 
+// Unified Line-by-Line Diff Algorithm (Zero Dependency, Lookahead)
+const getUnifiedDiff = (oldText, newText) => {
+  const oldLines = oldText ? oldText.split('\n') : []
+  const newLines = newText ? newText.split('\n') : []
+  const diff = []
+  
+  let i = 0, j = 0
+  while (i < oldLines.length || j < newLines.length) {
+    if (i < oldLines.length && j < newLines.length) {
+      if (oldLines[i] === newLines[j]) {
+        diff.push({ type: 'normal', text: oldLines[i], lineNumOld: i + 1, lineNumNew: j + 1 })
+        i++; j++
+      } else {
+        // Lookahead to check for shifts or modifications
+        let foundMatch = false
+        const maxLookahead = 8
+        for (let look = 1; look < maxLookahead; look++) {
+          if (i + look < oldLines.length && oldLines[i + look] === newLines[j]) {
+            for (let d = 0; d < look; d++) {
+              diff.push({ type: 'delete', text: oldLines[i + d], lineNumOld: i + d + 1 })
+            }
+            i += look
+            foundMatch = true
+            break
+          }
+          if (j + look < newLines.length && oldLines[i] === newLines[j + look]) {
+            for (let a = 0; a < look; a++) {
+              diff.push({ type: 'add', text: newLines[j + a], lineNumNew: j + a + 1 })
+            }
+            j += look
+            foundMatch = true
+            break
+          }
+        }
+        if (!foundMatch) {
+          diff.push({ type: 'delete', text: oldLines[i], lineNumOld: i + 1 })
+          diff.push({ type: 'add', text: newLines[j], lineNumNew: j + 1 })
+          i++; j++
+        }
+      }
+    } else if (i < oldLines.length) {
+      diff.push({ type: 'delete', text: oldLines[i], lineNumOld: i + 1 })
+      i++
+    } else if (j < newLines.length) {
+      diff.push({ type: 'add', text: newLines[j], lineNumNew: j + 1 })
+      j++
+    }
+  }
+  return diff
+}
+
 /**
  * EvalDashboard — Evaluation metrics visualization panel.
  * Shows: Agent scores, Best-of-N stats, Quality Gate pass rates,
  * Sandbox execution stats, and recent traces.
- * Refactored to include: Agentic Deliverables (Artifacts System) inspired by Prefect.
+ * Refactored to include: Agentic Deliverables Versioning & Line Diff.
  */
 export default function EvalDashboard() {
   const [data, setData] = useState(null)
@@ -16,6 +67,11 @@ export default function EvalDashboard() {
   // Artifacts State
   const [artifacts, setArtifacts] = useState([])
   const [selectedArtifact, setSelectedArtifact] = useState(null)
+
+  // Drawer Version details state
+  const [previewVersionLabel, setPreviewVersionLabel] = useState('')
+  const [diffMode, setDiffMode] = useState(false)
+  const [compareVersionLabel, setCompareVersionLabel] = useState('')
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -44,11 +100,23 @@ export default function EvalDashboard() {
     return () => clearInterval(interval)
   }, [fetchMetrics, fetchArtifacts])
 
+  // Monitor selected artifact to set default preview versions
+  useEffect(() => {
+    if (selectedArtifact && selectedArtifact.history && selectedArtifact.history.length > 0) {
+      setPreviewVersionLabel(selectedArtifact.history[0].version_label)
+      setDiffMode(false)
+      if (selectedArtifact.history.length > 1) {
+        setCompareVersionLabel(selectedArtifact.history[1].version_label)
+      } else {
+        setCompareVersionLabel('')
+      }
+    }
+  }, [selectedArtifact])
+
   const startBenchmark = async () => {
     setBenchRunning(true)
     try {
       await fetch('/api/benchmark/run', { method: 'POST' })
-      // Start polling
       const poll = setInterval(async () => {
         const resp = await fetch('/api/benchmark/status')
         const status = await resp.json()
@@ -66,6 +134,7 @@ export default function EvalDashboard() {
   }
 
   const downloadFile = (artifact) => {
+    // Downloads latest version of file
     const blob = new Blob([artifact.code], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -125,9 +194,8 @@ export default function EvalDashboard() {
           <SectionTitle>📦 智能体交付产物 (Generated Artifacts)</SectionTitle>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
             {artifacts.map((art) => {
-              const isCode = ["python", "py", "javascript", "js", "typescript", "ts", "jsx", "tsx", "html"].includes(art.language.toLowerCase())
               return (
-                <div key={art.id} style={{
+                <div key={art.name} style={{
                   padding: 12, borderRadius: 10,
                   background: 'var(--bg-secondary)', border: '1px solid var(--border)',
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -143,8 +211,18 @@ export default function EvalDashboard() {
                       <FileCode size={16} />
                     </div>
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={art.name}>
-                        {art.name}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={art.name}>
+                          {art.name}
+                        </div>
+                        {art.total_versions > 1 && (
+                          <span style={{
+                            fontSize: 10, padding: '1px 5px', borderRadius: 4,
+                            background: 'rgba(99,102,241,0.1)', color: '#818cf8', fontWeight: 600
+                          }}>
+                            v{art.total_versions}
+                          </span>
+                        )}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
                         由 {art.agent_id.replace('agent_', '')} 交付
@@ -179,7 +257,7 @@ export default function EvalDashboard() {
                   <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                     <button
                       onClick={() => setSelectedArtifact(art)}
-                      title="预览代码"
+                      title="查看代码版本与对比"
                       style={{
                         padding: 6, borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.03)',
                         color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex'
@@ -189,7 +267,7 @@ export default function EvalDashboard() {
                     </button>
                     <button
                       onClick={() => downloadFile(art)}
-                      title="一键下载"
+                      title="下载最新版本"
                       style={{
                         padding: 6, borderRadius: 6, border: 'none', background: 'rgba(16,185,129,0.1)',
                         color: '#10b981', cursor: 'pointer', display: 'flex'
@@ -331,17 +409,19 @@ export default function EvalDashboard() {
       {selectedArtifact && (
         <div style={{
           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(13,17,23,0.95)', zIndex: 100, padding: 20,
+          background: 'rgba(13,17,23,0.96)', zIndex: 100, padding: 20,
           display: 'flex', flexDirection: 'column',
-          borderLeft: '1px solid var(--border)'
+          borderLeft: '1px solid var(--border)',
+          fontFamily: 'var(--font-ui)',
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          {/* Title bar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
                 🔍 {selectedArtifact.name}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                语言: {selectedArtifact.language} | 提交于 {selectedArtifact.created_at}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                语言: {selectedArtifact.language} | 共 {selectedArtifact.total_versions} 个历史版本
               </div>
             </div>
             <button
@@ -354,15 +434,143 @@ export default function EvalDashboard() {
               <X size={18} />
             </button>
           </div>
-          
-          <pre style={{
-            flex: 1, margin: 0, padding: 14, borderRadius: 8,
-            background: '#0d1117', border: '1px solid var(--border)',
-            overflow: 'auto', fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
-            color: '#e6edf3', lineHeight: 1.5,
+
+          {/* Version Selector Toolbar */}
+          <div style={{
+            display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12,
+            padding: '8px 12px', background: 'rgba(255, 255, 255, 0.02)',
+            borderRadius: 6, border: '1px solid rgba(255, 255, 255, 0.05)',
+            fontSize: 12
           }}>
-            <code>{selectedArtifact.code}</code>
-          </pre>
+            {/* Base Version */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: 'var(--text-muted)' }}>{diffMode ? "对比版本 (新):" : "当前版本:"}</span>
+              <select
+                value={previewVersionLabel}
+                onChange={(e) => setPreviewVersionLabel(e.target.value)}
+                style={{
+                  background: '#1d2129', border: '1px solid var(--border)',
+                  color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 4, outline: 'none'
+                }}
+              >
+                {selectedArtifact.history.map(h => (
+                  <option key={h.version_label} value={h.version_label}>
+                    {h.version_label} ({h.agent_id.replace('agent_', '')})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Diff Switch (only if we have more than 1 version) */}
+            {selectedArtifact.total_versions > 1 && (
+              <>
+                <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.08)' }} />
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                  <input
+                    type="checkbox"
+                    checked={diffMode}
+                    onChange={(e) => setDiffMode(e.target.checked)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <span>开启 Diff 版本对比</span>
+                </label>
+              </>
+            )}
+
+            {/* Target Compare Version */}
+            {diffMode && selectedArtifact.total_versions > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+                <span style={{ color: 'var(--text-muted)' }}>基准版本 (旧):</span>
+                <select
+                  value={compareVersionLabel}
+                  onChange={(e) => setCompareVersionLabel(e.target.value)}
+                  style={{
+                    background: '#1d2129', border: '1px solid var(--border)',
+                    color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 4, outline: 'none'
+                  }}
+                >
+                  {selectedArtifact.history.map(h => (
+                    <option key={h.version_label} value={h.version_label} disabled={h.version_label === previewVersionLabel}>
+                      {h.version_label} ({h.agent_id.replace('agent_', '')})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          
+          {/* Main Code Viewport */}
+          <div style={{
+            flex: 1, borderRadius: 8, overflow: 'hidden',
+            border: '1px solid var(--border)', background: '#0d1117'
+          }}>
+            {!diffMode ? (
+              // Standard Code Mode
+              <pre style={{
+                margin: 0, padding: 14, height: '100%', overflow: 'auto',
+                fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
+                color: '#e6edf3', lineHeight: 1.5,
+              }}>
+                <code>
+                  {selectedArtifact.history.find(h => h.version_label === previewVersionLabel)?.code || ""}
+                </code>
+              </pre>
+            ) : (
+              // Diff Comparison Mode
+              (() => {
+                const newCode = selectedArtifact.history.find(h => h.version_label === previewVersionLabel)?.code || ""
+                const oldCode = selectedArtifact.history.find(h => h.version_label === compareVersionLabel)?.code || ""
+                const diffLines = getUnifiedDiff(oldCode, newCode)
+                return (
+                  <div style={{
+                    height: '100%', overflow: 'auto', padding: 12,
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: 12, lineHeight: 1.6,
+                    color: '#e6edf3'
+                  }}>
+                    {diffLines.map((line, idx) => {
+                      let bgColor = 'transparent'
+                      let textColor = '#e6edf3'
+                      let sign = ' '
+                      if (line.type === 'add') {
+                        bgColor = 'rgba(16,185,129,0.12)'
+                        textColor = '#4ade80'
+                        sign = '+'
+                      } else if (line.type === 'delete') {
+                        bgColor = 'rgba(239,68,68,0.12)'
+                        textColor = '#f87171'
+                        sign = '-'
+                      }
+                      
+                      return (
+                        <div key={idx} style={{
+                          display: 'flex', background: bgColor, color: textColor,
+                          padding: '1px 6px', borderRadius: 2
+                        }}>
+                          {/* Line numbers gutter */}
+                          <span style={{
+                            width: 32, userSelect: 'none', color: 'rgba(255,255,255,0.2)',
+                            textAlign: 'right', marginRight: 10, fontSize: 10
+                          }}>
+                            {line.type === 'delete' ? line.lineNumOld : line.type === 'add' ? '' : line.lineNumOld}
+                          </span>
+                          <span style={{
+                            width: 32, userSelect: 'none', color: 'rgba(255,255,255,0.2)',
+                            textAlign: 'right', marginRight: 14, fontSize: 10
+                          }}>
+                            {line.type === 'add' ? line.lineNumNew : line.type === 'delete' ? '' : line.lineNumNew}
+                          </span>
+                          {/* Sign */}
+                          <span style={{ width: 14, userSelect: 'none', opacity: 0.6, fontWeight: 'bold' }}>{sign}</span>
+                          {/* Text content */}
+                          <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{line.text}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -400,3 +608,4 @@ function ScoreBar({ score }) {
 
 const thStyle = { padding: '8px 12px', textAlign: 'left', fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }
 const tdStyle = { padding: '8px 12px', color: 'var(--text-primary)' }
+

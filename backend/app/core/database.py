@@ -574,3 +574,72 @@ def update_latest_artifact_quality(conversation_id: str, agent_id: str, score: i
     conn.close()
 
 
+def get_artifacts_grouped(conversation_id: str = None, limit: int = 50) -> list[dict]:
+    conn = get_db()
+    if conversation_id:
+        rows = conn.execute(
+            'SELECT * FROM artifacts WHERE conversation_id = ? ORDER BY created_at ASC',
+            (conversation_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            'SELECT * FROM artifacts ORDER BY created_at ASC'
+        ).fetchall()
+    conn.close()
+    
+    grouped = {}
+    for row in rows:
+        key = (row["conversation_id"], row["name"])
+        if key not in grouped:
+            grouped[key] = []
+        grouped[key].append({
+            "id": row["id"],
+            "conversation_id": row["conversation_id"],
+            "agent_id": row["agent_id"],
+            "name": row["name"],
+            "language": row["language"],
+            "code": row["code"],
+            "quality_score": row["quality_score"],
+            "sandbox_status": row["sandbox_status"],
+            "sandbox_output": row["sandbox_output"],
+            "created_at": row["created_at"]
+        })
+        
+    result = []
+    for (conv_id, name), versions in grouped.items():
+        latest = versions[-1]
+        
+        history = []
+        for idx, v in enumerate(versions):
+            v_num = f"v{idx + 1}"
+            history.append({
+                "version_label": v_num,
+                "id": v["id"],
+                "agent_id": v["agent_id"],
+                "created_at": v["created_at"],
+                "code": v["code"],
+                "quality_score": v["quality_score"],
+                "sandbox_status": v["sandbox_status"],
+                "sandbox_output": v["sandbox_output"]
+            })
+            
+        result.append({
+            "name": name,
+            "conversation_id": conv_id,
+            "agent_id": latest["agent_id"],
+            "language": latest["language"],
+            "code": latest["code"],
+            "quality_score": latest["quality_score"],
+            "sandbox_status": latest["sandbox_status"],
+            "sandbox_output": latest["sandbox_output"],
+            "created_at": latest["created_at"],
+            "latest_id": latest["id"],
+            "total_versions": len(versions),
+            "history": history[::-1]  # latest version first
+        })
+        
+    result.sort(key=lambda x: x["created_at"], reverse=True)
+    return result[:limit]
+
+
+
