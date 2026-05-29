@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Copy, RefreshCw, Reply, Pin, Check } from 'lucide-react'
+import { Copy, RefreshCw, Reply, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle } from 'lucide-react'
 import { useAgentStore } from '../../stores/agentStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -11,6 +11,19 @@ import FileAttachmentCard from './FileAttachmentCard'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import { wsClient } from '../../utils/websocket'
 import IconAvatar from '../IconAvatar'
+
+const TOOL_ICONS = {
+  web_search: Globe,
+  http_request: Globe,
+  file_read: FileText,
+  file_write: FileText,
+  file_list: FileText,
+  file_edit_line: Settings2,
+  file_patch_block: Settings2,
+  safe_python_executor: Wrench,
+  run_stateful_command: Wrench,
+  browser_action: Globe,
+}
 
 export default function MessageBubble({ message, isPinned }) {
   const agents = useAgentStore((s) => s.agents)
@@ -108,9 +121,73 @@ export default function MessageBubble({ message, isPinned }) {
 
     if (!clean) return null
 
-    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[ask_user:[^\]]+\]|\[options:[^\]]+\]|```[\s\S]*?```)/g)
+    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[ask_user:[^\]]+\]|\[options:[^\]]+\]|\[tool_call:[^\]]+\][\s\S]*?\[\/tool_call\]|\[工具结果: [^\]]+\][\s\S]*?请基于以上工具结果继续回复用户。|```[\s\S]*?```)/g)
     return parts.map((part, i) => {
       if (!part) return null
+
+      // Tool Call Match
+      const toolCallMatch = part.match(/\[tool_call:([^\]]+)\]([\s\S]*?)\[\/tool_call\]/)
+      if (toolCallMatch) {
+        const toolName = toolCallMatch[1]
+        let params = {}
+        try {
+          params = JSON.parse(toolCallMatch[2].trim())
+        } catch(e) {}
+        
+        const Icon = TOOL_ICONS[toolName] || Wrench
+        return (
+          <div key={i} style={{
+            margin: '8px 0', padding: '10px 14px', borderRadius: '8px',
+            background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255,255,255,0.08)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: Object.keys(params).length ? 6 : 0 }}>
+              <Icon size={14} color="#818cf8" />
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#c7d2fe' }}>调用工具：{toolName}</span>
+              <span style={{ fontSize: 11, background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', padding: '2px 6px', borderRadius: 4, marginLeft: 'auto' }}>
+                执行中...
+              </span>
+            </div>
+            {Object.keys(params).length > 0 && (
+              <pre style={{ margin: 0, fontSize: 11, color: '#94a3b8', background: 'rgba(0,0,0,0.2)', padding: '6px', borderRadius: 4, whiteSpace: 'pre-wrap', maxHeight: 60, overflow: 'hidden' }}>
+                {JSON.stringify(params, null, 2)}
+              </pre>
+            )}
+          </div>
+        )
+      }
+
+      // Tool Result Match
+      const toolResultMatch = part.match(/\[工具结果: ([^\]]+)\]\n([\s\S]*?)\n\n请基于以上工具结果继续回复用户。/)
+      if (toolResultMatch) {
+        const toolName = toolResultMatch[1]
+        let resultObj = {}
+        let isError = false
+        try {
+          resultObj = JSON.parse(toolResultMatch[2].trim())
+          isError = !!resultObj.error
+        } catch(e) {
+          resultObj = { data: toolResultMatch[2].trim() }
+        }
+
+        const Icon = isError ? AlertCircle : CheckCircle2
+        const color = isError ? '#ef4444' : '#10b981'
+        
+        return (
+          <div key={i} style={{
+            margin: '8px 0', padding: '10px 14px', borderRadius: '8px',
+            background: 'rgba(255, 255, 255, 0.02)', border: `1px solid rgba(255,255,255,0.05)`,
+            borderLeft: `3px solid ${color}`
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <Icon size={14} color={color} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{toolName} 执行完毕</span>
+            </div>
+            <pre style={{ margin: 0, fontSize: 11, color: '#94a3b8', background: 'rgba(0,0,0,0.2)', padding: '6px', borderRadius: 4, whiteSpace: 'pre-wrap', maxHeight: 120, overflow: 'auto' }}>
+              {JSON.stringify(resultObj, null, 2).slice(0, 500) + (JSON.stringify(resultObj).length > 500 ? '\n...[已折叠]' : '')}
+            </pre>
+          </div>
+        )
+      }
 
       const mockupMatch = part.match(/\[mockup:(\w+)\]/)
       if (mockupMatch) return <MockupCard key={i} type={mockupMatch[1]} />
