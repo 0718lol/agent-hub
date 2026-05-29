@@ -23,8 +23,14 @@ from app.core.speech import stt_client
 from app.core.sandbox import execute_code
 from app.core.metrics import metrics
 from app.core.benchmark import run_benchmark, get_current_run, BENCHMARK_CASES
-from app.routers import agents as agents_router
-from app.routers import uploads as uploads_router
+from app.routers import (
+    agents as agents_router,
+    uploads as uploads_router,
+    settings as settings_router,
+    cron as cron_router,
+    workflows as workflows_router,
+    mcp as mcp_router,
+)
 
 LLM_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "llm_config.json")
 HIL_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "hil_config.json")
@@ -107,51 +113,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-AGENTS = {
-    "agent_pm": PMAgent(),
-    "agent_frontend": FrontendAgent(),
-    "agent_backend": BackendAgent(),
-    "agent_tester": TesterAgent(),
-    "agent_devops": DevopsAgent(),
-    "agent_designer": DesignerAgent(),
-    "agent_builder": AgentBuilderAgent(),
-}
-
-AGENTS["agent_pm"].description = "规划需求与分工的PM智能体"
-AGENTS["agent_frontend"].description = "编写前端代码和页面的前端工程师智能体"
-AGENTS["agent_backend"].description = "设计 API 和数据库逻辑的后端工程师智能体"
-AGENTS["agent_tester"].description = "编写测试用例和审查代码缺陷的测试工程师智能体"
-AGENTS["agent_devops"].description = "进行 CI/CD、部署和运维管理的运维工程师智能体"
-AGENTS["agent_designer"].description = "提供 UI/UX 体验并生成网页 SVG 原型的设计师智能体"
-AGENTS["agent_builder"].description = "动态构建项目和创建新智能体的构建专家智能体"
+from app.services.agent_registry import agent_registry
+AGENTS = agent_registry._agents
 
 # Stop events per conversation — set to cancel ongoing generation
 _stop_events: dict[str, asyncio.Event] = {}
 
 app.include_router(agents_router.router, prefix="/api")
 app.include_router(uploads_router.router)
+app.include_router(settings_router.router, prefix="/api")
+app.include_router(cron_router.router, prefix="/api")
+app.include_router(workflows_router.router, prefix="/api")
+app.include_router(mcp_router.router, prefix="/api")
 
 init_db()
 
 
-def _load_custom_agents():
-    """Load user-created custom agents from DB into AGENTS dict."""
-    for agent_data in get_custom_agents():
-        aid = agent_data["agent_id"]
-        if aid not in AGENTS:
-            AGENTS[aid] = CustomAgent(
-                agent_id=aid,
-                name=agent_data["name"],
-                avatar=agent_data["avatar"],
-                role=agent_data["role"],
-                style=agent_data["style"],
-                system_prompt=agent_data["system_prompt"],
-                tools=agent_data["tools"],
-            )
-            AGENTS[aid].description = f"自定义角色: {agent_data.get('role', '智能助手')}"
-
-
-_load_custom_agents()
 
 
 def _load_llm_config():
@@ -199,85 +176,6 @@ def _save_llm_config():
 _load_llm_config()
 
 
-class LLMSettings(BaseModel):
-    provider: str = "openai"
-    api_key: str = ""
-    base_url: str = ""
-    model: str = ""
-    temperature: float = None
-    max_tokens: int = None
-
-
-@app.get("/api/settings/llm")
-async def get_llm_settings():
-    return {
-        "provider": llm_client.provider,
-        "api_key_set": bool(llm_client.api_key),
-        "base_url": llm_client.base_url,
-        "model": llm_client.model,
-        "temperature": llm_client.temperature,
-        "max_tokens": llm_client.max_tokens,
-        "configured": llm_client.is_configured(),
-    }
-
-
-@app.post("/api/settings/llm")
-async def update_llm_settings(s: LLMSettings):
-    llm_client.configure(
-        provider=s.provider,
-        api_key=s.api_key if s.api_key else llm_client.api_key,
-        base_url=s.base_url,
-        model=s.model,
-        temperature=s.temperature,
-        max_tokens=s.max_tokens,
-    )
-    _save_llm_config()
-    return {"status": "ok", "configured": llm_client.is_configured()}
-
-
-class HILSettings(BaseModel):
-    human_input_mode: str = "NEVER"
-    cooldown_steps: int = 2
-
-
-@app.get("/api/settings/hil")
-async def get_hil_settings_api():
-    return get_hil_settings()
-
-
-@app.post("/api/settings/hil")
-async def update_hil_settings_api(s: HILSettings):
-    settings = {
-        "human_input_mode": s.human_input_mode,
-        "cooldown_steps": s.cooldown_steps
-    }
-    _save_hil_settings(settings)
-    return {"status": "ok", "settings": settings}
-
-
-@app.get("/api/ollama/models")
-async def list_ollama_models():
-    """Fetch installed models from local Ollama instance."""
-    import httpx
-    url = "http://127.0.0.1:11434/api/tags"
-    if llm_client.provider == "ollama" and llm_client.base_url:
-        base = llm_client.base_url.rstrip("/")
-        if base.endswith("/v1"):
-            url = base[:-3] + "/api/tags"
-        elif "11434" in base:
-            url = base + "/api/tags" if not base.endswith("/api/tags") else base
-
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                data = resp.json()
-                models = [m["name"] for m in data.get("models", [])]
-                return {"status": "ok", "models": models}
-            else:
-                return {"status": "error", "message": f"Ollama returned status {resp.status_code}", "models": []}
-    except Exception as e:
-        return {"status": "error", "message": f"Ollama not running: {str(e)}", "models": []}
 
 
 @app.get("/")
@@ -1273,74 +1171,10 @@ async def _stream_agent_reply(conversation_id: str, agent, user_text: str, stop_
 
     return assigned_agents, full_text
 
-
-def _register_custom_agent(config: dict):
-    """Create a custom agent from config, save to DB, register in AGENTS, create conversation."""
-    aid = config.get("agent_id", "")
-    name = config.get("name", "自定义助手")
-    avatar = config.get("avatar", "🤖")
-    role = config.get("role", "智能助手")
-    style = config.get("style", "友好专业")
-    system_prompt = config.get("system_prompt") or f"你是{name}，{role}。请基于这个角色为用户提供专业、有帮助的回答。"
-    tools = config.get("tools", [])
-
-    # Save to database
-    save_custom_agent(aid, name, avatar, role, style, system_prompt, tools)
-
-    # Instantiate and register
-    AGENTS[aid] = CustomAgent(
-        agent_id=aid, name=name, avatar=avatar,
-        role=role, style=style, system_prompt=system_prompt, tools=tools,
-    )
-
-    # Create a conversation for this agent
-    conv_id = f"conv_{aid}"
-    create_conversation(conv_id, "single", name, avatar, agent_id=aid, preview=role)
-
-
 def _remove_custom_agent(agent_id: str):
     """Delete a custom agent from DB, AGENTS dict, and its conversation."""
     AGENTS.pop(agent_id, None)
     delete_custom_agent(agent_id)
-
-
-# ---- Custom Agent REST API ----
-
-class CustomAgentCreate(BaseModel):
-    name: str
-    avatar: str = "🤖"
-    role: str = ""
-    style: str = ""
-    system_prompt: str
-    tools: list[str] = []
-
-
-@app.get("/api/agents/custom")
-async def list_custom_agents():
-    return get_custom_agents()
-
-
-@app.post("/api/agents/custom")
-async def create_custom_agent(body: CustomAgentCreate):
-    import uuid
-    agent_id = f"agent_custom_{uuid.uuid4().hex[:8]}"
-    config = {
-        "agent_id": agent_id,
-        "name": body.name,
-        "avatar": body.avatar,
-        "role": body.role,
-        "style": body.style,
-        "system_prompt": body.system_prompt,
-        "tools": body.tools,
-    }
-    _register_custom_agent(config)
-    return {"status": "created", "agent": config}
-
-
-@app.delete("/api/agents/custom/{agent_id}")
-async def remove_custom_agent(agent_id: str):
-    _remove_custom_agent(agent_id)
-    return {"status": "deleted", "agent_id": agent_id}
 
 
 @app.get("/api/tools")
@@ -1761,70 +1595,6 @@ async def _simulate_deploy(conversation_id: str):
 
 # ---- Background Autonomous Tasks REST API ----
 
-class CronTaskCreate(BaseModel):
-    conversation_id: str
-    agent_id: str
-    task_prompt: str
-    interval_seconds: int
-
-
-@app.get("/api/cron")
-async def list_cron_tasks(conversation_id: str = None):
-    from app.core.database import get_cron_tasks
-    tasks = get_cron_tasks(conversation_id)
-    return {"status": "ok", "tasks": tasks}
-
-
-@app.post("/api/cron")
-async def create_cron_task(body: CronTaskCreate):
-    from datetime import datetime, timedelta
-    from app.core.database import save_cron_task
-
-    task_id = f"task_{uuid.uuid4().hex[:8]}"
-    now = datetime.utcnow()
-    next_run = (now + timedelta(seconds=body.interval_seconds)).strftime("%Y-%m-%d %H:%M:%S")
-
-    save_cron_task(
-        task_id=task_id,
-        conversation_id=body.conversation_id,
-        agent_id=body.agent_id,
-        task_prompt=body.task_prompt,
-        interval_seconds=body.interval_seconds,
-        status="active",
-        last_run=None,
-        next_run=next_run
-    )
-    return {"status": "ok", "task_id": task_id, "message": "离线自治任务创建成功！"}
-
-
-@app.post("/api/cron/{task_id}/toggle")
-async def toggle_cron_task(task_id: str, body: dict):
-    from app.core.database import update_cron_task_status
-    status = body.get("status", "active")
-    if status not in ("active", "paused"):
-        return {"status": "error", "message": "无效的任务状态"}
-    update_cron_task_status(task_id, status)
-    return {"status": "ok", "message": f"任务状态已更新为 {status}"}
-
-
-@app.post("/api/cron/{task_id}/run")
-async def run_cron_task_now(task_id: str):
-    from app.core.database import get_cron_tasks
-    tasks = get_cron_tasks()
-    task = next((t for t in tasks if t["id"] == task_id), None)
-    if not task:
-        return {"status": "error", "message": "自治任务未找到"}
-
-    from app.services.daemon_scheduler import daemon_scheduler
-    create_tracked_task(daemon_scheduler._run_task(task), name=f"manual_cron_{task_id}")
-    return {"status": "ok", "message": "已手动触发后台自治作业运行！"}
-
-
-@app.delete("/api/cron/{task_id}")
-async def delete_cron_task_endpoint(task_id: str):
-    from app.core.database import delete_cron_task
-    delete_cron_task(task_id)
-    return {"status": "ok", "message": "离线自治任务已成功删除！"}
 
 
 # ---- Knowledge Base (RAG) REST API ----
@@ -1954,7 +1724,7 @@ async def import_workflow(body: dict):
     for ca in custom_agents:
         aid = ca.get("agent_id")
         if aid:
-            _register_custom_agent(ca)
+            await agent_registry.register_custom_agent(ca)
             imported_count += 1
             
     hil = body.get("hil")

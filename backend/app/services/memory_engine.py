@@ -8,15 +8,23 @@ from app.core.websocket import manager
 
 logger = logging.getLogger("memory_engine")
 
+_reflection_locks: dict[str, bool] = {}
+
+
 async def trigger_background_reflection(conversation_id: str):
     """
     Asynchronously reviews conversation history and updates the white-box long-term memory.
     Runs non-blocking, then broadcasts updates to the active websocket.
     """
+    if _reflection_locks.get(conversation_id):
+        logger.info(f"Memory reflection for conversation {conversation_id} is already in progress. Skipping duplicate execution.")
+        return
+        
     if not llm_client.is_configured():
         logger.info("LLM Client is not configured. Skipping background memory reflection.")
         return
 
+    _reflection_locks[conversation_id] = True
     try:
         # 1. Fetch conversation messages
         messages = get_messages(conversation_id, limit=40)
@@ -126,3 +134,6 @@ async def trigger_background_reflection(conversation_id: str):
             "status": "error",
             "message": f"⚠️ 长期记忆提炼出错: {str(e)[:100]}"
         })
+    finally:
+        _reflection_locks[conversation_id] = False
+

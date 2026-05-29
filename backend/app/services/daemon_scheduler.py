@@ -68,10 +68,11 @@ class DaemonScheduler:
         error_msg = ""
 
         try:
-            from app.main import AGENTS, _stream_agent_reply
+            from app.services.agent_registry import agent_registry
+            from app.main import _stream_agent_reply
             from app.core.database import get_messages, save_message
 
-            agent = AGENTS.get(agent_id)
+            agent = await agent_registry.get_agent(agent_id)
             if not agent:
                 raise ValueError(f"Agent '{agent_id}' is not loaded in current server agents dictionary.")
 
