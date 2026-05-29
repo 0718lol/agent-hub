@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Copy, RefreshCw, Reply, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Copy, RefreshCw, Reply, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import { useAgentStore } from '../../stores/agentStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -23,6 +23,212 @@ const TOOL_ICONS = {
   safe_python_executor: Wrench,
   run_stateful_command: Wrench,
   browser_action: Globe,
+}
+
+// Dify-Style Collapsible Tool Call Component
+function ToolCallBlock({ toolName, params }) {
+  const [expanded, setExpanded] = useState(false)
+  const Icon = TOOL_ICONS[toolName] || Wrench
+  const hasParams = Object.keys(params).length > 0
+
+  return (
+    <div style={{
+      margin: '12px 0',
+      borderRadius: '8px',
+      background: 'rgba(129, 140, 248, 0.03)',
+      border: '1px solid rgba(129, 140, 248, 0.12)',
+      overflow: 'hidden',
+    }}>
+      <div 
+        onClick={() => hasParams && setExpanded(!expanded)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '10px 14px',
+          background: 'rgba(129, 140, 248, 0.05)',
+          cursor: hasParams ? 'pointer' : 'default',
+          userSelect: 'none',
+        }}
+      >
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 24,
+          height: 24,
+          borderRadius: '6px',
+          background: 'rgba(129, 140, 248, 0.12)',
+          color: '#818cf8',
+        }}>
+          <Icon size={14} style={{ animation: 'spin-slow 4s linear infinite' }} />
+        </div>
+        
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={{ fontSize: '13px', fontWeight: 600, color: '#c7d2fe' }}>
+            调用工具：{toolName}
+          </span>
+          <span style={{ fontSize: '10px', color: '#818cf8', opacity: 0.8, letterSpacing: '0.5px' }}>
+            System Tool Call
+          </span>
+        </div>
+
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{
+            fontSize: '10px',
+            background: 'rgba(129, 140, 248, 0.15)',
+            border: '1px solid rgba(129, 140, 248, 0.3)',
+            color: '#a5b4fc',
+            padding: '2px 8px',
+            borderRadius: '10px',
+            fontWeight: 500,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+          }}>
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%', background: '#818cf8',
+              boxShadow: '0 0 6px #818cf8',
+            }} />
+            执行中...
+          </span>
+          {hasParams && (
+            <span style={{ color: '#94a3b8', display: 'flex', alignItems: 'center' }}>
+              {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {expanded && hasParams && (
+        <div style={{
+          padding: '12px 14px',
+          background: 'rgba(0, 0, 0, 0.25)',
+          borderTop: '1px solid rgba(129, 140, 248, 0.08)',
+        }}>
+          <div style={{ fontSize: '11px', color: '#818cf8', fontWeight: 600, marginBottom: 6 }}>输入参数 (Arguments):</div>
+          <pre style={{
+            margin: 0,
+            fontSize: '11px',
+            color: '#cbd5e1',
+            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}>
+            {JSON.stringify(params, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Dify-Style Collapsible Tool Result Component
+function ToolResultBlock({ toolName, resultText }) {
+  const [expanded, setExpanded] = useState(false)
+  let resultObj = {}
+  let isError = false
+  try {
+    resultObj = JSON.parse(resultText.trim())
+    isError = !!resultObj.error
+  } catch (e) {
+    resultObj = { output: resultText.trim() }
+  }
+
+  const Icon = isError ? AlertCircle : CheckCircle2
+  const color = isError ? '#f87171' : '#34d399'
+  const bg = isError ? 'rgba(239, 68, 68, 0.02)' : 'rgba(16, 185, 129, 0.02)'
+  const border = isError ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)'
+  const badgeBg = isError ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)'
+
+  const contentStr = JSON.stringify(resultObj, null, 2)
+  const isTruncated = contentStr.length > 500
+  const displayedContent = expanded ? contentStr : (contentStr.slice(0, 500) + (isTruncated ? '\n\n... [数据已折叠，点击展开查看完整输出]' : ''))
+
+  return (
+    <div style={{
+      margin: '12px 0',
+      borderRadius: '8px',
+      background: bg,
+      border: `1px solid ${border}`,
+      overflow: 'hidden',
+    }}>
+      <div 
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '10px 14px',
+          background: isError ? 'rgba(239, 68, 68, 0.04)' : 'rgba(16, 185, 129, 0.04)',
+          cursor: 'pointer',
+          userSelect: 'none',
+        }}
+      >
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 24,
+          height: 24,
+          borderRadius: '6px',
+          background: badgeBg,
+          color: color,
+        }}>
+          <Icon size={14} />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+            {toolName} {isError ? '执行失败' : '执行成功'}
+          </span>
+          <span style={{ fontSize: '10px', color: 'var(--text-muted)', letterSpacing: '0.5px' }}>
+            Tool Output Received
+          </span>
+        </div>
+
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{
+            fontSize: '10px',
+            background: badgeBg,
+            border: `1px solid ${border}`,
+            color: color,
+            padding: '2px 8px',
+            borderRadius: '10px',
+            fontWeight: 500,
+          }}>
+            {isError ? 'Failed' : 'Success'}
+          </span>
+          <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </span>
+        </div>
+      </div>
+
+      <div style={{
+        padding: '12px 14px',
+        background: 'rgba(0, 0, 0, 0.25)',
+        borderTop: `1px solid ${border}`,
+      }}>
+        <pre 
+          onClick={() => !expanded && setExpanded(true)}
+          style={{
+            margin: 0,
+            fontSize: '11px',
+            color: isError ? '#fca5a5' : '#a7f3d0',
+            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+            maxHeight: expanded ? '400px' : '150px',
+            overflow: 'auto',
+            cursor: !expanded ? 'pointer' : 'text',
+          }}
+        >
+          {displayedContent}
+        </pre>
+      </div>
+    </div>
+  )
 }
 
 export default function MessageBubble({ message, isPinned }) {
@@ -133,60 +339,15 @@ export default function MessageBubble({ message, isPinned }) {
         try {
           params = JSON.parse(toolCallMatch[2].trim())
         } catch(e) {}
-        
-        const Icon = TOOL_ICONS[toolName] || Wrench
-        return (
-          <div key={i} style={{
-            margin: '8px 0', padding: '10px 14px', borderRadius: '8px',
-            background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255,255,255,0.08)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: Object.keys(params).length ? 6 : 0 }}>
-              <Icon size={14} color="#818cf8" />
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#c7d2fe' }}>调用工具：{toolName}</span>
-              <span style={{ fontSize: 11, background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', padding: '2px 6px', borderRadius: 4, marginLeft: 'auto' }}>
-                执行中...
-              </span>
-            </div>
-            {Object.keys(params).length > 0 && (
-              <pre style={{ margin: 0, fontSize: 11, color: '#94a3b8', background: 'rgba(0,0,0,0.2)', padding: '6px', borderRadius: 4, whiteSpace: 'pre-wrap', maxHeight: 60, overflow: 'hidden' }}>
-                {JSON.stringify(params, null, 2)}
-              </pre>
-            )}
-          </div>
-        )
+        return <ToolCallBlock key={i} toolName={toolName} params={params} />
       }
 
       // Tool Result Match
       const toolResultMatch = part.match(/\[工具结果: ([^\]]+)\]\n([\s\S]*?)\n\n请基于以上工具结果继续回复用户。/)
       if (toolResultMatch) {
         const toolName = toolResultMatch[1]
-        let resultObj = {}
-        let isError = false
-        try {
-          resultObj = JSON.parse(toolResultMatch[2].trim())
-          isError = !!resultObj.error
-        } catch(e) {
-          resultObj = { data: toolResultMatch[2].trim() }
-        }
-
-        const Icon = isError ? AlertCircle : CheckCircle2
-        const color = isError ? '#ef4444' : '#10b981'
-        
-        return (
-          <div key={i} style={{
-            margin: '8px 0', padding: '10px 14px', borderRadius: '8px',
-            background: 'rgba(255, 255, 255, 0.02)', border: `1px solid rgba(255,255,255,0.05)`,
-            borderLeft: `3px solid ${color}`
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <Icon size={14} color={color} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{toolName} 执行完毕</span>
-            </div>
-            <pre style={{ margin: 0, fontSize: 11, color: '#94a3b8', background: 'rgba(0,0,0,0.2)', padding: '6px', borderRadius: 4, whiteSpace: 'pre-wrap', maxHeight: 120, overflow: 'auto' }}>
-              {JSON.stringify(resultObj, null, 2).slice(0, 500) + (JSON.stringify(resultObj).length > 500 ? '\n...[已折叠]' : '')}
-            </pre>
-          </div>
-        )
+        const resultText = toolResultMatch[2]
+        return <ToolResultBlock key={i} toolName={toolName} resultText={resultText} />
       }
 
       const mockupMatch = part.match(/\[mockup:(\w+)\]/)
