@@ -211,16 +211,17 @@ class PromptEngine:
                 if pm_breakdown:
                     sections.append(f"\n\n【任务上下文】：\nPM 的任务拆解：{pm_breakdown}")
                 
-                # Aider-style Repository Code Map Auto-injection!
+                # Aider-style Repository Code Map Auto-injection! (MCP Standardized Resource Integration!)
                 conversation_id = context.get("conversation_id", "")
                 if conversation_id:
-                    import os
-                    from app.core.repo_map import codebase_map_scanner
-                    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-                    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
-                    if os.path.exists(sandbox_dir):
-                        repo_map = codebase_map_scanner.scan_directory(sandbox_dir)
+                    from app.core.mcp_bridge import mcp_bridge_manager
+                    try:
+                        # Fetch project code outline skeleton via standard MCP Resource reading protocol
+                        repo_map = mcp_bridge_manager.read_builtin_resource_sync("workspace://repomap", conversation_id)
                         sections.append(f"\n\n【📂 当前工作区沙盒代码符号地图】:\n{repo_map}")
+                    except Exception as e:
+                        # Fallback silently to prevent system interruption
+                        pass
 
             else:
                 rendered = layer.render(variables)

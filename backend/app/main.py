@@ -4,6 +4,7 @@ import re
 import uuid
 import asyncio
 from pydantic import BaseModel
+from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -55,14 +56,32 @@ from app.agents.builder import AgentBuilderAgent
 from app.agents.custom import CustomAgent, AVAILABLE_TOOLS
 import app.tools  # noqa: F401 — trigger auto-registration of runtime tools
 
-app = FastAPI(title="AgentHub API")
+from contextlib import asynccontextmanager
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    from app.tools.browser_tools import browser_session_manager
-    from app.core.terminal import stateful_terminal_manager
-    await browser_session_manager.close_all()
-    await stateful_terminal_manager.close_all()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Run background autonomous daemon
+    from app.services.daemon_scheduler import daemon_scheduler
+    daemon_scheduler.start()
+    
+    yield
+    
+    # Shutdown: Clean resources and stop background tasks
+    try:
+        from app.services.daemon_scheduler import daemon_scheduler
+        await daemon_scheduler.stop()
+    except Exception:
+        pass
+        
+    try:
+        from app.tools.browser_tools import browser_session_manager
+        from app.core.terminal import stateful_terminal_manager
+        await browser_session_manager.close_all()
+        await stateful_terminal_manager.close_all()
+    except Exception:
+        pass
+
+app = FastAPI(title="AgentHub API", lifespan=lifespan)
 
 # ---- 文件上传目录 ----
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")
@@ -250,25 +269,54 @@ async def health():
 
 
 # ---- MULTI-CHANNEL WEBHOOK CALLBACK ENDPOINTS ----
-from fastapi import Request
+from fastapi import Request, HTTPException
 
 @app.post("/api/webhook/callback/slack")
 async def slack_webhook_callback(request: Request):
     """Slack interactive actions callback endpoint."""
     try:
-        # Slack sends payloads as form-data URL encoded JSON string under 'payload'
-        form_data = await request.form()
-        payload_str = form_data.get("payload")
+        # 1. Fetch headers and body bytes for cryptographic signature verification
+        timestamp = request.headers.get("X-Slack-Request-Timestamp")
+        signature = request.headers.get("X-Slack-Signature")
+        body_bytes = await request.body()
         
-        if payload_str:
-            payload = json.loads(payload_str)
+        # 2. Verify Slack signature using configured Signing Secret
+        signing_secret = os.environ.get("AGENTHUB_SLACK_SIGNING_SECRET")
+        if signing_secret:
+            if not timestamp or not signature:
+                raise HTTPException(status_code=401, detail="Missing Slack verification headers")
+            
+            from app.services.webhook_gateway import verify_slack_signature
+            if not verify_slack_signature(signing_secret, body_bytes, timestamp, signature):
+                raise HTTPException(status_code=403, detail="Invalid Slack signature")
         else:
-            # Fallback to direct JSON in case of custom test setups
-            payload = await request.json()
+            logger.warning("AGENTHUB_SLACK_SIGNING_SECRET is not configured. Slack signature verification bypassed.")
+
+        # 3. Parse payload from form-data URL encoded string or direct JSON
+        import urllib.parse
+        body_str = body_bytes.decode('utf-8')
+        payload = None
+        
+        if body_str.startswith("payload="):
+            parsed = urllib.parse.parse_qs(body_str)
+            payload_str = parsed.get("payload", [None])[0]
+            if payload_str:
+                payload = json.loads(payload_str)
+        
+        if not payload:
+            try:
+                payload = json.loads(body_str)
+            except json.JSONDecodeError:
+                pass
+                
+        if not payload:
+            return {"success": False, "error": "Invalid form-data or JSON payload"}
             
         from app.services.webhook_gateway import webhook_gateway
         res = await webhook_gateway.handle_slack_callback(payload)
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -277,10 +325,26 @@ async def slack_webhook_callback(request: Request):
 async def telegram_webhook_callback(request: Request):
     """Telegram inline keyboard button click callback endpoint."""
     try:
+        # 1. Fetch token and verify source authentication
+        received_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        secret_token = os.environ.get("AGENTHUB_TELEGRAM_SECRET_TOKEN")
+        
+        if secret_token:
+            if not received_token:
+                raise HTTPException(status_code=401, detail="Missing Telegram verification token")
+            
+            from app.services.webhook_gateway import verify_telegram_secret_token
+            if not verify_telegram_secret_token(secret_token, received_token):
+                raise HTTPException(status_code=403, detail="Invalid Telegram secret token")
+        else:
+            logger.warning("AGENTHUB_TELEGRAM_SECRET_TOKEN is not configured. Telegram token verification bypassed.")
+
         payload = await request.json()
         from app.services.webhook_gateway import webhook_gateway
         res = await webhook_gateway.handle_telegram_callback(payload)
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -320,24 +384,42 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
 
             # Intercept user interaction response if there's a pending interactive judge wait
             from app.tools.judge_tools import _pending_interactions
-            if conversation_id in _pending_interactions:
-                fut = _pending_interactions[conversation_id]
-                if not fut.done():
-                    reply_text = text
-                    if reply_text.startswith("[ask_user_reply]"):
-                        reply_text = reply_text.replace("[ask_user_reply]", "").strip()
-                    fut.set_result(reply_text)
+            is_active_hil = conversation_id in _pending_interactions
+            
+            # Recovery path check
+            is_recovered_hil = False
+            if not is_active_hil:
+                from app.core.database import get_pending_hil_checkpoint
+                try:
+                    checkpoint = get_pending_hil_checkpoint(conversation_id)
+                    if checkpoint:
+                        is_recovered_hil = True
+                except Exception:
+                    pass
+
+            if is_active_hil or is_recovered_hil:
+                reply_text = text
+                if reply_text.startswith("[ask_user_reply]"):
+                    reply_text = reply_text.replace("[ask_user_reply]", "").strip()
+                
+                if is_active_hil:
+                    fut = _pending_interactions[conversation_id]
+                    if not fut.done():
+                        fut.set_result(reply_text)
+                else:
+                    # Recovery path: trigger asynchronous recovery task
+                    asyncio.create_task(resume_graph_from_checkpoint(conversation_id, reply_text))
                     
-                    # We still want to save and broadcast this message to display it in the Chat UI as a user reply
-                    save_message(conversation_id, sender, content, streaming=False)
-                    await manager.broadcast(conversation_id, {
-                        "type": "message",
-                        "conversation_id": conversation_id,
-                        "sender": sender,
-                        "content": {"text": text},
-                        "stream": False,
-                    })
-                    continue
+                # We still want to save and broadcast this message to display it in the Chat UI as a user reply
+                save_message(conversation_id, sender, content, streaming=False)
+                await manager.broadcast(conversation_id, {
+                    "type": "message",
+                    "conversation_id": conversation_id,
+                    "sender": sender,
+                    "content": {"text": text},
+                    "stream": False,
+                })
+                continue
 
             # Handle stop generation — must be processed without blocking on
             # the in-flight generation task (which is why generation runs as a
@@ -434,6 +516,381 @@ async def _run_target_agent_flow(conversation_id: str, agent, text: str):
         })
 
 
+_graph_builders = {}
+
+
+def _build_group_chat_graph(conversation_id: str, text: str, trace: Any, stop_event: asyncio.Event) -> Any:
+    from app.core.state_graph import StateGraph
+    
+    graph = StateGraph()
+    
+    # 1. Define Node execution wrappers
+    async def run_pm(state: dict) -> dict:
+        pm = AGENTS["agent_pm"]
+        step = trace.add_step(pm.agent_id, pm.name)
+        
+        feedback = state.get("agent_pm_feedback", "")
+        effective_prompt = text
+        if feedback:
+            effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
+        
+        assigned, pm_res = await _stream_agent_reply(
+            conversation_id, pm, effective_prompt, stop_event
+        )
+        step.finish(status="success", tokens=len(pm_res) // 3)
+        metrics.record_agent_result(pm.agent_id, 80, step.duration_ms, step.tokens_used)
+        return {
+            "pm_response": pm_res,
+            "assigned_agents": assigned,
+            "agent_pm_feedback": ""
+        }
+        
+    async def run_designer(state: dict) -> dict:
+        designer = AGENTS["agent_designer"]
+        step = trace.add_step(designer.agent_id, designer.name)
+        
+        feedback = state.get("agent_designer_feedback", "")
+        effective_prompt = text
+        if feedback:
+            effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
+        
+        _, res = await _stream_agent_reply(
+            conversation_id, designer, effective_prompt, stop_event, context=state.get("pm_response", "")
+        )
+        step.finish(status="success", tokens=len(res) // 3)
+        metrics.record_agent_result(designer.agent_id, 75, step.duration_ms, step.tokens_used)
+        return {"designer_response": res, "agent_designer_feedback": ""}
+
+    async def run_frontend(state: dict) -> dict:
+        frontend = AGENTS["agent_frontend"]
+        step = trace.add_step(frontend.agent_id, frontend.name)
+        
+        feedback = state.get("agent_frontend_feedback", "")
+        effective_prompt = text
+        if feedback:
+            effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
+        
+        _, res = await _stream_agent_reply(
+            conversation_id, frontend, effective_prompt, stop_event, context=state.get("pm_response", "")
+        )
+        step.finish(status="success", tokens=len(res) // 3)
+        metrics.record_agent_result(frontend.agent_id, 75, step.duration_ms, step.tokens_used)
+        return {"frontend_response": res, "agent_frontend_feedback": ""}
+
+    async def run_backend(state: dict) -> dict:
+        backend = AGENTS["agent_backend"]
+        step = trace.add_step(backend.agent_id, backend.name)
+        
+        feedback = state.get("agent_backend_feedback", "")
+        effective_prompt = text
+        if feedback:
+            effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
+        
+        _, res = await _stream_agent_reply(
+            conversation_id, backend, effective_prompt, stop_event, context=state.get("pm_response", "")
+        )
+        step.finish(status="success", tokens=len(res) // 3)
+        metrics.record_agent_result(backend.agent_id, 75, step.duration_ms, step.tokens_used)
+        return {"backend_response": res, "agent_backend_feedback": ""}
+
+    async def run_tester(state: dict) -> dict:
+        tester = AGENTS["agent_tester"]
+        step = trace.add_step(tester.agent_id, tester.name)
+        
+        feedback = state.get("agent_tester_feedback", "")
+        effective_prompt = text
+        if feedback:
+            effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
+        
+        _, res = await _stream_agent_reply(
+            conversation_id, tester, effective_prompt, stop_event, context=state.get("pm_response", "")
+        )
+        step.finish(status="success", tokens=len(res) // 3)
+        metrics.record_agent_result(tester.agent_id, 75, step.duration_ms, step.tokens_used)
+        return {"tester_response": res, "agent_tester_feedback": ""}
+
+    async def run_devops(state: dict) -> dict:
+        devops = AGENTS["agent_devops"]
+        step = trace.add_step(devops.agent_id, devops.name)
+        
+        feedback = state.get("agent_devops_feedback", "")
+        effective_prompt = text
+        if feedback:
+            effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
+        
+        _, res = await _stream_agent_reply(
+            conversation_id, devops, effective_prompt, stop_event, context=state.get("pm_response", "")
+        )
+        step.finish(status="success", tokens=len(res) // 3)
+        metrics.record_agent_result(devops.agent_id, 75, step.duration_ms, step.tokens_used)
+        return {"devops_response": res, "agent_devops_feedback": ""}
+
+    # 2. Add nodes to graph
+    graph.add_node("agent_pm", run_pm)
+    graph.add_node("agent_designer", run_designer)
+    graph.add_node("agent_frontend", run_frontend)
+    graph.add_node("agent_backend", run_backend)
+    graph.add_node("agent_tester", run_tester)
+    graph.add_node("agent_devops", run_devops)
+
+    # 3. Add edges and conditional routing rules using select_next_speaker LLM Coordinator
+    SPEAKER_SELECTION_SYSTEM_PROMPT = """你是一个智能体群聊协调器 (Group Chat Coordinator)。
+根据当前的对话历史和各个候选智能体 (Agents) 的角色描述，判断下一个最适合发言的智能体是谁。
+
+候选智能体列表：
+{candidates_info}
+
+规则：
+1. 只能从上面的候选智能体 ID 中选择一个，或者输出 "END" 表示对话已圆满结束（所有开发/部署任务均已妥善完成，没有遗留问题）。
+2. 请只输出下一个发言的智能体 ID（例如 "agent_frontend"）或 "END"，不要附带任何其他解释、标点或 markdown 格式。
+3. 必须客观分析当前对话进度。如果当前步骤是 PM 分工且需要前端开发，下一步通常是 `agent_frontend`；如果刚才已经完成了编码，下一步通常是 `agent_tester` 运行测试；若测试完毕没有问题，则是 `agent_devops` 部署。如果所有规划的任务都已经完成，输出 "END"。
+"""
+
+    async def select_next_speaker(state: dict) -> str:
+        import logging
+        sg_logger = logging.getLogger("state_graph")
+        
+        assigned = state.get("assigned_agents", [])
+        candidates = assigned if assigned else ["agent_designer", "agent_frontend", "agent_backend", "agent_tester", "agent_devops"]
+        
+        # Filter out completed nodes to ensure progress along the DAG
+        remaining_candidates = [c for c in candidates if c not in state.get("completed_nodes", [])]
+        
+        if not remaining_candidates:
+            return "END"
+            
+        # 💡 [Heuristic Lightweight Router Intercept (0 Latency, 0 Token Cost)]
+        rule_speaker = None
+        
+        # Rule A: Single Choice
+        if len(remaining_candidates) == 1:
+            rule_speaker = remaining_candidates[0]
+            sg_logger.info(f"[Speaker Selection] Heuristic rule A triggered: only one candidate remaining. Selected '{rule_speaker}'")
+        
+        # Rule B: Linear SDLC Waterfall Inference
+        else:
+            completed = state.get("completed_nodes", [])
+            last_completed = completed[-1] if completed else None
+            
+            if last_completed == "agent_pm":
+                if "agent_designer" in remaining_candidates:
+                    rule_speaker = "agent_designer"
+                elif "agent_frontend" in remaining_candidates:
+                    rule_speaker = "agent_frontend"
+                elif "agent_backend" in remaining_candidates:
+                    rule_speaker = "agent_backend"
+            elif last_completed == "agent_designer":
+                if "agent_frontend" in remaining_candidates:
+                    rule_speaker = "agent_frontend"
+                elif "agent_backend" in remaining_candidates:
+                    rule_speaker = "agent_backend"
+            elif last_completed in ("agent_frontend", "agent_backend"):
+                frontend_done = "agent_frontend" in completed or "agent_frontend" not in remaining_candidates
+                backend_done = "agent_backend" in completed or "agent_backend" not in remaining_candidates
+                if frontend_done and backend_done:
+                    if "agent_tester" in remaining_candidates:
+                        rule_speaker = "agent_tester"
+                else:
+                    other = "agent_backend" if last_completed == "agent_frontend" else "agent_frontend"
+                    if other in remaining_candidates:
+                        rule_speaker = other
+            elif last_completed == "agent_tester":
+                if "agent_devops" in remaining_candidates:
+                    rule_speaker = "agent_devops"
+            elif last_completed == "agent_devops":
+                rule_speaker = "END"
+                
+            if rule_speaker:
+                sg_logger.info(f"[Speaker Selection] Heuristic rule B triggered: SDLC waterfall transition. Selected '{rule_speaker}'")
+        
+        if rule_speaker:
+            return rule_speaker
+
+        # Fallback to LLM Coordinator for non-deterministic branching
+        sg_logger.info("[Speaker Selection] Non-deterministic state branching. Dispatching LLM Coordinator...")
+        
+        # Build candidates_info string
+        candidates_info = ""
+        for cid in remaining_candidates:
+            if cid in AGENTS:
+                candidates_info += f"- ID: {cid}\n  Name: {AGENTS[cid].name}\n  Description: {AGENTS[cid].description}\n\n"
+                
+        if not candidates_info.strip():
+            return "END"
+            
+        # Get last few messages to analyze conversation context
+        history = get_messages(conversation_id, limit=6)
+        history_text = ""
+        for m in history:
+             sender_name = m.get("sender", "unknown")
+             content = m.get("content", {})
+             text_content = content.get("text", "")
+             # Strip code blocks to keep text concise and save tokens
+             text_content = re.sub(r'```[\s\S]*?```', '[Generated Code Block]', text_content)
+             history_text += f"{sender_name}: {text_content[:400]}\n\n"
+             
+        user_prompt = f"--- 对话历史 ---\n{history_text}\n\n请决定下一个最适合发言的智能体。"
+        system_prompt = SPEAKER_SELECTION_SYSTEM_PROMPT.format(candidates_info=candidates_info)
+        
+        selected = ""
+        try:
+            async for chunk in llm_client.chat_stream([{"role": "user", "content": user_prompt}], system=system_prompt):
+                selected += chunk
+            selected = selected.strip().strip("'\"`").strip()
+            sg_logger.info(f"[Speaker Selection] LLM selected speaker: '{selected}'")
+        except Exception as e:
+            sg_logger.error(f"[Speaker Selection] Error calling LLM router: {e}")
+            selected = ""
+            
+        if selected in remaining_candidates:
+            return selected
+        elif selected == "END":
+            return "END"
+        else:
+            fallback = remaining_candidates[0]
+            sg_logger.info(f"[Speaker Selection] Invalid/unknown speaker '{selected}', falling back to '{fallback}'")
+            return fallback
+
+    graph.add_conditional_edge("agent_pm", select_next_speaker)
+    graph.add_conditional_edge("agent_designer", select_next_speaker)
+    graph.add_conditional_edge("agent_frontend", select_next_speaker)
+    graph.add_conditional_edge("agent_backend", select_next_speaker)
+    graph.add_conditional_edge("agent_tester", select_next_speaker)
+    graph.add_edge("agent_devops", "END")
+
+    # 3.5 Register Statechart Transition Guards (Guards & Fallbacks)
+    graph.add_guard(
+        "agent_devops",
+        lambda state: "agent_tester" in state.get("completed_nodes", []),
+        error_fallback_node="agent_tester"
+    )
+    graph.add_guard(
+        "agent_tester",
+        lambda state: any(n in state.get("completed_nodes", []) for n in ["agent_frontend", "agent_backend"]),
+        error_fallback_node="agent_frontend"
+    )
+    
+    return graph
+
+
+async def resume_graph_from_checkpoint(conversation_id: str, action: str):
+    """Restore state from persistent DB and resume suspended graph execution."""
+    import uuid as _uuid
+    import asyncio
+    from app.core.database import get_pending_hil_checkpoint, resolve_hil_checkpoint, save_message
+    from app.core.websocket import manager
+    
+    checkpoint = get_pending_hil_checkpoint(conversation_id)
+    if not checkpoint:
+        print(f"[Checkpointer Recovery] No pending HIL checkpoint found for conversation {conversation_id}", flush=True)
+        return
+        
+    # Mark resolved in database
+    resolve_hil_checkpoint(conversation_id, action)
+    
+    current_node = checkpoint["current_node"]
+    next_node = checkpoint["next_node"]
+    state_data = checkpoint["state_data"]
+    original_prompt = checkpoint["original_prompt"]
+    
+    # Broadcast HIL recovery notice
+    await manager.broadcast(conversation_id, {
+        "type": "message",
+        "conversation_id": conversation_id,
+        "sender": "system",
+        "content": {"text": f"🔄 检测到服务器重启。正在从检查点恢复流程并执行审核决策: **{action}**..."},
+        "stream": False,
+    })
+    
+    # Setup starting node and update state data based on action
+    start_node = None
+    if action.lower() in ("approve", "yes", "y") or any(action.lower() == opt["label"].lower() and opt["recommended"] for opt in checkpoint.get("options", [])):
+        # Approved: proceed to next node
+        if next_node == "END":
+            # Flow finished
+            await manager.broadcast(conversation_id, {
+                "type": "message",
+                "conversation_id": conversation_id,
+                "sender": "system",
+                "content": {"text": "✅ 审核通过。流程圆满结束！"},
+                "stream": False,
+            })
+            await manager.broadcast(conversation_id, {
+                "type": "generating",
+                "conversation_id": conversation_id,
+                "is_generating": False,
+            })
+            return
+        start_node = next_node
+    elif action.lower() in ("terminate", "end", "stop"):
+        # Terminated
+        await manager.broadcast(conversation_id, {
+            "type": "message",
+            "conversation_id": conversation_id,
+            "sender": "system",
+            "content": {"text": "🛑 审核不通过，流程已终止。"},
+            "stream": False,
+        })
+        await manager.broadcast(conversation_id, {
+            "type": "generating",
+            "conversation_id": conversation_id,
+            "is_generating": False,
+        })
+        return
+    else:
+        # Revision Feedback
+        feedback = action
+        current_agent_name = current_node.replace("agent_", "").upper()
+        
+        # Save and broadcast user feedback message to the chat
+        feedback_msg = f"🔄 [HIL 反馈] 针对 {current_agent_name} 的修改意见：\n{feedback}"
+        save_message(conversation_id, "user", {"text": feedback_msg}, streaming=False)
+        await manager.broadcast(conversation_id, {
+            "type": "message",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": {"text": feedback_msg},
+            "stream": False,
+        })
+        
+        # Set next_node back to current_node to re-run, and record feedback
+        state_data[f"{current_node}_feedback"] = feedback
+        if current_node in state_data.get("completed_nodes", []):
+            state_data["completed_nodes"].remove(current_node)
+        start_node = current_node
+
+    # Run execution in background task
+    stop_event = asyncio.Event()
+    _stop_events[conversation_id] = stop_event
+    
+    trace = metrics.start_trace(
+        task_id=str(_uuid.uuid4())[:8],
+        conversation_id=conversation_id,
+        user_input=original_prompt,
+    )
+    
+    try:
+        await manager.broadcast(conversation_id, {
+            "type": "generating",
+            "conversation_id": conversation_id,
+            "is_generating": True,
+        })
+        
+        if conversation_id in _graph_builders:
+            graph = _graph_builders[conversation_id](conversation_id, original_prompt, trace, stop_event)
+        else:
+            graph = _build_group_chat_graph(conversation_id, original_prompt, trace, stop_event)
+        await graph.run(state_data, conversation_id, stop_event, start_node=start_node)
+    finally:
+        trace.finish()
+        _stop_events.pop(conversation_id, None)
+        await manager.broadcast(conversation_id, {
+            "type": "generating",
+            "conversation_id": conversation_id,
+            "is_generating": False,
+        })
+
+
 async def _run_user_message_flow(conversation_id: str, text: str, target_agent: str | None):
     """Background generation flow for a plain user message (group or auto-routed)."""
     import uuid as _uuid
@@ -467,208 +924,9 @@ async def _run_user_message_flow(conversation_id: str, text: str, target_agent: 
 
         is_group = not target_agent
         if is_group and not stop_event.is_set():
-            from app.core.state_graph import StateGraph
-            
-            graph = StateGraph()
-            
-            # 1. Define Node execution wrappers
-            async def run_pm(state: dict) -> dict:
-                pm = AGENTS["agent_pm"]
-                step = trace.add_step(pm.agent_id, pm.name)
-                
-                feedback = state.get("agent_pm_feedback", "")
-                effective_prompt = text
-                if feedback:
-                    effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
-                
-                assigned, pm_res = await _stream_agent_reply(
-                    conversation_id, pm, effective_prompt, stop_event
-                )
-                step.finish(status="success", tokens=len(pm_res) // 3)
-                metrics.record_agent_result(pm.agent_id, 80, step.duration_ms, step.tokens_used)
-                return {
-                    "pm_response": pm_res,
-                    "assigned_agents": assigned,
-                    "agent_pm_feedback": ""
-                }
-                
-            async def run_designer(state: dict) -> dict:
-                designer = AGENTS["agent_designer"]
-                step = trace.add_step(designer.agent_id, designer.name)
-                
-                feedback = state.get("agent_designer_feedback", "")
-                effective_prompt = text
-                if feedback:
-                    effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
-                
-                _, res = await _stream_agent_reply(
-                    conversation_id, designer, effective_prompt, stop_event, context=state.get("pm_response", "")
-                )
-                step.finish(status="success", tokens=len(res) // 3)
-                metrics.record_agent_result(designer.agent_id, 75, step.duration_ms, step.tokens_used)
-                return {"designer_response": res, "agent_designer_feedback": ""}
-
-            async def run_frontend(state: dict) -> dict:
-                frontend = AGENTS["agent_frontend"]
-                step = trace.add_step(frontend.agent_id, frontend.name)
-                
-                feedback = state.get("agent_frontend_feedback", "")
-                effective_prompt = text
-                if feedback:
-                    effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
-                
-                _, res = await _stream_agent_reply(
-                    conversation_id, frontend, effective_prompt, stop_event, context=state.get("pm_response", "")
-                )
-                step.finish(status="success", tokens=len(res) // 3)
-                metrics.record_agent_result(frontend.agent_id, 75, step.duration_ms, step.tokens_used)
-                return {"frontend_response": res, "agent_frontend_feedback": ""}
-
-            async def run_backend(state: dict) -> dict:
-                backend = AGENTS["agent_backend"]
-                step = trace.add_step(backend.agent_id, backend.name)
-                
-                feedback = state.get("agent_backend_feedback", "")
-                effective_prompt = text
-                if feedback:
-                    effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
-                
-                _, res = await _stream_agent_reply(
-                    conversation_id, backend, effective_prompt, stop_event, context=state.get("pm_response", "")
-                )
-                step.finish(status="success", tokens=len(res) // 3)
-                metrics.record_agent_result(backend.agent_id, 75, step.duration_ms, step.tokens_used)
-                return {"backend_response": res, "agent_backend_feedback": ""}
-
-            async def run_tester(state: dict) -> dict:
-                tester = AGENTS["agent_tester"]
-                step = trace.add_step(tester.agent_id, tester.name)
-                
-                feedback = state.get("agent_tester_feedback", "")
-                effective_prompt = text
-                if feedback:
-                    effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
-                
-                _, res = await _stream_agent_reply(
-                    conversation_id, tester, effective_prompt, stop_event, context=state.get("pm_response", "")
-                )
-                step.finish(status="success", tokens=len(res) // 3)
-                metrics.record_agent_result(tester.agent_id, 75, step.duration_ms, step.tokens_used)
-                return {"tester_response": res, "agent_tester_feedback": ""}
-
-            async def run_devops(state: dict) -> dict:
-                devops = AGENTS["agent_devops"]
-                step = trace.add_step(devops.agent_id, devops.name)
-                
-                feedback = state.get("agent_devops_feedback", "")
-                effective_prompt = text
-                if feedback:
-                    effective_prompt = f"{text}\n\n🔄 人工审核反馈意见，请针对以下意见修改刚才的代码/结果：\n{feedback}"
-                
-                _, res = await _stream_agent_reply(
-                    conversation_id, devops, effective_prompt, stop_event, context=state.get("pm_response", "")
-                )
-                step.finish(status="success", tokens=len(res) // 3)
-                metrics.record_agent_result(devops.agent_id, 75, step.duration_ms, step.tokens_used)
-                return {"devops_response": res, "agent_devops_feedback": ""}
-
-            # 2. Add nodes to graph
-            graph.add_node("agent_pm", run_pm)
-            graph.add_node("agent_designer", run_designer)
-            graph.add_node("agent_frontend", run_frontend)
-            graph.add_node("agent_backend", run_backend)
-            graph.add_node("agent_tester", run_tester)
-            graph.add_node("agent_devops", run_devops)
-
-            # 3. Add edges and conditional routing rules using select_next_speaker LLM Coordinator
-            SPEAKER_SELECTION_SYSTEM_PROMPT = """你是一个智能体群聊协调器 (Group Chat Coordinator)。
-根据当前的对话历史和各个候选智能体 (Agents) 的角色描述，判断下一个最适合发言的智能体是谁。
-
-候选智能体列表：
-{candidates_info}
-
-规则：
-1. 只能从上面的候选智能体 ID 中选择一个，或者输出 "END" 表示对话已圆满结束（所有开发/部署任务均已妥善完成，没有遗留问题）。
-2. 请只输出下一个发言的智能体 ID（例如 "agent_frontend"）或 "END"，不要附带任何其他解释、标点或 markdown 格式。
-3. 必须客观分析当前对话进度。如果当前步骤是 PM 分工且需要前端开发，下一步通常是 `agent_frontend`；如果刚才已经完成了编码，下一步通常是 `agent_tester` 运行测试；若测试完毕没有问题，则是 `agent_devops` 部署。如果所有规划的任务都已经完成，输出 "END"。
-"""
-
-            async def select_next_speaker(state: dict) -> str:
-                import logging
-                sg_logger = logging.getLogger("state_graph")
-                
-                assigned = state.get("assigned_agents", [])
-                candidates = assigned if assigned else ["agent_designer", "agent_frontend", "agent_backend", "agent_tester", "agent_devops"]
-                
-                # Filter out completed nodes to ensure progress along the DAG
-                remaining_candidates = [c for c in candidates if c not in state.get("completed_nodes", [])]
-                
-                if not remaining_candidates:
-                    return "END"
-                    
-                # Build candidates_info string
-                candidates_info = ""
-                for cid in remaining_candidates:
-                    if cid in AGENTS:
-                        candidates_info += f"- ID: {cid}\n  Name: {AGENTS[cid].name}\n  Description: {AGENTS[cid].description}\n\n"
-                        
-                if not candidates_info.strip():
-                    return "END"
-                    
-                # Get last few messages to analyze conversation context
-                history = get_messages(conversation_id, limit=6)
-                history_text = ""
-                for m in history:
-                     sender_name = m.get("sender", "unknown")
-                     content = m.get("content", {})
-                     text_content = content.get("text", "")
-                     # Strip code blocks to keep text concise and save tokens
-                     text_content = re.sub(r'```[\s\S]*?```', '[Generated Code Block]', text_content)
-                     history_text += f"{sender_name}: {text_content[:400]}\n\n"
-                     
-                user_prompt = f"--- 对话历史 ---\n{history_text}\n\n请决定下一个最适合发言的智能体。"
-                system_prompt = SPEAKER_SELECTION_SYSTEM_PROMPT.format(candidates_info=candidates_info)
-                
-                selected = ""
-                try:
-                    async for chunk in llm_client.chat_stream([{"role": "user", "content": user_prompt}], system=system_prompt):
-                        selected += chunk
-                    selected = selected.strip().strip("'\"`").strip()
-                    sg_logger.info(f"[Speaker Selection] LLM selected speaker: '{selected}'")
-                except Exception as e:
-                    sg_logger.error(f"[Speaker Selection] Error calling LLM router: {e}")
-                    selected = ""
-                    
-                if selected in remaining_candidates:
-                    return selected
-                elif selected == "END":
-                    return "END"
-                else:
-                    fallback = remaining_candidates[0]
-                    sg_logger.info(f"[Speaker Selection] Invalid/unknown speaker '{selected}', falling back to '{fallback}'")
-                    return fallback
-
-            graph.add_conditional_edge("agent_pm", select_next_speaker)
-            graph.add_conditional_edge("agent_designer", select_next_speaker)
-            graph.add_conditional_edge("agent_frontend", select_next_speaker)
-            graph.add_conditional_edge("agent_backend", select_next_speaker)
-            graph.add_conditional_edge("agent_tester", select_next_speaker)
-            graph.add_edge("agent_devops", "END")
-
-            # 3.5 Register Statechart Transition Guards (Guards & Fallbacks)
-            graph.add_guard(
-                "agent_devops",
-                lambda state: "agent_tester" in state.get("completed_nodes", []),
-                error_fallback_node="agent_tester"
-            )
-            graph.add_guard(
-                "agent_tester",
-                lambda state: any(n in state.get("completed_nodes", []) for n in ["agent_frontend", "agent_backend"]),
-                error_fallback_node="agent_frontend"
-            )
-
-            # 4. Run StateGraph orchestration
-            await graph.run({}, conversation_id, stop_event)
+            graph = _build_group_chat_graph(conversation_id, text, trace, stop_event)
+            # 4. Run StateGraph orchestration passing the original prompt for recovery resilience
+            await graph.run({"original_prompt": text}, conversation_id, stop_event)
     finally:
         trace.finish()
         _stop_events.pop(conversation_id, None)
@@ -1403,20 +1661,6 @@ async def _simulate_deploy(conversation_id: str):
     })
 
 
-# ---- Startup / Shutdown Lifespan Hooks ----
-
-@app.on_event("startup")
-async def startup_event():
-    from app.services.daemon_scheduler import daemon_scheduler
-    daemon_scheduler.start()
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    from app.services.daemon_scheduler import daemon_scheduler
-    await daemon_scheduler.stop()
-
-
 # ---- Background Autonomous Tasks REST API ----
 
 class CronTaskCreate(BaseModel):
@@ -1919,6 +2163,55 @@ async def main_flow(task_text, human_input_mode, cooldown_steps):
         if not remaining:
             return "END"
             
+        # 💡 [Heuristic Lightweight Router Intercept (0 Latency, 0 Token Cost)]
+        rule_speaker = None
+        
+        # Rule A: Single Choice
+        if len(remaining) == 1:
+            rule_speaker = remaining[0]
+            print(f"\\n💡 [Heuristic Speaker Selection] Rule A: only one candidate remaining -> Selected '{{rule_speaker}}'")
+            
+        # Rule B: Linear SDLC Waterfall Inference
+        else:
+            completed = state.get("completed_nodes", [])
+            last_completed = completed[-1] if completed else None
+            
+            if last_completed == "agent_pm":
+                if "agent_designer" in remaining:
+                    rule_speaker = "agent_designer"
+                elif "agent_frontend" in remaining:
+                    rule_speaker = "agent_frontend"
+                elif "agent_backend" in remaining:
+                    rule_speaker = "agent_backend"
+            elif last_completed == "agent_designer":
+                if "agent_frontend" in remaining:
+                    rule_speaker = "agent_frontend"
+                elif "agent_backend" in remaining:
+                    rule_speaker = "agent_backend"
+            elif last_completed in ("agent_frontend", "agent_backend"):
+                frontend_done = "agent_frontend" in completed or "agent_frontend" not in remaining
+                backend_done = "agent_backend" in completed or "agent_backend" not in remaining
+                if frontend_done and backend_done:
+                    if "agent_tester" in remaining:
+                        rule_speaker = "agent_tester"
+                else:
+                    other = "agent_backend" if last_completed == "agent_frontend" else "agent_frontend"
+                    if other in remaining:
+                        rule_speaker = other
+            elif last_completed == "agent_tester":
+                if "agent_devops" in remaining:
+                    rule_speaker = "agent_devops"
+            elif last_completed == "agent_devops":
+                rule_speaker = "END"
+                
+            if rule_speaker:
+                print(f"\\n💡 [Heuristic Speaker Selection] Rule B: SDLC Waterfall Inference -> Selected '{{rule_speaker}}'")
+                
+        if rule_speaker:
+            return rule_speaker
+
+        print("\\n🤖 [Speaker Selection] Non-deterministic state branching. Dispatching LLM Coordinator...")
+        
         candidates_info = ""
         for cid in remaining:
             if cid in AGENTS:

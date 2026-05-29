@@ -54,7 +54,11 @@ class BaseAgent:
             round_count = 0
             while True:
                 accumulated = ""
-                async for chunk in llm_client.chat_stream(messages, full_prompt):
+                try:
+                    llm_gen = llm_client.chat_stream(messages, full_prompt, self.enabled_tools)
+                except TypeError:
+                    llm_gen = llm_client.chat_stream(messages, full_prompt)
+                async for chunk in llm_gen:
                     accumulated += chunk
                     yield chunk
 

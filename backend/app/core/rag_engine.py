@@ -145,10 +145,22 @@ class RAGEngine:
         if not query_text.strip():
             return []
 
+        from app.core.metrics import active_step_var
+        step = active_step_var.get()
+        span = None
+        if step:
+            span = step.start_span(
+                name="rag_semantic_search",
+                span_type="rag",
+                input_data={"query_text": query_text, "top_k": top_k}
+            )
+
         try:
             collection = _get_or_create_collection()
             # 检查集合是否有数据
             if collection.count() == 0:
+                if span:
+                    span.finish(output_data=[], status="success", metadata={"hits_count": 0})
                 return []
 
             results = collection.query(
@@ -169,10 +181,22 @@ class RAGEngine:
                         "metadata": meta,
                     })
 
+            if span:
+                scores = [h["score"] for h in hits]
+                span.finish(
+                    output_data=[{"score": h["score"], "metadata": h["metadata"]} for h in hits],
+                    status="success",
+                    metadata={"hits_count": len(hits), "scores": scores}
+                )
             return hits
 
         except Exception as e:
             logger.error(f"RAG query error: {e}")
+            if span:
+                span.finish(
+                    output_data={"error": str(e)},
+                    status="error"
+                )
             return []
 
     def build_context_prompt(self, query_text: str, top_k: int = TOP_K) -> str:

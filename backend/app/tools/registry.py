@@ -8,8 +8,9 @@ import json
 import re
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional, Type
 from abc import ABC, abstractmethod
+from pydantic import BaseModel
 
 logger = logging.getLogger("tool_registry")
 
@@ -31,6 +32,7 @@ class AgentTool(ABC):
     icon: str = "🔧"
     parameters: dict = {}  # JSON Schema for parameters
     enabled: bool = True
+    params_model: Optional[Type[BaseModel]] = None
 
     @abstractmethod
     async def execute(self, params: dict) -> ToolResult:
@@ -43,6 +45,25 @@ class AgentTool(ABC):
             ToolResult with success/data/error
         """
         ...
+
+    async def validate_and_execute(self, params: dict) -> ToolResult:
+        """Validate input parameters using Pydantic model (if specified) and execute tool."""
+        if self.params_model:
+            from pydantic import ValidationError
+            try:
+                # Instantiate and validate using Pydantic model
+                model_inst = self.params_model(**params)
+                # Convert validated model back to dict for execute (compatible with existing signature)
+                params = model_inst.model_dump()
+            except ValidationError as ve:
+                logger.warning(f"Parameter validation failed for tool '{self.name}': {ve}")
+                return ToolResult(
+                    success=False,
+                    error=f"【参数强校验失败】调用工具 '{self.name}' 参数不合规，错误详情: {ve}"
+                )
+            except Exception as e:
+                return ToolResult(success=False, error=f"参数校验异常: {e}")
+        return await self.execute(params)
 
     def to_dict(self) -> dict:
         return {
@@ -148,8 +169,30 @@ async def execute_tool_call(tool_name: str, params: dict) -> ToolResult:
         return ToolResult(success=False, error=f"未知工具: {tool_name}")
     if not tool.enabled:
         return ToolResult(success=False, error=f"工具已禁用: {tool_name}")
+
+    from app.core.metrics import active_step_var
+    step = active_step_var.get()
+    span = None
+    if step:
+        span = step.start_span(
+            name=f"tool_{tool_name}",
+            span_type="tool",
+            input_data={"params": params}
+        )
+
     try:
-        return await tool.execute(params)
+        res = await tool.validate_and_execute(params)
+        if span:
+            span.finish(
+                output_data={"success": res.success, "data": res.data, "error": res.error},
+                status="success" if res.success else "error"
+            )
+        return res
     except Exception as e:
         logger.error(f"Tool '{tool_name}' execution error: {e}")
+        if span:
+            span.finish(
+                output_data={"success": False, "error": str(e)},
+                status="error"
+            )
         return ToolResult(success=False, error=str(e))

@@ -1,8 +1,98 @@
 import asyncio
 import logging
-from typing import Callable, Any, Dict, List
+from typing import Callable, Any, Dict, List, Optional
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("state_graph")
+
+
+class GraphState(BaseModel):
+    """Pydantic Model for StateGraph flow tracking with strict validation and fallback dictionary compatibility."""
+    completed_nodes: List[str] = Field(default_factory=list)
+    assigned_agents: List[str] = Field(default_factory=list)
+    pm_response: str = ""
+    designer_response: str = ""
+    frontend_response: str = ""
+    backend_response: str = ""
+    tester_response: str = ""
+    devops_response: str = ""
+    original_prompt: str = ""
+    
+    agent_pm_feedback: str = ""
+    agent_designer_feedback: str = ""
+    agent_frontend_feedback: str = ""
+    agent_backend_feedback: str = ""
+    agent_tester_feedback: str = ""
+    agent_devops_feedback: str = ""
+
+    # Allow arbitrary dynamic fields and trigger validation on attribute assignments
+    model_config = {
+        "extra": "allow",
+        "validate_assignment": True
+    }
+
+    # Dict-like compatibility methods for seamless backward integration:
+    def get(self, key: str, default: Any = None) -> Any:
+        if hasattr(self, key):
+            return getattr(self, key)
+        extra = self.model_extra or {}
+        return extra.get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        if hasattr(self, key):
+            return getattr(self, key)
+        extra = self.model_extra or {}
+        if key in extra:
+            return extra[key]
+        raise KeyError(key)
+
+    def __setitem__(self, key: str, value: Any):
+        setattr(self, key, value)
+
+    def __contains__(self, key: str) -> bool:
+        if hasattr(self, key):
+            return True
+        extra = self.model_extra or {}
+        return key in extra
+
+    def update(self, other: dict):
+        for k, v in other.items():
+            setattr(self, k, v)
+            
+    def copy(self):
+        return self.model_copy()
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        if not self.__contains__(key):
+            self.__setitem__(key, default)
+        return self.__getitem__(key)
+
+    def pop(self, key: str, default: Any = None) -> Any:
+        if self.__contains__(key):
+            val = self.__getitem__(key)
+            if key in (self.model_fields or {}):
+                default_factory = self.model_fields[key].default_factory
+                if default_factory:
+                    setattr(self, key, default_factory())
+                else:
+                    setattr(self, key, self.model_fields[key].default)
+            else:
+                extra = self.model_extra or {}
+                extra.pop(key, None)
+            return val
+        return default
+
+    def keys(self):
+        model_keys = set((self.model_fields or {}).keys())
+        extra_keys = set((self.model_extra or {}).keys())
+        return model_keys.union(extra_keys)
+
+    def values(self):
+        return [self.__getitem__(k) for k in self.keys()]
+
+    def items(self):
+        return [(k, self.__getitem__(k)) for k in self.keys()]
+
 
 class StateGraph:
     """A lightweight, high-performance in-house StateGraph Engine
@@ -29,12 +119,20 @@ class StateGraph:
             self.guards[node_name] = []
         self.guards[node_name].append((guard_func, error_fallback_node))
         
-    async def run(self, initial_state: dict, conversation_id: str, stop_event: asyncio.Event = None) -> dict:
+    async def run(self, initial_state: dict | GraphState, conversation_id: str, stop_event: asyncio.Event = None, start_node: str = None) -> GraphState:
         from app.core.websocket import manager
         
-        state = initial_state.copy()
-        state.setdefault("completed_nodes", [])
-        current_node = "agent_pm"
+        # Instantiate GraphState model if dict is passed, or copy if already model instance
+        if isinstance(initial_state, dict):
+            state = GraphState(**initial_state)
+        elif isinstance(initial_state, GraphState):
+            state = initial_state.copy()
+        else:
+            state = GraphState()
+            
+        if not state.completed_nodes:
+            state.completed_nodes = []
+        current_node = start_node if start_node else "agent_pm"
         
         # Reset all nodes to idle on start
         for nid in self.nodes:
@@ -75,8 +173,11 @@ class StateGraph:
                 else:
                     update = await node_func(state)
                 # Merge update into State
-                if update and isinstance(update, dict):
-                    state.update(update)
+                if update:
+                    if isinstance(update, dict):
+                        state.update(update)
+                    elif isinstance(update, GraphState):
+                        state.update(update.model_dump(exclude_unset=True))
                 if current_node not in state["completed_nodes"]:
                     state["completed_nodes"].append(current_node)
             except Exception as e:
@@ -203,6 +304,21 @@ class StateGraph:
                         "stream": False,
                     })
                     
+                    # Save HIL checkpoint to database for power-off/reboot resilience
+                    try:
+                        from app.core.database import save_hil_checkpoint
+                        save_hil_checkpoint(
+                            conversation_id=conversation_id,
+                            current_node=current_node,
+                            next_node=next_node,
+                            state_data=state.model_dump() if isinstance(state, GraphState) else state,
+                            question=question,
+                            options=options,
+                            original_prompt=state.get("original_prompt", "")
+                        )
+                    except Exception as db_ex:
+                        logger.error(f"[StateGraph] Failed to save HIL checkpoint: {db_ex}")
+
                     tool = UserInteractionJudgeTool()
                     res = await tool.run({
                         "question": question,
@@ -241,5 +357,12 @@ class StateGraph:
                 
             current_node = next_node
             
+        # Clean up HIL checkpoint from database since execution is complete/cancelled
+        try:
+            from app.core.database import delete_hil_checkpoint
+            delete_hil_checkpoint(conversation_id)
+        except Exception as db_ex:
+            logger.error(f"[StateGraph] Failed to delete HIL checkpoint: {db_ex}")
+
         logger.info("[StateGraph] Finished execution")
         return state

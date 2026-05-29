@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mock-server": {
+      "command": "python",
+      "args": ["-X", "utf8", "D:\\project\\high agent-hub\\backend\\app\\mock\\mock_mcp_server.py"]
+    }
+  }
+}

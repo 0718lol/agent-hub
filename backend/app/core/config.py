@@ -15,5 +15,8 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_model: str = ""
 
+    # Redis config
+    redis_url: str = "redis://localhost:6379/0"
+
 
 settings = Settings()

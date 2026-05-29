@@ -7,17 +7,51 @@ Collects:
   - Best-of-N hit rates
   - Debate outcomes
   - Code execution results
+  - Structured nested child spans for LLM, Tools, and RAG execution (APM Tracking)
 """
 
 import time
+import contextvars
+import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Any, List
 from collections import defaultdict
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger("metrics")
+
+# Thread-safe Context Variables for decoupled trace span propagation
+active_trace_var = contextvars.ContextVar("active_trace", default=None)
+active_step_var = contextvars.ContextVar("active_step", default=None)
+
+
+class TraceSpan(BaseModel):
+    """A single child span inside a TraceStep (e.g. LLM call, Tool execute, RAG search)
+    representing fine-grained APM telemetry.
+    """
+    name: str
+    span_type: str  # "llm" | "tool" | "rag" | "custom"
+    start_time: float
+    end_time: float = 0.0
+    duration_ms: int = 0
+    status: str = "success"  # success | error
+    input_data: Optional[Any] = None
+    output_data: Optional[Any] = None
+    metadata: dict = Field(default_factory=dict)
+
+    def finish(self, output_data: Any = None, status: str = "success", metadata: dict = None):
+        self.end_time = time.time()
+        self.duration_ms = int((self.end_time - self.start_time) * 1000)
+        self.status = status
+        if output_data is not None:
+            self.output_data = output_data
+        if metadata:
+            self.metadata.update(metadata)
 
 
 @dataclass
 class TraceStep:
-    """A single step in an agent execution trace."""
+    """A single step in an agent execution trace (parent node)."""
     agent_id: str
     agent_name: str
     start_time: float
@@ -27,6 +61,13 @@ class TraceStep:
     quality_score: float = 0.0
     status: str = "running"  # running | success | retry | error
     detail: str = ""
+    spans: list[TraceSpan] = field(default_factory=list)
+
+    def start_span(self, name: str, span_type: str, input_data: Any = None) -> TraceSpan:
+        """Start a new child span inside this step trace context."""
+        span = TraceSpan(name=name, span_type=span_type, start_time=time.time(), input_data=input_data)
+        self.spans.append(span)
+        return span
 
     def finish(self, status: str = "success", tokens: int = 0, score: float = 0.0, detail: str = ""):
         self.end_time = time.time()
@@ -35,6 +76,10 @@ class TraceStep:
         self.tokens_used = tokens
         self.quality_score = score
         self.detail = detail
+        
+        # Reset the active step context variable if it matches this step
+        if active_step_var.get() == self:
+            active_step_var.set(None)
 
     def to_dict(self) -> dict:
         return {
@@ -47,12 +92,13 @@ class TraceStep:
             "quality_score": self.quality_score,
             "status": self.status,
             "detail": self.detail,
+            "spans": [s.model_dump() for s in self.spans],
         }
 
 
 @dataclass
 class TaskTrace:
-    """Full trace for a single user request → multi-agent response."""
+    """Full trace for a single user request → multi-agent response (Trace boundary)."""
     task_id: str
     conversation_id: str
     user_input: str
@@ -62,13 +108,22 @@ class TaskTrace:
     total_tokens: int = 0
 
     def add_step(self, agent_id: str, agent_name: str) -> TraceStep:
+        """Start and register a parent execution step, updating active ContextVar."""
         step = TraceStep(agent_id=agent_id, agent_name=agent_name, start_time=time.time())
         self.steps.append(step)
+        active_step_var.set(step)
         return step
 
     def finish(self):
         self.total_duration_ms = int((time.time() - self.start_time) * 1000)
         self.total_tokens = sum(s.tokens_used for s in self.steps)
+        
+        # Export completed trace data asynchronously in the background
+        metrics._export_to_langfuse(self)
+        
+        # Reset context variable if it matches this trace
+        if active_trace_var.get() == self:
+            active_trace_var.set(None)
 
     def to_dict(self) -> dict:
         return {
@@ -98,12 +153,14 @@ class MetricsCollector:
         self.quality_gate_retries: int = 0
 
     def start_trace(self, task_id: str, conversation_id: str, user_input: str) -> TaskTrace:
+        """Start a new global trace flow, updating active ContextVar."""
         trace = TaskTrace(task_id=task_id, conversation_id=conversation_id, user_input=user_input)
         self.traces.append(trace)
         # Keep last 100 traces
         if len(self.traces) > 100:
             self.traces = self.traces[-100:]
         self.total_requests += 1
+        active_trace_var.set(trace)
         return trace
 
     def record_agent_result(self, agent_id: str, score: float, latency_ms: int, tokens: int):
@@ -149,6 +206,94 @@ class MetricsCollector:
         })
         if len(self.sandbox_results) > 50:
             self.sandbox_results = self.sandbox_results[-50:]
+
+    def _export_to_langfuse(self, trace: TaskTrace):
+        """Asynchronously export completed trace to Langfuse APM Collector if environment keys are configured."""
+        import os
+        import json
+        import threading
+        
+        lf_public = os.environ.get("AGENTHUB_LANGFUSE_PUBLIC_KEY")
+        lf_secret = os.environ.get("AGENTHUB_LANGFUSE_SECRET_KEY")
+        lf_host = os.environ.get("AGENTHUB_LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
+        
+        if not (lf_public and lf_secret):
+            return
+            
+        def _post_payload():
+            try:
+                import httpx
+                url = f"{lf_host}/api/public/ingestion"
+                auth = (lf_public, lf_secret)
+                
+                batch = []
+                
+                # 1. Main Trace event
+                batch.append({
+                    "id": f"trace-{trace.task_id}",
+                    "type": "trace",
+                    "body": {
+                        "id": trace.task_id,
+                        "name": f"agenthub_conv_{trace.conversation_id}",
+                        "userId": "agenthub_user",
+                        "input": trace.user_input,
+                        "metadata": {
+                            "conversation_id": trace.conversation_id,
+                            "total_tokens": trace.total_tokens
+                        }
+                    }
+                })
+                
+                # 2. Spans for each TraceStep and children spans
+                for step in trace.steps:
+                    step_id = f"step-{step.agent_id}-{step.start_time}"
+                    batch.append({
+                        "id": step_id,
+                        "type": "span",
+                        "body": {
+                            "traceId": trace.task_id,
+                            "name": step.agent_name,
+                            "startTime": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(step.start_time)),
+                            "endTime": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(step.end_time or time.time())),
+                            "metadata": {
+                                "agent_id": step.agent_id,
+                                "quality_score": step.quality_score,
+                                "status": step.status,
+                                "tokens_used": step.tokens_used
+                            }
+                        }
+                    })
+                    
+                    # Children Spans (LLM / Tool / RAG)
+                    for span in step.spans:
+                        span_id = f"span-{span.name}-{span.start_time}"
+                        batch.append({
+                            "id": span_id,
+                            "type": "span" if span.span_type != "llm" else "generation",
+                            "body": {
+                                "traceId": trace.task_id,
+                                "parentObserveId": step_id,
+                                "name": span.name,
+                                "startTime": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(span.start_time)),
+                                "endTime": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(span.end_time or time.time())),
+                                "input": span.input_data,
+                                "output": span.output_data,
+                                "metadata": span.metadata
+                            }
+                        })
+                        
+                payload = {"batch": batch}
+                headers = {"Content-Type": "application/json"}
+                
+                with httpx.Client(timeout=10.0) as client:
+                    resp = client.post(url, json=payload, auth=auth, headers=headers)
+                    if resp.status_code != 200:
+                        logger.warning(f"Langfuse APM export failed with status {resp.status_code}: {resp.text}")
+            except Exception as ex:
+                logger.warning(f"Failed to post APM trace to Langfuse: {ex}")
+                
+        thread = threading.Thread(target=_post_payload, daemon=True)
+        thread.start()
 
     def get_dashboard_data(self) -> dict:
         """Get all metrics for the frontend dashboard."""

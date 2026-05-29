@@ -2,15 +2,23 @@
 
 import time
 import logging
+from typing import Optional
+from pydantic import BaseModel, Field
 from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_web_search")
+
+
+class WebSearchInput(BaseModel):
+    query: str = Field(..., description="搜索关键词")
+    max_results: Optional[int] = Field(5, description="最大返回结果数 (1-10)")
 
 
 class WebSearchTool(AgentTool):
     name = "web_search"
     description = "搜索互联网获取最新信息、新闻、技术文档等"
     icon = "🔍"
+    params_model = WebSearchInput
     parameters = {
         "type": "object",
         "properties": {

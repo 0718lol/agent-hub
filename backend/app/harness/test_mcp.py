@@ -1,135 +1,135 @@
 import asyncio
 import os
 import sys
-import json
-import shutil
+import unittest
+from unittest.mock import patch, AsyncMock
 
 # Setup import path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-# Reconfigure stdout to support utf-8 on Windows
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
+from app.core.mcp_bridge import mcp_bridge_manager
+from app.tools.registry import get_tool, TOOL_REGISTRY, execute_tool_call
+from app.tools.base import JudgeResult
 
-from app.core.mcp_client import mcp_manager
+class TestMCPIntegration(unittest.IsolatedAsyncioTestCase):
 
-async def run_mcp_testing():
-    print("====================================================")
-    print("[START] Plan D: Model Context Protocol (MCP) Integration Regression Test")
-    print("====================================================\n")
+    def setUp(self):
+        # Keep track of original TOOL_REGISTRY keys to restore them in tearDown
+        self.original_keys = list(TOOL_REGISTRY.keys())
+        self.config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "mcp_config.json"))
 
-    test_conv_id = "conv_test_mcp_milestone"
-    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", test_conv_id)
-    
-    # 0. Cleanup old sandbox folders
-    if os.path.exists(sandbox_dir):
+    async def asyncTearDown(self):
+        # Gracefully stop all MCP Servers
+        await mcp_bridge_manager.stop_all_servers()
+        
+        # Clean up any dynamically registered MCP tools from global registry to prevent test pollution
+        current_keys = list(TOOL_REGISTRY.keys())
+        for k in current_keys:
+            if k not in self.original_keys:
+                del TOOL_REGISTRY[k]
+
+    def test_mcp_config_exists(self):
+        """1. Verify that mcp_config.json is successfully generated and points to mock server."""
+        self.assertTrue(os.path.exists(self.config_path), f"Config file missing at: {self.config_path}")
+
+    async def test_mcp_lifecycle_and_execution(self):
+        """2. Verify spawning MCP subprocess, dynamic tool mapping, execution, and graceful shutdown."""
+        # Load config and spin up mock-server (also mounts builtin server)
+        await mcp_bridge_manager.load_and_start_servers(self.config_path)
+        
+        # Check if the server is in the manager's tracking registry
+        self.assertIn("mock-server", mcp_bridge_manager.servers)
+        server = mcp_bridge_manager.servers["mock-server"]
+        self.assertTrue(server._running)
+        
+        # Check if 'mock_echo' was dynamically registered into AgentHub's TOOL_REGISTRY
+        tool = get_tool("mock_echo")
+        self.assertIsNotNone(tool, "MCP tool 'mock_echo' was not registered dynamically.")
+        self.assertEqual(tool.name, "mock_echo")
+        self.assertEqual(tool.description, "Echo the input text back.")
+        
+        # Simulate calling the tool using AgentHub's core dispatching execution system
+        res = await execute_tool_call("mock_echo", {"text": "Greetings from Wac Branch!"})
+        self.assertTrue(res.success, f"Tool execution failed: {res.error}")
+        self.assertEqual(res.data, "Echo: Greetings from Wac Branch!")
+        
+        # Stop servers and check that tools are unresolved cleanly
+        await mcp_bridge_manager.stop_all_servers()
+        self.assertFalse(server._running)
+
+    async def test_mcp_builtin_hil_tool_execution(self):
+        """3. [Phase 2] Verify dynamic mapping and routing of system builtin HIL tool user_interaction_judge."""
+        # Load servers (mounts builtin in-memory server)
+        await mcp_bridge_manager.load_and_start_servers(self.config_path)
+
+        # Check if Builtin HIL Tool was mapped and registered into TOOL_REGISTRY
+        hil_tool = get_tool("user_interaction_judge")
+        self.assertIsNotNone(hil_tool, "Builtin HIL MCP Tool 'user_interaction_judge' was not registered dynamically.")
+        self.assertEqual(hil_tool.server_name, "system-builtin")
+        self.assertEqual(hil_tool.name, "user_interaction_judge")
+
+        # Mock the run method of UserInteractionJudgeTool to bypass interactive prompt and instantly resolve
+        mock_result = JudgeResult(
+            decision="Approve",
+            score=100.0,
+            reason="User confirmed via mock HIL",
+            signals={"answer": "Approve"}
+        )
+
+        with patch("app.tools.judge_tools.UserInteractionJudgeTool.run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = mock_result
+            
+            # Execute tool call via standard MCP Bridge routing
+            params = {
+                "question": "🎯 Are you ready to deploy?",
+                "options": ["Approve", "Terminate"],
+                "conversation_id": "test_mcp_conv_id"
+            }
+            
+            res = await execute_tool_call("user_interaction_judge", params)
+            self.assertTrue(res.success)
+            self.assertIn("Decision: Approve", res.data)
+            self.assertIn("User confirmed via mock HIL", res.data)
+            
+            mock_run.assert_called_once_with(params)
+
+    async def test_mcp_builtin_repomap_resource(self):
+        """4. [Phase 2] Verify standard workspace://repomap read-only MCP Resource resolution and dynamic scanner integration."""
+        # Load servers (mounts builtin in-memory server)
+        await mcp_bridge_manager.load_and_start_servers(self.config_path)
+
+        # Verify resources list metadata
+        resources = await mcp_bridge_manager.builtin_server.list_resources()
+        self.assertEqual(len(resources), 1)
+        self.assertEqual(resources[0]["uri"], "workspace://repomap")
+        self.assertEqual(resources[0]["mimeType"], "text/markdown")
+
+        # Create temporary dummy file in backend/app/mock directory to verify AST scan works
+        dummy_file = os.path.join(os.path.dirname(__file__), "..", "mock", "mcp_dummy_symbol.py")
+        dummy_code = """
+class MCPDummyClass:
+    def dummy_method(self, value):
+        return value * 2
+
+def dummy_standalone_function(x, y):
+    return x + y
+"""
+        with open(dummy_file, "w", encoding="utf-8") as f:
+            f.write(dummy_code)
+
         try:
-            def handle_remove_readonly(func, path, exc):
-                import stat
-                os.chmod(path, stat.S_IWRITE)
-                func(path)
-            shutil.rmtree(sandbox_dir, onerror=handle_remove_readonly)
-        except Exception:
-            pass
-    os.makedirs(sandbox_dir, exist_ok=True)
-
-    # 1. Verify Built-in System Server registration
-    print("[Step 1] Verifying SystemServer registration in MCPManager...")
-    assert "SystemServer" in mcp_manager.servers
-    print("  SUCCESS: SystemServer successfully registered globally.")
-
-    # 2. Verify listing tools
-    print("\n[Step 2] Querying available MCP tools from registered servers...")
-    tools = await mcp_manager.get_all_tools()
-    assert len(tools) > 0
-    namespaced_tool_names = [t["name"] for t in tools]
-    print(f"  Available namespaced tools: {namespaced_tool_names}")
-    assert "SystemServer__workspace_list_dir" in namespaced_tool_names
-    assert "SystemServer__workspace_write_file" in namespaced_tool_names
-    assert "SystemServer__workspace_read_file" in namespaced_tool_names
-    assert "SystemServer__workspace_run_command" in namespaced_tool_names
-    print("  SUCCESS: Discovered tools from system MCP server match requirements.")
-
-    # 3. Test workspace_write_file
-    print("\n[Step 3] Testing workspace_write_file tool invocation...")
-    write_args = {
-        "path": "hello_mcp.txt",
-        "content": "Hello standard Model Context Protocol native tools integration!"
-    }
-    write_res = await mcp_manager.execute_tool("SystemServer__workspace_write_file", write_args, conversation_id=test_conv_id)
-    assert not write_res.get("isError", False)
-    content_list = write_res.get("content", [])
-    assert len(content_list) > 0
-    print(f"  Tool execution output: {content_list[0]['text']}")
-    
-    # Verify file physically written
-    physical_file = os.path.join(sandbox_dir, "hello_mcp.txt")
-    assert os.path.exists(physical_file)
-    with open(physical_file, "r", encoding="utf-8") as f:
-        read_back = f.read()
-    assert read_back == write_args["content"]
-    print("  SUCCESS: Tool workspace_write_file successfully wrote the sandboxed file physically.")
-
-    # 4. Test workspace_read_file
-    print("\n[Step 4] Testing workspace_read_file tool invocation...")
-    read_args = {
-        "path": "hello_mcp.txt"
-    }
-    read_res = await mcp_manager.execute_tool("SystemServer__workspace_read_file", read_args, conversation_id=test_conv_id)
-    assert not read_res.get("isError", False)
-    read_content = read_res.get("content", [])
-    assert len(read_content) > 0
-    assert read_content[0]["text"] == write_args["content"]
-    print(f"  Tool execution read-back: {read_content[0]['text']}")
-    print("  SUCCESS: Tool workspace_read_file successfully read the correct sandboxed file.")
-
-    # 5. Test workspace_list_dir
-    print("\n[Step 5] Testing workspace_list_dir tool invocation...")
-    list_args = {
-        "path": ""
-    }
-    list_res = await mcp_manager.execute_tool("SystemServer__workspace_list_dir", list_args, conversation_id=test_conv_id)
-    assert not list_res.get("isError", False)
-    list_content = list_res.get("content", [])
-    assert len(list_content) > 0
-    parsed_items = json.loads(list_content[0]["text"])
-    item_names = [i["name"] for i in parsed_items]
-    print(f"  Sandboxed items found: {item_names}")
-    assert "hello_mcp.txt" in item_names
-    print("  SUCCESS: Tool workspace_list_dir successfully listed the directory.")
-
-    # 6. Test workspace_run_command (terminal execution sandbox)
-    print("\n[Step 6] Testing workspace_run_command execution inside sandboxed workspace...")
-    # Run echo command
-    cmd_args = {
-        "command": "echo Hello from Sandboxed CLI"
-    }
-    cmd_res = await mcp_manager.execute_tool("SystemServer__workspace_run_command", cmd_args, conversation_id=test_conv_id)
-    assert not cmd_res.get("isError", False)
-    cmd_content = cmd_res.get("content", [])
-    assert len(cmd_content) > 0
-    print("  Terminal execution log block:")
-    print("  ------------------------------------------------")
-    print(cmd_content[0]["text"].strip())
-    print("  ------------------------------------------------")
-    assert "Hello from Sandboxed CLI" in cmd_content[0]["text"]
-    print("  SUCCESS: Tool workspace_run_command executed successfully and returned stdout.")
-
-    # Cleanup sandbox files
-    try:
-        # On Windows, git objects can have read-only permissions
-        def handle_remove_readonly(func, path, exc):
-            import stat
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
-        shutil.rmtree(sandbox_dir, onerror=handle_remove_readonly)
-    except Exception:
-        pass
-
-    print("\n====================================================")
-    print("🎉 SUCCESS: Plan D Model Context Protocol integration regression suite finished with 100% PASS!")
-    print("====================================================")
+            # Read resource workspace://repomap using standard manager reading API
+            content = await mcp_bridge_manager.read_builtin_resource("workspace://repomap")
+            
+            # Check if AST scanned the class, methods, and functions successfully
+            self.assertIn("mcp_dummy_symbol.py", content)
+            self.assertIn("MCPDummyClass", content)
+            self.assertIn("dummy_method(self, value)", content)
+            self.assertIn("dummy_standalone_function(x, y)", content)
+        finally:
+            # Safely remove dummy file
+            if os.path.exists(dummy_file):
+                os.remove(dummy_file)
 
 if __name__ == "__main__":
-    asyncio.run(run_mcp_testing())
+    unittest.main()

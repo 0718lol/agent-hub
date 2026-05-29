@@ -178,7 +178,9 @@ class WebhookGatewayManager:
             return {"success": False, "error": str(e)}
 
     async def _resume_pending_interaction(self, conversation_id: str, action: str, fuzzy: bool = False) -> bool:
-        """Find the pending future in _pending_interactions and resolve it to resume execution."""
+        """Find the pending future in _pending_interactions and resolve it to resume execution.
+        If no future is found in memory, query the database checkpointer for resilient recovery.
+        """
         from app.tools.judge_tools import _pending_interactions
         
         target_conv_id = None
@@ -200,8 +202,63 @@ class WebhookGatewayManager:
                 logger.info(f"[WebhookGateway] Successfully resolved pending HIL future for conversation {target_conv_id} with action {action}")
                 return True
 
-        logger.warning(f"[WebhookGateway] Failed to find active pending HIL future for conversation {conversation_id}")
+        # Recovery Path: Check database checkpointer for Resilient State Resumption
+        try:
+            from app.core.database import get_pending_hil_checkpoint, get_pending_hil_checkpoint_fuzzy
+            if fuzzy:
+                checkpoint = get_pending_hil_checkpoint_fuzzy(conversation_id)
+            else:
+                checkpoint = get_pending_hil_checkpoint(conversation_id)
+                
+            if checkpoint:
+                logger.info(f"[WebhookGateway] Resilient recovery triggered. Restoring state checkpoint from database for conversation {checkpoint['conversation_id']}")
+                # Locally import resumption helper from app.main to avoid circular imports
+                from app.main import resume_graph_from_checkpoint
+                
+                # Run the resumption flow
+                import asyncio
+                asyncio.create_task(resume_graph_from_checkpoint(checkpoint["conversation_id"], action))
+                return True
+        except Exception as db_ex:
+            logger.error(f"[WebhookGateway] Resilient recovery failed to load checkpoint from database: {db_ex}")
+
+        logger.warning(f"[WebhookGateway] Failed to find active pending HIL future or database checkpoint for conversation {conversation_id}")
         return False
 
 # Singleton instance
 webhook_gateway = WebhookGatewayManager()
+
+
+def verify_slack_signature(signing_secret: str, body: bytes, timestamp: str, signature: str) -> bool:
+    """Validate Slack webhook signature using HMAC-SHA256."""
+    import hmac
+    import hashlib
+    import time
+    if not signing_secret:
+        return True # Bypass if not configured
+    try:
+        # Check for replay attacks: timestamp within 5 minutes
+        if abs(time.time() - float(timestamp)) > 300:
+            return False
+    except (ValueError, TypeError):
+        return False
+
+    sig_basestring = f"v0:{timestamp}:".encode('utf-8') + body
+    computed = "v0=" + hmac.new(
+        signing_secret.encode('utf-8'),
+        sig_basestring,
+        hashlib.sha256
+    ).hexdigest()
+    
+    return hmac.compare_digest(computed, signature)
+
+
+def verify_telegram_secret_token(secret_token: str, received_token: str) -> bool:
+    """Validate Telegram webhook secret token using constant-time comparison."""
+    import hmac
+    if not secret_token:
+        return True # Bypass if not configured
+    if not received_token:
+        return False
+    return hmac.compare_digest(secret_token, received_token)
+
