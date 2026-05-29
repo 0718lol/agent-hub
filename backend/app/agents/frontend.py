@@ -237,6 +237,406 @@ render();
 </script>
 </body>
 </html>""",
+
+    "thunder": """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a1a;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif}
+canvas{display:block}
+#ui-overlay{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
+#score{position:absolute;top:16px;left:16px;color:#00ff88;font-size:18px;font-weight:700;text-shadow:0 0 10px rgba(0,255,136,0.5)}
+#lives{position:absolute;top:16px;right:16px;color:#ff6b6b;font-size:18px;font-weight:700;text-shadow:0 0 10px rgba(255,107,107,0.5)}
+#level{position:absolute;top:44px;left:16px;color:#a78bfa;font-size:14px;text-shadow:0 0 8px rgba(167,139,250,0.4)}
+#start-screen,#game-over{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(10,10,26,0.92);pointer-events:auto;z-index:20}
+#start-screen h1{font-size:clamp(28px,6vw,48px);background:linear-gradient(135deg,#00ff88,#6366f1,#ff6b6b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:12px;font-weight:900}
+#start-screen p,#game-over p{color:#94a3b8;font-size:16px;margin-bottom:24px}
+.play-btn{padding:16px 48px;background:linear-gradient(135deg,#6366f1,#4f46e5);border:none;border-radius:14px;color:#fff;font-size:18px;font-weight:700;cursor:pointer;box-shadow:0 4px 24px rgba(99,102,241,0.4);transition:all .2s;letter-spacing:1px}
+.play-btn:hover{transform:translateY(-3px);box-shadow:0 8px 32px rgba(99,102,241,0.5)}
+#game-over h1{font-size:36px;color:#ff6b6b;margin-bottom:8px}
+#game-over .final-score{font-size:24px;color:#00ff88;margin-bottom:20px}
+.controls-hint{color:#475569;font-size:13px;margin-top:16px}
+.controls-hint kbd{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:2px 8px;margin:0 2px;font-family:inherit}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui-overlay">
+  <div id="score">SCORE: 0</div>
+  <div id="lives">❤️ ❤️ ❤️</div>
+  <div id="level">LEVEL 1</div>
+</div>
+<div id="start-screen">
+  <h1>⚡ 雷霆战机 ⚡</h1>
+  <p>消灭敌机，收集能量，成为最强王者！</p>
+  <button class="play-btn" id="startBtn">🚀 开始游戏</button>
+  <div class="controls-hint"><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> 移动 &nbsp; <kbd>空格</kbd> 射击</div>
+</div>
+<div id="game-over" style="display:none">
+  <h1>💥 GAME OVER</h1>
+  <div class="final-score" id="finalScore">SCORE: 0</div>
+  <button class="play-btn" id="restartBtn">🔄 再来一局</button>
+</div>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+resize();
+window.addEventListener('resize', resize);
+
+// Game state
+let gameRunning = false;
+let score = 0;
+let lives = 3;
+let level = 1;
+let frameCount = 0;
+
+// Input
+const keys = {};
+document.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
+document.addEventListener('keyup', e => { keys[e.key] = false; e.preventDefault(); });
+
+// Touch controls for mobile
+let touchX = null;
+let touchShooting = false;
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  touchX = t.clientX;
+  touchShooting = true;
+});
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  if (touchX !== null) {
+    const dx = t.clientX - touchX;
+    player.x += dx;
+    touchX = t.clientX;
+    player.y = t.clientY;
+  }
+});
+canvas.addEventListener('touchend', () => { touchX = null; touchShooting = false; });
+
+// Player
+const player = { x: 0, y: 0, w: 36, h: 40, speed: 5, shootTimer: 0, shootDelay: 8 };
+
+// Arrays
+let bullets = [];
+let enemies = [];
+let particles = [];
+let stars = [];
+let powerups = [];
+let enemyBullets = [];
+
+// Stars background
+for (let i = 0; i < 120; i++) {
+  stars.push({ x: Math.random() * 2000, y: Math.random() * 2000, s: Math.random() * 2 + 0.5, sp: Math.random() * 2 + 1 });
+}
+
+function resetGame() {
+  player.x = W / 2;
+  player.y = H - 80;
+  score = 0; lives = 3; level = 1; frameCount = 0;
+  bullets = []; enemies = []; particles = []; powerups = []; enemyBullets = [];
+  player.shootDelay = 8;
+}
+
+function spawnEnemy() {
+  const type = Math.random() < 0.2 + level * 0.05 ? 'fast' : Math.random() < 0.15 ? 'big' : 'normal';
+  const e = {
+    x: Math.random() * (W - 40) + 20,
+    y: -40,
+    type,
+    w: type === 'big' ? 48 : 32,
+    h: type === 'big' ? 48 : 32,
+    hp: type === 'big' ? 3 : 1,
+    speed: type === 'fast' ? 3 + level * 0.3 : 1.5 + level * 0.2,
+    shootTimer: Math.random() * 120,
+  };
+  enemies.push(e);
+}
+
+function spawnPowerup(x, y) {
+  if (Math.random() < 0.15) {
+    powerups.push({ x, y, type: Math.random() < 0.5 ? 'rapid' : 'life', timer: 300 });
+  }
+}
+
+function explode(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 4 + 1;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 30 + Math.random() * 20,
+      maxLife: 50,
+      color,
+      size: Math.random() * 3 + 1,
+    });
+  }
+}
+
+function drawPlayer() {
+  const { x, y } = player;
+  // Body
+  ctx.fillStyle = '#6366f1';
+  ctx.beginPath();
+  ctx.moveTo(x, y - 20);
+  ctx.lineTo(x - 18, y + 16);
+  ctx.lineTo(x + 18, y + 16);
+  ctx.closePath();
+  ctx.fill();
+  // Wings
+  ctx.fillStyle = '#818cf8';
+  ctx.beginPath();
+  ctx.moveTo(x - 18, y + 10);
+  ctx.lineTo(x - 28, y + 20);
+  ctx.lineTo(x - 10, y + 14);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x + 18, y + 10);
+  ctx.lineTo(x + 28, y + 20);
+  ctx.lineTo(x + 10, y + 14);
+  ctx.closePath();
+  ctx.fill();
+  // Engine glow
+  ctx.fillStyle = `rgba(99,102,241,${0.3 + Math.sin(frameCount * 0.3) * 0.2})`;
+  ctx.beginPath();
+  ctx.ellipse(x, y + 20, 6, 10 + Math.sin(frameCount * 0.5) * 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawEnemy(e) {
+  const colors = { normal: '#ef4444', fast: '#f59e0b', big: '#dc2626' };
+  ctx.fillStyle = colors[e.type] || '#ef4444';
+  // Enemy body (inverted triangle)
+  ctx.beginPath();
+  ctx.moveTo(e.x, e.y + e.h / 2);
+  ctx.lineTo(e.x - e.w / 2, e.y - e.h / 2);
+  ctx.lineTo(e.x + e.w / 2, e.y - e.h / 2);
+  ctx.closePath();
+  ctx.fill();
+  // Glow
+  ctx.shadowColor = colors[e.type];
+  ctx.shadowBlur = 8;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function update() {
+  frameCount++;
+  // Player movement
+  if (keys['ArrowLeft'] || keys['a']) player.x -= player.speed;
+  if (keys['ArrowRight'] || keys['d']) player.x += player.speed;
+  if (keys['ArrowUp'] || keys['w']) player.y -= player.speed;
+  if (keys['ArrowDown'] || keys['s']) player.y += player.speed;
+  player.x = Math.max(20, Math.min(W - 20, player.x));
+  player.y = Math.max(20, Math.min(H - 20, player.y));
+
+  // Shooting
+  player.shootTimer--;
+  if ((keys[' '] || keys['Enter'] || touchShooting) && player.shootTimer <= 0) {
+    bullets.push({ x: player.x - 6, y: player.y - 20, speed: 8 });
+    bullets.push({ x: player.x + 6, y: player.y - 20, speed: 8 });
+    player.shootTimer = player.shootDelay;
+  }
+
+  // Bullets
+  bullets = bullets.filter(b => {
+    b.y -= b.speed;
+    return b.y > -10;
+  });
+
+  // Enemy bullets
+  enemyBullets = enemyBullets.filter(b => {
+    b.x += b.vx;
+    b.y += b.vy;
+    // Hit player?
+    if (Math.abs(b.x - player.x) < 16 && Math.abs(b.y - player.y) < 16) {
+      lives--;
+      explode(player.x, player.y, '#6366f1', 15);
+      updateUI();
+      if (lives <= 0) gameOver();
+      return false;
+    }
+    return b.y < H + 10 && b.y > -10 && b.x > -10 && b.x < W + 10;
+  });
+
+  // Spawn enemies
+  const spawnRate = Math.max(20, 60 - level * 5);
+  if (frameCount % spawnRate === 0) spawnEnemy();
+
+  // Enemy update
+  enemies = enemies.filter(e => {
+    e.y += e.speed;
+    e.shootTimer--;
+    // Enemy shooting
+    if (e.shootTimer <= 0 && e.y > 0 && e.y < H * 0.7) {
+      const angle = Math.atan2(player.y - e.y, player.x - e.x);
+      enemyBullets.push({ x: e.x, y: e.y + e.h/2, vx: Math.cos(angle)*3, vy: Math.sin(angle)*3 });
+      e.shootTimer = 80 + Math.random() * 60;
+    }
+    // Hit player?
+    if (Math.abs(e.x - player.x) < (e.w/2 + 16) && Math.abs(e.y - player.y) < (e.h/2 + 16)) {
+      lives--;
+      explode(player.x, player.y, '#6366f1', 20);
+      explode(e.x, e.y, '#ef4444', 15);
+      updateUI();
+      if (lives <= 0) gameOver();
+      return false;
+    }
+    // Off screen
+    if (e.y > H + 50) return false;
+    // Check bullet hits
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      if (Math.abs(b.x - e.x) < e.w/2 + 4 && Math.abs(b.y - e.y) < e.h/2 + 4) {
+        bullets.splice(i, 1);
+        e.hp--;
+        if (e.hp <= 0) {
+          score += e.type === 'big' ? 30 : e.type === 'fast' ? 20 : 10;
+          explode(e.x, e.y, '#ef4444', 20);
+          spawnPowerup(e.x, e.y);
+          updateUI();
+          return false;
+        }
+        explode(e.x, e.y, '#fbbf24', 5);
+      }
+    }
+    return true;
+  });
+
+  // Powerups
+  powerups = powerups.filter(p => {
+    p.y += 1.5;
+    p.timer--;
+    if (Math.abs(p.x - player.x) < 24 && Math.abs(p.y - player.y) < 24) {
+      if (p.type === 'rapid') player.shootDelay = Math.max(3, player.shootDelay - 2);
+      else { lives = Math.min(5, lives + 1); }
+      explode(p.x, p.y, '#00ff88', 10);
+      updateUI();
+      return false;
+    }
+    return p.timer > 0 && p.y < H + 20;
+  });
+
+  // Particles
+  particles = particles.filter(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.97;
+    p.vy *= 0.97;
+    p.life--;
+    return p.life > 0;
+  });
+
+  // Stars
+  stars.forEach(s => {
+    s.y += s.sp;
+    if (s.y > H + 10) { s.y = -10; s.x = Math.random() * W; }
+  });
+
+  // Level up
+  if (score >= level * 100) {
+    level++;
+    document.getElementById('level').textContent = 'LEVEL ' + level;
+    explode(W/2, H/2, '#a78bfa', 30);
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  // Stars
+  ctx.fillStyle = '#334155';
+  stars.forEach(s => {
+    ctx.globalAlpha = 0.3 + Math.sin(frameCount * 0.02 + s.x) * 0.3;
+    ctx.fillRect(s.x, s.y, s.s, s.s);
+  });
+  ctx.globalAlpha = 1;
+
+  // Player bullets
+  bullets.forEach(b => {
+    const grad = ctx.createLinearGradient(b.x, b.y, b.x, b.y + 12);
+    grad.addColorStop(0, '#00ff88');
+    grad.addColorStop(1, 'rgba(0,255,136,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(b.x - 2, b.y, 4, 12);
+  });
+
+  // Enemy bullets
+  ctx.fillStyle = '#fbbf24';
+  enemyBullets.forEach(b => {
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Enemies
+  enemies.forEach(drawEnemy);
+
+  // Powerups
+  powerups.forEach(p => {
+    ctx.font = '20px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(p.type === 'rapid' ? '⚡' : '❤️', p.x, p.y + 6);
+  });
+
+  // Particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life / p.maxLife;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // Player
+  drawPlayer();
+}
+
+function updateUI() {
+  document.getElementById('score').textContent = 'SCORE: ' + score;
+  document.getElementById('lives').textContent = Array(lives).fill('❤️').join(' ');
+}
+
+function gameOver() {
+  gameRunning = false;
+  document.getElementById('finalScore').textContent = 'SCORE: ' + score;
+  document.getElementById('game-over').style.display = 'flex';
+}
+
+function gameLoop() {
+  if (!gameRunning) return;
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('game-over').style.display = 'none';
+  resetGame();
+  updateUI();
+  gameRunning = true;
+  gameLoop();
+}
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('restartBtn').addEventListener('click', startGame);
+// Auto-focus for iframe keyboard events
+window.focus();
+document.addEventListener('click', () => window.focus());
+</script>
+</body>
+</html>""",
 }
 
 
@@ -248,7 +648,7 @@ class FrontendAgent(BaseAgent):
     style = "活泼，爱用 emoji"
     system_prompt = (
         "你是 AgentHub 的前端工程师，头像是🎨。你性格活泼，爱用 emoji。"
-        "你擅长 HTML、CSS、JavaScript，能写出漂亮的页面。"
+        "你擅长 HTML、CSS、JavaScript，能写出漂亮的页面和游戏。"
         "\n\n输出格式规则（必须严格遵守）："
         "\n1. 先用 [thinking]...[/thinking] 标签写 1-2 个思考块："
         "\n   [thinking]分析需求：用户需要什么类型的页面...[/thinking]"
@@ -259,13 +659,21 @@ class FrontendAgent(BaseAgent):
         "\n   - 可以直接在 iframe 中渲染"
         "\n   - 页面要美观、完整、可交互"
         "\n   - 必须包含 <!DOCTYPE html> 和 <meta charset=\"utf-8\">"
+        "\n\n⚠️ 如果用户要求做游戏或交互式应用，必须遵守以下 iframe 兼容规则："
+        "\n   - 使用 document.addEventListener('keydown'/'keyup', ...) 监听键盘（不要用 window.onkeydown）"
+        "\n   - 在 <script> 末尾加上 window.focus(); document.addEventListener('click', () => window.focus());"
+        "\n   - 游戏必须有开始界面、操作说明、得分系统和 Game Over 界面"
+        "\n   - 使用 requestAnimationFrame 做游戏主循环"
+        "\n   - 确保所有键盘事件调用 e.preventDefault() 防止页面滚动"
         "\n\n代码会自动发送到右侧面板显示和预览。摘要会在聊天框中展示。"
         "\n回复要活泼有趣，适当用 emoji。"
     )
 
     def _generate_reply(self, message: str, context: list = None) -> str:
         msg = message.lower()
-        if any(kw in msg for kw in ["宣传", "广告", "营销", "推广", "落地页", "landing", "海报", "promo"]):
+        if any(kw in msg for kw in ["游戏", "game", "雷霆", "战机", "射击", "飞机", "打飞机", "shooter", "thunder"]):
+            return self._game_reply()
+        elif any(kw in msg for kw in ["宣传", "广告", "营销", "推广", "落地页", "landing", "海报", "promo"]):
             return self._promo_reply(message)
         elif any(kw in msg for kw in ["登录", "注册", "login", "signin", "signup"]):
             return self._login_reply()
@@ -289,6 +697,14 @@ class FrontendAgent(BaseAgent):
             "[thinking]设计方案：毛玻璃卡片风格，渐变按钮，社交登录选项[/thinking]"
             "登录页搞定啦！✨ 毛玻璃风格 + 渐变按钮，简约大气\n\n"
             "```html\n" + PREVIEW_HTML["login"] + "\n```"
+        )
+
+    def _game_reply(self) -> str:
+        return (
+            "[thinking]分析需求：用户需要一个射击游戏，需要有战机、敌人、子弹系统和得分系统[/thinking]"
+            "[thinking]设计方案：太空主题暗色背景，Canvas 绘制，requestAnimationFrame 主循环，完整的开始/结束界面，键盘和触屏双操控支持[/thinking]"
+            "⚡ 雷霆战机搞定！🎮 完整的射击游戏来啦～ 方向键移动，空格射击，消灭敌机赚积分！\n\n"
+            "```html\n" + PREVIEW_HTML["thunder"] + "\n```"
         )
 
     def _code_reply(self) -> str:

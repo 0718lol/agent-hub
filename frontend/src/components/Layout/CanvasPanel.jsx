@@ -5,6 +5,8 @@ import TaskBoard from '../Canvas/TaskBoard'
 import DiffViewer from '../Canvas/DiffViewer'
 import WebPreview from '../Canvas/WebPreview'
 import DeployPanel from '../Canvas/DeployPanel'
+import EvalDashboard from '../Canvas/EvalDashboard'
+import TraceView from '../Canvas/TraceView'
 
 export default function CanvasPanel() {
   const activeTab = useCanvasStore((s) => s.activeTab)
@@ -16,6 +18,8 @@ export default function CanvasPanel() {
     { key: 'diff', label: '代码' },
     { key: 'preview', label: '预览' },
     { key: 'deploy', label: '部署' },
+    { key: 'eval', label: '📊 评估' },
+    { key: 'trace', label: '🔍 Trace' },
   ]
 
   return (
@@ -37,6 +41,8 @@ export default function CanvasPanel() {
         {activeTab === 'diff' && <DiffViewer />}
         {activeTab === 'preview' && <WebPreview />}
         {activeTab === 'deploy' && <DeployPanel />}
+        {activeTab === 'eval' && <EvalDashboard />}
+        {activeTab === 'trace' && <TraceView />}
       </div>
     </div>
   )
