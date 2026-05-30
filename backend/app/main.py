@@ -2,8 +2,8 @@
 
 This module is responsible for:
 - App initialization, lifespan, and middleware
-- WebSocket endpoint (orchestration delegated to agent_orchestrator.py)
 - Mounting all API routers
+- WebSocket endpoint (in routers/ws.py)
 
 Business logic is delegated to focused router modules:
 - routers/settings.py — LLM & HIL configuration
@@ -19,8 +19,9 @@ Business logic is delegated to focused router modules:
 - routers/cron.py — Cron task management
 - routers/workflows.py — Workflow import/export/compile
 - routers/mcp.py — MCP tools
+- routers/ws.py — WebSocket real-time communication
+- routers/tools.py — Tool listing & testing
 """
-import json
 import os
 import asyncio
 from fastapi import FastAPI, Request
@@ -29,13 +30,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 
-from app.core.websocket import manager
-from app.core.database import (
-    init_db, get_conversations,
-)
+from app.core.database import init_db
 from app.core.config import settings
 from app.core.config_persistence import save_llm_config, load_llm_config
 from app.core.llm_client import llm_client
+import app.tools  # noqa: F401 — trigger auto-registration
 from app.routers import (
     ws as ws_router,
     agents as agents_router,
@@ -56,16 +55,8 @@ from app.routers import (
 
 from app.core.logging_config import get_logger, RequestIdMiddleware, setup_logging
 
-from app.routers.harness_handler import handle_verdict
-from app.services.agent_orchestrator import (
-    get_agents, stream_agent_reply, run_target_agent_flow,
-    run_user_message_flow, resume_graph_from_checkpoint,
-    _stop_events, _remove_custom_agent,
-)
+from app.services.agent_orchestrator import get_agents
 logger = get_logger("main")
-
-# ---- Agent tools (used by /api/tools endpoint) ----
-import app.tools  # noqa: F401 — trigger auto-registration of runtime tools
 
 
 # ---- App lifespan ----

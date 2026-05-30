@@ -197,3 +197,9 @@ class RequestIdMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_request_id)
+
+        # Clean up contextvars after request to prevent leakage
+        if _is_structlog_available():
+            import structlog
+            structlog.contextvars.clear_contextvars()
+        set_request_id("-")

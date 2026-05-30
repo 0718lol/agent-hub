@@ -25,7 +25,7 @@ from app.services.agent_registry import agent_registry
 
 logger = logging.getLogger("agent_orchestrator")
 
-# Shared state: stop events per conversation + custom graph builders
+# Shared state: stop events per conversation
 _stop_events: dict[str, asyncio.Event] = {}
 
 def get_agents() -> dict:
