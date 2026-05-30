@@ -242,3 +242,46 @@ async def test_local_rce_memory_exhaustion():
         except Exception:
             pass
 
+
+@pytest.mark.asyncio
+async def test_subprocess_sandbox_memory_limit():
+    """Verify that SubprocessSandbox terminates code allocating excessive memory."""
+    from app.core.sandbox_manager import sandbox_manager
+    old_enable_docker = sandbox_manager.enable_docker
+    old_mem_limit = settings.shell_memory_limit_mb
+    
+    try:
+        sandbox_manager.enable_docker = False
+        settings.shell_memory_limit_mb = 15  # 15MB limit
+        
+        # Payload tries to allocate 60MB
+        payload = "x = bytearray(60 * 1024 * 1024)"
+        res = await sandbox_manager.execute(payload, language="python", timeout=5)
+        
+        assert res.get("status") == "error"
+    finally:
+        sandbox_manager.enable_docker = old_enable_docker
+        settings.shell_memory_limit_mb = old_mem_limit
+
+
+@pytest.mark.asyncio
+async def test_subprocess_sandbox_timeout():
+    """Verify that SubprocessSandbox forcefully kills hanging code execution."""
+    from app.core.sandbox_manager import sandbox_manager
+    old_enable_docker = sandbox_manager.enable_docker
+    
+    try:
+        sandbox_manager.enable_docker = False
+        
+        payload = "import time\ntime.sleep(30)"
+        start_time = asyncio.get_event_loop().time()
+        res = await sandbox_manager.execute(payload, language="python", timeout=2)
+        elapsed = asyncio.get_event_loop().time() - start_time
+        
+        assert elapsed < 10.0  # Must not run full 30s
+        assert res.get("status") == "timeout"
+        assert "超时" in res.get("stderr", "")
+    finally:
+        sandbox_manager.enable_docker = old_enable_docker
+
+
