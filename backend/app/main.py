@@ -14,7 +14,8 @@ from app.core.database import (
     init_db, save_message, get_messages, get_conversations, clear_messages,
     save_custom_agent, get_custom_agents, delete_custom_agent, create_conversation,
 )
-from app.core.config import settings, obfuscate_key, deobfuscate_key
+from app.core.config import settings
+from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config, load_llm_config
 from app.core.llm_client import llm_client
 from app.core.quality_gate import quality_gate
 from app.core.quality_retry import evaluate_and_retry
@@ -32,8 +33,6 @@ from app.routers import (
     mcp as mcp_router,
 )
 
-LLM_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "llm_config.json")
-HIL_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "hil_config.json")
 
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
@@ -45,22 +44,9 @@ def create_tracked_task(coro, name: str = None) -> asyncio.Task:
     return task
 
 
-def get_hil_settings() -> dict:
-    try:
-        if os.path.exists(HIL_CONFIG_PATH):
-            with open(HIL_CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {"human_input_mode": "NEVER", "cooldown_steps": 2}
+# get_hil_settings imported from app.core.config_persistence
 
-def _save_hil_settings(settings: dict):
-    try:
-        os.makedirs(os.path.dirname(HIL_CONFIG_PATH), exist_ok=True)
-        with open(HIL_CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+# _save_hil_settings replaced by save_hil_settings from config_persistence
 
 from app.agents.pm import PMAgent
 from app.agents.frontend import FrontendAgent
@@ -174,54 +160,11 @@ init_db()
 
 
 def _load_llm_config():
-    try:
-        cfg = {}
-        if os.path.exists(LLM_CONFIG_PATH):
-            with open(LLM_CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        
-        provider = cfg.get("provider") or settings.llm_provider
-        api_key = cfg.get("api_key") or ""
-        # 还原可能经由前端混淆后落盘的密钥
-        api_key = deobfuscate_key(api_key)
-        
-        if not api_key:
-            api_key = settings.llm_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-            
-        base_url = cfg.get("base_url") or settings.llm_base_url
-        model = cfg.get("model") or settings.llm_model
-        
-        llm_client.configure(
-            provider=provider,
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
-            temperature=cfg.get("temperature"),
-            max_tokens=cfg.get("max_tokens"),
-        )
-    except Exception:
-        pass
+    load_llm_config(llm_client, settings)
 
 
 def _save_llm_config():
-    os.makedirs(os.path.dirname(LLM_CONFIG_PATH), exist_ok=True)
-    api_key_to_save = llm_client.api_key
-    # 如果 API Key 与系统默认 Pydantic Key 或者是系统环境变量 Key 相同，安全地对落盘值进行置空过滤
-    if api_key_to_save == settings.llm_api_key or api_key_to_save == os.environ.get("ANTHROPIC_API_KEY", ""):
-        api_key_to_save = ""
-    else:
-        # 对用户自定义设置的密钥执行混淆后存盘
-        api_key_to_save = obfuscate_key(api_key_to_save)
-        
-    with open(LLM_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump({
-            "provider": llm_client.provider,
-            "api_key": api_key_to_save,
-            "base_url": llm_client.base_url,
-            "model": llm_client.model,
-            "temperature": llm_client.temperature,
-            "max_tokens": llm_client.max_tokens,
-        }, f, ensure_ascii=False, indent=2)
+    save_llm_config(llm_client, settings)
 
 
 _load_llm_config()
@@ -261,7 +204,7 @@ async def slack_webhook_callback(request: Request):
             if not verify_slack_signature(signing_secret, body_bytes, timestamp, signature):
                 raise HTTPException(status_code=403, detail="Invalid Slack signature")
         else:
-            logger.warning("AGENTHUB_SLACK_SIGNING_SECRET is not configured. Slack signature verification bypassed.")
+            raise HTTPException(status_code=503, detail="Slack webhook not configured. Set AGENTHUB_SLACK_SIGNING_SECRET to enable.")
 
         # 3. Parse payload from form-data URL encoded string or direct JSON
         import urllib.parse
@@ -308,7 +251,7 @@ async def telegram_webhook_callback(request: Request):
             if not verify_telegram_secret_token(secret_token, received_token):
                 raise HTTPException(status_code=403, detail="Invalid Telegram secret token")
         else:
-            logger.warning("AGENTHUB_TELEGRAM_SECRET_TOKEN is not configured. Telegram token verification bypassed.")
+            raise HTTPException(status_code=503, detail="Telegram webhook not configured. Set AGENTHUB_TELEGRAM_SECRET_TOKEN to enable.")
 
         payload = await request.json()
         from app.services.webhook_gateway import webhook_gateway
@@ -414,7 +357,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             # background task, not awaited here).
             if msg_type == "stop":
                 event = _stop_events.get(conversation_id)
-                print(f"[STOP] conv={conversation_id} event_exists={event is not None} already_set={event.is_set() if event else 'N/A'}", flush=True)
+                logger.debug(f"[STOP] conv={conversation_id} event_exists={event is not None} already_set={event.is_set() if event else 'N/A'}")
                 if event:
                     event.set()
                 continue
@@ -1800,7 +1743,7 @@ async def import_workflow(body: dict):
             
     hil = body.get("hil")
     if hil:
-        _save_hil_settings(hil)
+        save_hil_settings(hil)
         
     llm = body.get("llm")
     if llm:

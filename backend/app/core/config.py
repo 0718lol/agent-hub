@@ -1,4 +1,10 @@
+import os
+import base64
+import hashlib
+import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger("config.encryption")
 
 
 class Settings(BaseSettings):
@@ -39,38 +45,72 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-import base64
+# ---- Fernet symmetric encryption key management ----
+# Read encryption key (Base64-encoded 32 bytes) from AGENTHUB_ENCRYPT_KEY env var.
+# If not set, derive a deterministic key from machine fingerprint (local dev compat).
+# Production MUST set AGENTHUB_ENCRYPT_KEY for cross-instance decryption.
+
+def _derive_fernet_key() -> bytes:
+    """Derive a Fernet-compatible 32-byte key from the environment or machine fingerprint."""
+    env_key = os.environ.get("AGENTHUB_ENCRYPT_KEY", "")
+    if env_key:
+        raw = hashlib.sha256(env_key.encode("utf-8")).digest()
+    else:
+        import platform, getpass
+        fingerprint = f"agenthub:{platform.node()}:{getpass.getuser()}"
+        raw = hashlib.sha256(fingerprint.encode("utf-8")).digest()
+        logger.info("AGENTHUB_ENCRYPT_KEY not set, using machine-derived encryption key. "
+                     "Set this env var for multi-instance deployments.")
+    return base64.urlsafe_b64encode(raw)
+
 
 def obfuscate_key(key: str) -> str:
-    """对密钥进行轻量级异或 Base64 编码，避免明文落盘持久化。"""
+    """Encrypt API key with Fernet symmetric encryption to avoid plaintext on disk."""
     if not key:
         return ""
-    # 若已经是混淆后的密钥（Base64特征校验），则不重复处理
-    if key.startswith("enc::"):
+    if key.startswith("fnt::"):
         return key
-    salt = b"agenthub_secret_salt_2026"
-    key_bytes = key.encode("utf-8")
-    obfuscated = bytearray()
-    for i, b in enumerate(key_bytes):
-        obfuscated.append(b ^ salt[i % len(salt)])
-    return "enc::" + base64.b64encode(obfuscated).decode("utf-8")
+    try:
+        from cryptography.fernet import Fernet
+        f = Fernet(_derive_fernet_key())
+        encrypted = f.encrypt(key.encode("utf-8"))
+        return "fnt::" + encrypted.decode("utf-8")
+    except ImportError:
+        logger.warning("cryptography package not installed, falling back to plain storage for API key.")
+        return key
+    except Exception as e:
+        logger.error(f"Failed to encrypt API key: {e}")
+        return key
 
 
 def deobfuscate_key(obfuscated_key: str) -> str:
-    """还原经过混淆的密钥值。"""
+    """Decrypt Fernet-encrypted key. Backward-compatible with legacy enc:: XOR format."""
     if not obfuscated_key:
         return ""
-    if not obfuscated_key.startswith("enc::"):
-        return obfuscated_key
-    try:
-        raw_encoded = obfuscated_key[5:]
-        salt = b"agenthub_secret_salt_2026"
-        obfuscated_bytes = base64.b64decode(raw_encoded.encode("utf-8"))
-        deobfuscated = bytearray()
-        for i, b in enumerate(obfuscated_bytes):
-            deobfuscated.append(b ^ salt[i % len(salt)])
-        return deobfuscated.decode("utf-8")
-    except Exception:
-        return obfuscated_key
-
-
+    # New format: Fernet encryption
+    if obfuscated_key.startswith("fnt::"):
+        try:
+            from cryptography.fernet import Fernet
+            f = Fernet(_derive_fernet_key())
+            decrypted = f.decrypt(obfuscated_key[5:].encode("utf-8"))
+            return decrypted.decode("utf-8")
+        except ImportError:
+            logger.warning("cryptography package not installed, cannot decrypt API key.")
+            return obfuscated_key
+        except Exception as e:
+            logger.error(f"Failed to decrypt API key: {e}")
+            return obfuscated_key
+    # Legacy format backward compat: XOR encoding
+    if obfuscated_key.startswith("enc::"):
+        try:
+            raw_encoded = obfuscated_key[5:]
+            salt = b"agenthub_secret_salt_2026"
+            obfuscated_bytes = base64.b64decode(raw_encoded.encode("utf-8"))
+            deobfuscated = bytearray()
+            for i, b in enumerate(obfuscated_bytes):
+                deobfuscated.append(b ^ salt[i % len(salt)])
+            return deobfuscated.decode("utf-8")
+        except Exception:
+            return obfuscated_key
+    # Plaintext
+    return obfuscated_key

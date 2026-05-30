@@ -27,11 +27,14 @@ from app.core.llm_client import llm_client
 
 class QualityGate:
     def __init__(self, enabled: bool = True, max_retries: int = 1,
-                 use_llm_judge: bool = False, best_of_n: int = 1):
+                 use_llm_judge: bool = False, best_of_n: int = 1,
+                 max_concurrent_generations: int = 3):
         self.enabled = enabled
         self.max_retries = max_retries
         self.use_llm_judge = use_llm_judge
         self.best_of_n = best_of_n  # 1 = disabled, 3 = generate 3 candidates pick best
+        # Semaphore to limit concurrent LLM generation calls and protect API quota
+        self._generation_semaphore = asyncio.Semaphore(max_concurrent_generations)
 
     def evaluate(self, text: str, agent_id: str = "") -> QualityReport:
         """Run rule-based evaluation on output text. Fast and deterministic."""
@@ -173,10 +176,11 @@ class QualityGate:
 
         # Parallel generation of N candidates
         async def _generate_one(index: int) -> tuple[int, str]:
-            text = ""
-            async for chunk in agent.stream_reply(message, history=history):
-                text += chunk
-            return index, text
+            async with self._generation_semaphore:
+                text = ""
+                async for chunk in agent.stream_reply(message, history=history):
+                    text += chunk
+                return index, text
 
         if on_progress:
             await on_progress(-1, f"并行生成 {n} 个候选方案...")

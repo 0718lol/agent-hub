@@ -1,51 +1,11 @@
-import os
-import json
 import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel
-from app.core.config import settings, obfuscate_key
+from app.core.config import settings
 from app.core.llm_client import llm_client
+from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config
 
 router = APIRouter(tags=["settings"])
-
-LLM_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "llm_config.json")
-HIL_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "hil_config.json")
-
-
-def get_hil_settings() -> dict:
-    try:
-        if os.path.exists(HIL_CONFIG_PATH):
-            with open(HIL_CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {"human_input_mode": "NEVER", "cooldown_steps": 2}
-
-
-def _save_hil_settings(cfg: dict):
-    os.makedirs(os.path.dirname(HIL_CONFIG_PATH), exist_ok=True)
-    with open(HIL_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-
-
-def _save_llm_config():
-    os.makedirs(os.path.dirname(LLM_CONFIG_PATH), exist_ok=True)
-    api_key_to_save = llm_client.api_key
-    # 如果 API Key 与系统默认 Pydantic Key 或者是系统环境变量 Key 相同，安全地对落盘值进行置空过滤
-    if api_key_to_save == settings.llm_api_key or api_key_to_save == os.environ.get("ANTHROPIC_API_KEY", ""):
-        api_key_to_save = ""
-    else:
-        api_key_to_save = obfuscate_key(api_key_to_save)
-        
-    with open(LLM_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump({
-            "provider": llm_client.provider,
-            "api_key": api_key_to_save,
-            "base_url": llm_client.base_url,
-            "model": llm_client.model,
-            "temperature": llm_client.temperature,
-            "max_tokens": llm_client.max_tokens,
-        }, f, ensure_ascii=False, indent=2)
 
 
 class LLMSettings(BaseModel):
@@ -85,7 +45,7 @@ async def update_llm_settings(s: LLMSettings):
         temperature=s.temperature,
         max_tokens=s.max_tokens,
     )
-    _save_llm_config()
+    save_llm_config(llm_client, settings)
     return {"status": "ok", "configured": llm_client.is_configured()}
 
 
@@ -100,7 +60,7 @@ async def update_hil_settings_api(s: HILSettings):
         "human_input_mode": s.human_input_mode,
         "cooldown_steps": s.cooldown_steps
     }
-    _save_hil_settings(cfg)
+    save_hil_settings(cfg)
     return {"status": "ok", "settings": cfg}
 
 

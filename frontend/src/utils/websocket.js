@@ -6,6 +6,9 @@ class WSClient {
     this.pendingMessages = []
     this.currentConvId = null
     this.intentionalClose = false
+    this.reconnectAttempts = 0
+    this.maxReconnectDelay = 30000 // Maximum 30 seconds
+    this.baseReconnectDelay = 1000 // Start at 1 second
   }
 
   connect(conversationId) {
@@ -30,6 +33,8 @@ class WSClient {
     this.ws = new WebSocket(url)
 
     this.ws.onopen = () => {
+      // Reset reconnect attempts on successful connection
+      this.reconnectAttempts = 0
       // Flush any messages queued while connecting
       while (this.pendingMessages.length > 0) {
         const msg = this.pendingMessages.shift()
@@ -48,13 +53,25 @@ class WSClient {
 
     this.ws.onclose = () => {
       if (!this.intentionalClose && this.currentConvId === conversationId) {
-        this.reconnectTimer = setTimeout(() => this.connect(conversationId), 3000)
+        const delay = this._calculateReconnectDelay()
+        this.reconnectAttempts++
+        this.reconnectTimer = setTimeout(() => this.connect(conversationId), delay)
       }
     }
 
     this.ws.onerror = (err) => {
       console.error('WS error:', err)
     }
+  }
+
+  /**
+   * Calculate reconnect delay with exponential backoff + jitter.
+   * delay = min(base * 2^attempts + random jitter, maxDelay)
+   */
+  _calculateReconnectDelay() {
+    const exponentialDelay = this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts)
+    const jitter = Math.random() * 1000 // Random jitter 0-1000ms
+    return Math.min(exponentialDelay + jitter, this.maxReconnectDelay)
   }
 
   send(data) {
@@ -77,6 +94,7 @@ class WSClient {
   disconnect() {
     clearTimeout(this.reconnectTimer)
     this.intentionalClose = true
+    this.reconnectAttempts = 0
     this.pendingMessages = []
     if (this.ws) {
       this.ws.close()

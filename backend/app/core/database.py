@@ -3,7 +3,7 @@ import json
 import os
 import threading
 import functools
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Any
 from sqlmodel import SQLModel, Field, Session, select, create_engine, UniqueConstraint
 
@@ -67,7 +67,7 @@ class Conversation(SQLModel, table=True):
     agent_id: Optional[str] = None
     agents: Optional[str] = None  # JSON list string
     preview: Optional[str] = None
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class Message(SQLModel, table=True):
@@ -77,7 +77,7 @@ class Message(SQLModel, table=True):
     sender: str
     content: str
     streaming: int = Field(default=0)
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class CustomAgent(SQLModel, table=True):
@@ -89,7 +89,7 @@ class CustomAgent(SQLModel, table=True):
     style: str = Field(default='')
     system_prompt: str
     tools: str = Field(default='[]')
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class ProjectMemory(SQLModel, table=True):
@@ -102,7 +102,7 @@ class ProjectMemory(SQLModel, table=True):
     key: str
     value: str
     source: str = Field(default="system")
-    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class UploadedFile(SQLModel, table=True):
@@ -114,7 +114,7 @@ class UploadedFile(SQLModel, table=True):
     content_type: str = Field(default='')
     size: int = Field(default=0)
     extracted_text: str = Field(default='')
-    uploaded_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    uploaded_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class CronTask(SQLModel, table=True):
@@ -127,7 +127,7 @@ class CronTask(SQLModel, table=True):
     last_run: Optional[str] = None
     next_run: Optional[str] = None
     status: str = Field(default='active')
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class KnowledgeDoc(SQLModel, table=True):
@@ -139,7 +139,7 @@ class KnowledgeDoc(SQLModel, table=True):
     chunk_count: int = Field(default=0)
     char_count: int = Field(default=0)
     status: str = Field(default='ready')
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class ProjectEventStream(SQLModel, table=True):
@@ -162,7 +162,7 @@ class PendingHil(SQLModel, table=True):
     original_prompt: str
     status: str = Field(default='pending')
     chosen_action: Optional[str] = None
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class Artifact(SQLModel, table=True):
@@ -176,7 +176,7 @@ class Artifact(SQLModel, table=True):
     quality_score: Optional[int] = Field(default=None)
     sandbox_status: str = Field(default="untested")
     sandbox_output: Optional[str] = Field(default=None)
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 # ============================================================
@@ -515,7 +515,7 @@ def save_memory_item(conversation_id: str, key: str, value: str, source: str = "
         if existing:
             existing.value = value
             existing.source = source
-            existing.updated_at = datetime.utcnow().isoformat()
+            existing.updated_at = datetime.now(timezone.utc).isoformat()
             session.add(existing)
         else:
             item = ProjectMemory(
@@ -792,3 +792,89 @@ def get_artifacts_grouped(conversation_id: str = None, limit: int = 50) -> list[
     result.sort(key=lambda x: x["created_at"], reverse=True)
     return result[:limit]
 
+
+
+# ============================================================
+# Async Wrappers - Run sync DB operations in thread pool
+# to avoid blocking the asyncio event loop
+# ============================================================
+
+import asyncio
+
+async def async_save_message(conversation_id, sender, content, streaming=False):
+    return await asyncio.to_thread(save_message, conversation_id, sender, content, streaming)
+
+async def async_get_messages(conversation_id, limit=100):
+    return await asyncio.to_thread(get_messages, conversation_id, limit)
+
+async def async_get_conversations():
+    return await asyncio.to_thread(get_conversations)
+
+async def async_clear_messages(conversation_id):
+    return await asyncio.to_thread(clear_messages, conversation_id)
+
+async def async_save_custom_agent(agent_id, name, avatar, role, style, system_prompt, tools):
+    return await asyncio.to_thread(save_custom_agent, agent_id, name, avatar, role, style, system_prompt, tools)
+
+async def async_get_custom_agents():
+    return await asyncio.to_thread(get_custom_agents)
+
+async def async_delete_custom_agent(agent_id):
+    return await asyncio.to_thread(delete_custom_agent, agent_id)
+
+async def async_create_conversation(conv_id, conv_type, name, avatar, agent_id=None, agents=None, preview=''):
+    return await asyncio.to_thread(create_conversation, conv_id, conv_type, name, avatar, agent_id, agents, preview)
+
+async def async_save_uploaded_file(file_id, original_name, stored_name, file_path, content_type="", size=0, extracted_text=""):
+    return await asyncio.to_thread(save_uploaded_file, file_id, original_name, stored_name, file_path, content_type, size, extracted_text)
+
+async def async_get_uploaded_file(file_id):
+    return await asyncio.to_thread(get_uploaded_file, file_id)
+
+async def async_save_cron_task(task_id, conversation_id, agent_id, task_prompt, interval_seconds, status='active', last_run=None, next_run=None):
+    return await asyncio.to_thread(save_cron_task, task_id, conversation_id, agent_id, task_prompt, interval_seconds, status, last_run, next_run)
+
+async def async_get_cron_tasks(conversation_id=None):
+    return await asyncio.to_thread(get_cron_tasks, conversation_id)
+
+async def async_get_due_cron_tasks(now_str):
+    return await asyncio.to_thread(get_due_cron_tasks, now_str)
+
+async def async_update_cron_task_run_time(task_id, last_run, next_run, status='active'):
+    return await asyncio.to_thread(update_cron_task_run_time, task_id, last_run, next_run, status)
+
+async def async_update_cron_task_status(task_id, status):
+    return await asyncio.to_thread(update_cron_task_status, task_id, status)
+
+async def async_delete_cron_task(task_id):
+    return await asyncio.to_thread(delete_cron_task, task_id)
+
+async def async_save_memory(conversation_id, key, value, source="system"):
+    return await asyncio.to_thread(save_memory, conversation_id, key, value, source)
+
+async def async_get_memory(conversation_id, key):
+    return await asyncio.to_thread(get_memory, conversation_id, key)
+
+async def async_get_all_memory(conversation_id):
+    return await asyncio.to_thread(get_all_memory, conversation_id)
+
+async def async_save_event(conversation_id, event_type, data):
+    return await asyncio.to_thread(save_event, conversation_id, event_type, data)
+
+async def async_get_events(conversation_id, event_type=None, limit=100):
+    return await asyncio.to_thread(get_events, conversation_id, event_type, limit)
+
+async def async_save_pending_hil(conversation_id, current_node, next_node, state_data, question, options, original_prompt):
+    return await asyncio.to_thread(save_pending_hil, conversation_id, current_node, next_node, state_data, question, options, original_prompt)
+
+async def async_get_pending_hil_checkpoint(conversation_id):
+    return await asyncio.to_thread(get_pending_hil_checkpoint, conversation_id)
+
+async def async_clear_pending_hil(conversation_id):
+    return await asyncio.to_thread(clear_pending_hil, conversation_id)
+
+async def async_save_artifact(conversation_id, agent_id, name, language, code, quality_score=None, sandbox_status="untested", sandbox_output=None):
+    return await asyncio.to_thread(save_artifact, conversation_id, agent_id, name, language, code, quality_score, sandbox_status, sandbox_output)
+
+async def async_get_artifacts(conversation_id, limit=50):
+    return await asyncio.to_thread(get_artifacts, conversation_id, limit)

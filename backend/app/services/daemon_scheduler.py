@@ -90,6 +90,19 @@ class DaemonScheduler:
                         args=(task, self._retry_counts)
                     )
                     p.start()
+                    # Track child process for reaping to prevent zombie processes
+                    if not hasattr(self, '_child_processes'):
+                        self._child_processes = []
+                    self._child_processes.append(p)
+
+                # Reap any finished child processes to prevent zombie accumulation
+                if hasattr(self, '_child_processes'):
+                    still_running = []
+                    for p in self._child_processes:
+                        p.join(timeout=0)  # Non-blocking check
+                        if p.is_alive():
+                            still_running.append(p)
+                    self._child_processes = still_running
 
             except Exception as e:
                 logger.error(f"Daemon Scheduler poll loop error: {e}")
@@ -117,8 +130,12 @@ class DaemonScheduler:
 
         try:
             from app.services.agent_registry import agent_registry
-            from app.main import _stream_agent_reply
             from app.core.database import get_messages, save_message
+            # Lazy import to avoid circular dependency: main.py -> daemon_scheduler.py -> main.py
+            try:
+                from app.core.agent_stream import stream_agent_reply as _stream_agent_reply
+            except ImportError:
+                from app.main import _stream_agent_reply
 
             agent = await agent_registry.get_agent(agent_id)
             if not agent:
