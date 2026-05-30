@@ -19,7 +19,14 @@ class WSClient {
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${protocol}//${window.location.host}/ws/${conversationId}`
+    let url = `${protocol}//${window.location.host}/ws/${conversationId}`
+    
+    // 自动追加可能存在的 API 鉴权 Token
+    const token = localStorage.getItem('agenthub_api_secret')
+    if (token) {
+      url += `?token=${encodeURIComponent(token)}`
+    }
+    
     this.ws = new WebSocket(url)
 
     this.ws.onopen = () => {
