@@ -1,13 +1,38 @@
+"""AgentHub API — FastAPI application factory.
+
+This module is responsible for:
+- App initialization, lifespan, and middleware
+- WebSocket endpoint and agent orchestration flow
+- Mounting all API routers
+
+Business logic is delegated to focused router modules:
+- routers/settings.py — LLM & HIL configuration
+- routers/webhook.py — Slack & Telegram callbacks
+- routers/conversations.py — Conversation & message CRUD
+- routers/quality.py — Quality gate settings & evaluation
+- routers/prompt.py — Prompt engine configuration
+- routers/speech.py — STT settings & transcription
+- routers/sandbox.py — Code sandbox execution
+- routers/benchmark.py — Benchmark execution
+- routers/agents.py — Agent management
+- routers/uploads.py — File uploads
+- routers/cron.py — Cron task management
+- routers/workflows.py — Workflow import/export/compile
+- routers/mcp.py — MCP tools
+"""
 import json
 import os
 import re
 import uuid
 import asyncio
+import logging
 from pydantic import BaseModel
 from typing import Any
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, StreamingResponse
+from contextlib import asynccontextmanager
 
 from app.core.websocket import manager
 from app.core.database import (
@@ -31,23 +56,30 @@ from app.routers import (
     cron as cron_router,
     workflows as workflows_router,
     mcp as mcp_router,
+    webhook as webhook_router,
+    conversations as conversations_router,
+    quality as quality_router,
+    prompt as prompt_router,
+    speech as speech_router,
+    sandbox as sandbox_router,
+    benchmark as benchmark_router,
 )
 
+from app.core.logging_config import setup_logging, get_logger, RequestIdMiddleware
+logger = get_logger("main")
 
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
+
 def create_tracked_task(coro, name: str = None) -> asyncio.Task:
-    """创建并强引用一个后台 asyncio 任务，防止被 GC 垃圾回收器神秘销毁"""
+    """Create and strongly reference a background asyncio task to prevent GC."""
     task = asyncio.create_task(coro, name=name)
     _BACKGROUND_TASKS.add(task)
     task.add_done_callback(_BACKGROUND_TASKS.discard)
     return task
 
 
-# get_hil_settings imported from app.core.config_persistence
-
-# _save_hil_settings replaced by save_hil_settings from config_persistence
-
+# ---- Agent imports ----
 from app.agents.pm import PMAgent
 from app.agents.frontend import FrontendAgent
 from app.agents.backend_agent import BackendAgent
@@ -58,23 +90,18 @@ from app.agents.builder import AgentBuilderAgent
 from app.agents.custom import CustomAgent, AVAILABLE_TOOLS
 import app.tools  # noqa: F401 — trigger auto-registration of runtime tools
 
-from contextlib import asynccontextmanager
 
+# ---- App lifespan ----
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Run background autonomous daemon
     from app.services.daemon_scheduler import daemon_scheduler
     daemon_scheduler.start()
-    
     yield
-    
-    # Shutdown: Clean resources and stop background tasks
     try:
         from app.services.daemon_scheduler import daemon_scheduler
         await daemon_scheduler.stop()
     except Exception:
         pass
-        
     try:
         from app.tools.browser_tools import browser_session_manager
         from app.core.terminal import stateful_terminal_manager
@@ -83,14 +110,19 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+
 app = FastAPI(title="AgentHub API", lifespan=lifespan)
 
-# ---- 文件上传目录 ----
+# ---- File upload directory ----
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
+# ---- CORS ----
+# Initialize structured logging
+setup_logging()
+
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
@@ -100,78 +132,62 @@ app.add_middleware(
 )
 
 
-# ---- 全局 API 鉴权 / 本地 Localhost 防火墙中间件 ----
-from fastapi import Request, status
-from fastapi.responses import JSONResponse
-
+# ---- API security middleware ----
 @app.middleware("http")
 async def api_security_middleware(request: Request, call_next):
     path = request.url.path
-    # 豁免 Swagger UI 文档、公共静态资源和 Webhook 回调接口的安全策略
     if path in ("/", "/docs", "/openapi.json", "/redoc", "/api/health") or path.startswith("/api/webhook/callback/") or path.startswith("/uploads/"):
         return await call_next(request)
-
-    # 仅针对以 /api 开头的内部 API 路由进行防护
     if not path.startswith("/api"):
         return await call_next(request)
-
-    # 1. 若配置了外部鉴权密钥 AGENTHUB_API_SECRET，开启强制 Bearer Token 校验
     if settings.api_secret:
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Unauthorized: Missing or invalid Authorization header"}
-            )
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized: Missing or invalid Authorization header"})
         token = auth_header.split(" ", 1)[1]
         if token != settings.api_secret:
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Unauthorized: Invalid API secret token"}
-            )
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid API secret token"})
     else:
-        # 2. 若未配置外部鉴权密钥，默认开启本地 Localhost 纯物理环回防火墙，拒绝局域网或公网外部访问
         client_host = request.client.host if request.client else None
         if client_host not in ("127.0.0.1", "::1", "localhost"):
-            return JSONResponse(
-                status_code=status.HTTP_403_FORBIDDEN,
-                content={"detail": f"Forbidden: Access from external IP '{client_host}' is blocked. To enable, configure AGENTHUB_API_SECRET in the environment."}
-            )
-
+            return JSONResponse(status_code=403, content={"detail": f"Forbidden: Access from external IP '{client_host}' is blocked."})
     return await call_next(request)
 
 
+# ---- Agent registry & stop events ----
 from app.services.agent_registry import agent_registry
 AGENTS = agent_registry._agents
-
-# Stop events per conversation — set to cancel ongoing generation
 _stop_events: dict[str, asyncio.Event] = {}
 
+# ---- Mount all routers ----
 app.include_router(agents_router.router, prefix="/api")
 app.include_router(uploads_router.router)
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(cron_router.router, prefix="/api")
 app.include_router(workflows_router.router, prefix="/api")
 app.include_router(mcp_router.router, prefix="/api")
+app.include_router(webhook_router.router, prefix="/api")
+app.include_router(conversations_router.router, prefix="/api")
+app.include_router(quality_router.router, prefix="/api")
+app.include_router(prompt_router.router, prefix="/api")
+app.include_router(speech_router.router, prefix="/api")
+app.include_router(sandbox_router.router, prefix="/api")
+app.include_router(benchmark_router.router, prefix="/api")
 
+# ---- Initialize database ----
 init_db()
 
-
-
-
+# ---- Load LLM config ----
 def _load_llm_config():
     load_llm_config(llm_client, settings)
-
 
 def _save_llm_config():
     save_llm_config(llm_client, settings)
 
-
 _load_llm_config()
 
 
-
-
+# ---- Root & health endpoints ----
 @app.get("/")
 async def root():
     return {"name": "AgentHub API", "version": "1.0.0", "docs": "/docs"}
@@ -182,101 +198,25 @@ async def health():
     return {"status": "ok", "agents": list(AGENTS.keys())}
 
 
-# ---- MULTI-CHANNEL WEBHOOK CALLBACK ENDPOINTS ----
-from fastapi import Request, HTTPException
-
-@app.post("/api/webhook/callback/slack")
-async def slack_webhook_callback(request: Request):
-    """Slack interactive actions callback endpoint."""
-    try:
-        # 1. Fetch headers and body bytes for cryptographic signature verification
-        timestamp = request.headers.get("X-Slack-Request-Timestamp")
-        signature = request.headers.get("X-Slack-Signature")
-        body_bytes = await request.body()
-        
-        # 2. Verify Slack signature using configured Signing Secret
-        signing_secret = os.environ.get("AGENTHUB_SLACK_SIGNING_SECRET")
-        if signing_secret:
-            if not timestamp or not signature:
-                raise HTTPException(status_code=401, detail="Missing Slack verification headers")
-            
-            from app.services.webhook_gateway import verify_slack_signature
-            if not verify_slack_signature(signing_secret, body_bytes, timestamp, signature):
-                raise HTTPException(status_code=403, detail="Invalid Slack signature")
-        else:
-            raise HTTPException(status_code=503, detail="Slack webhook not configured. Set AGENTHUB_SLACK_SIGNING_SECRET to enable.")
-
-        # 3. Parse payload from form-data URL encoded string or direct JSON
-        import urllib.parse
-        body_str = body_bytes.decode('utf-8')
-        payload = None
-        
-        if body_str.startswith("payload="):
-            parsed = urllib.parse.parse_qs(body_str)
-            payload_str = parsed.get("payload", [None])[0]
-            if payload_str:
-                payload = json.loads(payload_str)
-        
-        if not payload:
-            try:
-                payload = json.loads(body_str)
-            except json.JSONDecodeError:
-                pass
-                
-        if not payload:
-            return {"success": False, "error": "Invalid form-data or JSON payload"}
-            
-        from app.services.webhook_gateway import webhook_gateway
-        res = await webhook_gateway.handle_slack_callback(payload)
-        return res
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@app.post("/api/webhook/callback/telegram")
-async def telegram_webhook_callback(request: Request):
-    """Telegram inline keyboard button click callback endpoint."""
-    try:
-        # 1. Fetch token and verify source authentication
-        received_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-        secret_token = os.environ.get("AGENTHUB_TELEGRAM_SECRET_TOKEN")
-        
-        if secret_token:
-            if not received_token:
-                raise HTTPException(status_code=401, detail="Missing Telegram verification token")
-            
-            from app.services.webhook_gateway import verify_telegram_secret_token
-            if not verify_telegram_secret_token(secret_token, received_token):
-                raise HTTPException(status_code=403, detail="Invalid Telegram secret token")
-        else:
-            raise HTTPException(status_code=503, detail="Telegram webhook not configured. Set AGENTHUB_TELEGRAM_SECRET_TOKEN to enable.")
-
-        payload = await request.json()
-        from app.services.webhook_gateway import webhook_gateway
-        res = await webhook_gateway.handle_telegram_callback(payload)
-        return res
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@app.get("/api/conversations")
-async def list_conversations():
-    return get_conversations()
-
-
-@app.get("/api/conversations/{conversation_id}/messages")
-async def list_messages(conversation_id: str, limit: int = 100):
-    return get_messages(conversation_id, limit)
-
-
-@app.delete("/api/conversations/{conversation_id}/messages")
-async def delete_messages(conversation_id: str):
-    clear_messages(conversation_id)
-    return {"status": "cleared"}
+# ---- File upload endpoint (kept here due to UPLOAD_DIR dependency) ----
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    ext = os.path.splitext(file.filename or "")[1]
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    file_path = os.path.join(UPLOAD_DIR, stored_name)
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+    is_image = (file.content_type or "").startswith("image/")
+    return {
+        "status": "uploaded",
+        "original_name": file.filename,
+        "stored_name": stored_name,
+        "url": f"/uploads/{stored_name}",
+        "content_type": file.content_type,
+        "size": len(content),
+        "is_image": is_image,
+    }
 
 
 @app.websocket("/ws/{conversation_id}")
@@ -1230,925 +1170,4 @@ async def toggle_runtime_tool(tool_name: str):
     tool.enabled = not tool.enabled
     return {"tool": tool_name, "enabled": tool.enabled}
 
-
-# ---- File Upload API ----
-
-@app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
-    # 生成唯一文件名，保留原始扩展名
-    ext = os.path.splitext(file.filename or "")[1]
-    stored_name = f"{uuid.uuid4().hex}{ext}"
-    file_path = os.path.join(UPLOAD_DIR, stored_name)
-
-    content = await file.read()
-    with open(file_path, "wb") as f:
-        f.write(content)
-
-    is_image = (file.content_type or "").startswith("image/")
-
-    return {
-        "status": "uploaded",
-        "original_name": file.filename,
-        "stored_name": stored_name,
-        "url": f"/uploads/{stored_name}",
-        "content_type": file.content_type,
-        "size": len(content),
-        "is_image": is_image,
-    }
-
-
-# ---- Quality Gate API ----
-
-class QualityGateSettings(BaseModel):
-    enabled: bool = True
-    max_retries: int = 1
-    use_llm_judge: bool = False
-    best_of_n: int = 1  # 1=disabled, 3=generate 3 candidates pick best
-
-
-@app.get("/api/settings/quality")
-async def get_quality_settings():
-    return {
-        "enabled": quality_gate.enabled,
-        "max_retries": quality_gate.max_retries,
-        "use_llm_judge": quality_gate.use_llm_judge,
-        "best_of_n": quality_gate.best_of_n,
-    }
-
-
-@app.post("/api/settings/quality")
-async def update_quality_settings(s: QualityGateSettings):
-    quality_gate.enabled = s.enabled
-    quality_gate.max_retries = s.max_retries
-    quality_gate.use_llm_judge = s.use_llm_judge
-    quality_gate.best_of_n = s.best_of_n
-    return {"status": "ok", "best_of_n": quality_gate.best_of_n}
-
-
-@app.post("/api/quality/evaluate")
-async def evaluate_text(body: dict):
-    """Manual quality evaluation endpoint. Body: {"text": "...", "agent_id": "..."}"""
-    text = body.get("text", "")
-    agent_id = body.get("agent_id", "")
-    if not text:
-        return {"error": "text is required"}
-    report = quality_gate.evaluate(text, agent_id)
-    return report.to_dict()
-
-
-@app.get("/api/quality/standards")
-async def list_quality_standards():
-    from app.core.quality_standards import STANDARDS
-    return {
-        k: {"name": v["name"], "pass_threshold": v["pass_threshold"],
-             "rules_count": len(v["rules"])}
-        for k, v in STANDARDS.items()
-    }
-
-
-# ---- Prompt Engine API ----
-
-@app.get("/api/prompt/layers")
-async def list_prompt_layers():
-    """List all prompt layers with their status."""
-    return prompt_engine.get_layers_info()
-
-
-@app.post("/api/prompt/layers/{layer_id}")
-async def toggle_prompt_layer(layer_id: str, body: dict):
-    """Enable/disable a prompt layer. Body: {"enabled": true/false}"""
-    enabled = body.get("enabled", True)
-    prompt_engine.set_layer_enabled(layer_id, enabled)
-    return {"status": "ok", "layer_id": layer_id, "enabled": enabled}
-
-
-@app.post("/api/prompt/preview")
-async def preview_prompt(body: dict):
-    """Preview the assembled prompt for a given agent and context.
-    Body: {"agent_id": "...", "message": "...", "task_type": "code|html|api|document"}
-    """
-    agent_id = body.get("agent_id", "agent_frontend")
-    message = body.get("message", "")
-    task_type = body.get("task_type")
-
-    agent = AGENTS.get(agent_id)
-    if not agent:
-        return {"error": f"Agent {agent_id} not found"}
-
-    if not task_type and message:
-        task_type = prompt_engine.detect_task_type(message, agent_id)
-
-    ctx = {"task_type": task_type}
-    assembled = prompt_engine.build(agent, ctx)
-    return {
-        "agent_id": agent_id,
-        "task_type": task_type,
-        "assembled_prompt": assembled,
-        "char_count": len(assembled),
-        "estimated_tokens": len(assembled) // 3,
-    }
-
-
-# ---- Speech-to-Text API ----
-
-STT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "stt_config.json")
-
-
-def _load_stt_config():
-    try:
-        if os.path.exists(STT_CONFIG_PATH):
-            with open(STT_CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            api_key = cfg.get("api_key", "")
-            api_key = deobfuscate_key(api_key)
-            stt_client.configure(
-                api_key=api_key,
-                base_url=cfg.get("base_url", ""),
-                model=cfg.get("model", "whisper-1"),
-                language=cfg.get("language", "zh"),
-            )
-    except Exception:
-        pass
-
-
-def _save_stt_config():
-    os.makedirs(os.path.dirname(STT_CONFIG_PATH), exist_ok=True)
-    obfuscated_api_key = obfuscate_key(stt_client.api_key)
-    with open(STT_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump({
-            "api_key": obfuscated_api_key,
-            "base_url": stt_client.base_url,
-            "model": stt_client.model,
-            "language": stt_client.language,
-        }, f, ensure_ascii=False, indent=2)
-
-
-_load_stt_config()
-
-
-class STTSettings(BaseModel):
-    api_key: str = ""
-    base_url: str = ""
-    model: str = "whisper-1"
-    language: str = "zh"
-
-
-@app.get("/api/settings/stt")
-async def get_stt_settings():
-    return {
-        "configured": stt_client.is_configured(),
-        "base_url": stt_client.base_url,
-        "model": stt_client.model,
-        "language": stt_client.language,
-    }
-
-
-@app.post("/api/settings/stt")
-async def update_stt_settings(s: STTSettings):
-    stt_client.configure(
-        api_key=s.api_key or stt_client.api_key,
-        base_url=s.base_url,
-        model=s.model,
-        language=s.language,
-    )
-    _save_stt_config()
-    return {"configured": stt_client.is_configured()}
-
-
-@app.post("/api/speech/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
-    """
-    Upload an audio file and get transcribed text back.
-    Supports: webm, wav, mp3, m4a, ogg, flac
-    Falls back to LLM provider's Whisper endpoint if STT not separately configured.
-    """
-    audio_bytes = await file.read()
-    filename = file.filename or "audio.webm"
-
-    # If STT not configured, try using the LLM provider's base_url + key
-    if not stt_client.is_configured() and llm_client.is_configured():
-        stt_client.configure(
-            api_key=llm_client.api_key,
-            base_url=llm_client.base_url,
-            model="whisper-1",
-            language="zh",
-        )
-
-    if not stt_client.is_configured():
-        return {"error": "语音识别未配置。请在设置中配置 STT API 或 LLM API。", "text": ""}
-
-    try:
-        text = await stt_client.transcribe(audio_bytes, filename)
-        return {"text": text, "status": "ok"}
-    except Exception as e:
-        return {"error": f"语音识别失败: {str(e)[:200]}", "text": ""}
-
-
-# ---- Code Sandbox API ----
-
-class CodeRunRequest(BaseModel):
-    code: str
-    language: str = "python"
-    timeout: int = 10
-    stdin: str = ""
-
-
-@app.post("/api/sandbox/run")
-async def sandbox_run(req: CodeRunRequest):
-    """Execute code in a sandboxed subprocess and return results."""
-    result = await execute_code(
-        code=req.code,
-        language=req.language,
-        timeout=min(req.timeout, 30),  # cap at 30s
-        stdin_data=req.stdin,
-    )
-    # Record metrics
-    metrics.record_sandbox(req.language, result.status, result.duration_ms)
-    return result.to_dict()
-
-
-class CodeHealRequest(BaseModel):
-    code: str
-    language: str
-    error_output: str
-
-@app.post("/api/sandbox/heal")
-async def sandbox_heal(req: CodeHealRequest):
-    """Ask backend agent to heal broken code."""
-    from app.core.llm_client import llm_client
-    
-    prompt = f"""你是一个专门修复代码报错的 AI 专家。
-用户运行了一段 {req.language} 代码，但是失败了。
-请分析报错原因，并只输出修复后的完整可运行代码。
-不要任何多余的解释，必须包含在 ```{req.language} ... ``` 代码块中。
-
-### 原始代码
-```{req.language}
-{req.code}
-```
-
-### 报错信息
-```text
-{req.error_output}
-```
-"""
-    
-    response = ""
-    # 调用 LLM 生成修复代码
-    async for chunk in llm_client.chat_stream([{"role": "user", "content": prompt}], system="你只能输出修复后的代码块。"):
-        response += chunk
-        
-    import re
-    # 提取代码块
-    match = re.search(r"```[a-zA-Z]*\n(.*?)```", response, re.DOTALL)
-    healed_code = match.group(1).strip() if match else response.strip()
-    
-    return {"healed_code": healed_code}
-
-
-# ---- Artifacts API ----
-
-@app.get("/api/artifacts")
-async def list_artifacts(conversation_id: str = None, limit: int = 50):
-    """List generated code artifacts from SQLite DB."""
-    from app.core.database import get_artifacts
-    artifacts = await asyncio.to_thread(get_artifacts, conversation_id, limit)
-    return artifacts
-
-
-# ---- Metrics / Dashboard API ----
-
-@app.get("/api/metrics")
-async def get_metrics():
-    """Get all metrics for the evaluation dashboard."""
-    return metrics.get_dashboard_data()
-
-
-@app.get("/api/metrics/traces")
-async def get_traces(limit: int = 20):
-    """Get recent execution traces."""
-    traces = metrics.traces[-limit:]
-    return [t.to_dict() for t in traces]
-
-
-# ---- Benchmark API ----
-
-@app.get("/api/benchmark/cases")
-async def list_benchmark_cases():
-    """List available benchmark test cases."""
-    return [{"id": c.id, "name": c.name, "agent_id": c.agent_id, "category": c.category} for c in BENCHMARK_CASES]
-
-
-@app.post("/api/benchmark/run")
-async def start_benchmark():
-    """Start a benchmark run (async). Poll /api/benchmark/status for progress."""
-    current = get_current_run()
-    if current and current.status == "running":
-        return {"error": "已有 benchmark 正在运行", "run_id": current.run_id}
-
-    async def _run():
-        await run_benchmark(
-            agents=AGENTS,
-            quality_gate=quality_gate,
-        )
-
-    create_tracked_task(_run(), name="benchmark_run")
-    return {"status": "started", "message": "Benchmark 已启动，请轮询 /api/benchmark/status"}
-
-
-@app.get("/api/benchmark/status")
-async def benchmark_status():
-    """Get current benchmark run status and results."""
-    current = get_current_run()
-    if not current:
-        return {"status": "idle", "message": "没有正在运行的 benchmark"}
-    return current.to_dict()
-
-
-@app.post("/api/deploy/{conversation_id}")
-async def deploy_project(conversation_id: str):
-    create_tracked_task(_simulate_deploy(conversation_id), name=f"deploy_{conversation_id}")
-    return {"status": "started"}
-
-
-async def _simulate_deploy(conversation_id: str):
-    logs = [
-        "🚀 正在初始化云部署沙盒环境...",
-        "📦 检查工作目录并拉取最新依赖包...",
-        "🧪 运行自动化冒烟测试 (Tester Agent 验证通过)...",
-        "🐳 构建生产环境 Docker 容器镜像...",
-        "🐳 正在向远端镜像仓库推送镜像 agenthub/app:latest...",
-        "☸️ Kubernetes 资源调度与健康状态检查...",
-        "🌎 域名解析与 SSL 证书(Let's Encrypt) 自动配置...",
-        "🎉 一键部署成功！静态资源与 API 服务均已上线。"
-    ]
-    
-    for i, log in enumerate(logs):
-        await asyncio.sleep(1.2)
-        status = "success" if i == len(logs) - 1 else "running"
-        url = f"https://agenthub-app-{conversation_id[:6]}.netlify.app" if status == "success" else None
-        
-        await manager.broadcast(conversation_id, {
-            "type": "deploy_status",
-            "conversation_id": conversation_id,
-            "status": status,
-            "log": log,
-            "url": url
-        })
-        
-    url = f"https://agenthub-app-{conversation_id[:6]}.netlify.app"
-    await asyncio.sleep(0.5)
-    await manager.broadcast(conversation_id, {
-        "type": "message",
-        "conversation_id": conversation_id,
-        "sender": "agent_devops",
-        "content": {"text": f"✅ 报告！项目已成功一键部署上线！\n\n🌍 线上访问地址：{url}\n⚠️ 生产集群运行平稳，SSL 证书配置正确，CDN 分发已全球生效！"},
-        "stream": False
-    })
-
-
-# ---- Background Autonomous Tasks REST API ----
-
-
-
-# ---- Knowledge Base (RAG) REST API ----
-
-@app.get("/api/knowledge")
-async def list_knowledge_docs():
-    from app.core.database import get_knowledge_docs
-    from app.core.rag_engine import rag_engine
-    docs = get_knowledge_docs()
-    stats = rag_engine.get_stats()
-    return {"status": "ok", "docs": docs, "stats": stats}
-
-
-@app.post("/api/knowledge/upload")
-async def upload_knowledge_doc(file: UploadFile = File(...)):
-    from app.core.document_parser import DocumentParser
-    from app.core.rag_engine import rag_engine
-    from app.core.database import save_knowledge_doc
-
-    if not DocumentParser.is_supported(file.filename):
-        return {"status": "error", "message": f"不支持的文件类型: {file.filename}"}
-
-    doc_id = f"kb_{uuid.uuid4().hex[:8]}"
-    content = await file.read()
-
-    # 保存文件到磁盘
-    kb_dir = os.path.join(os.path.dirname(__file__), "..", "data", "knowledge")
-    os.makedirs(kb_dir, exist_ok=True)
-    ext = os.path.splitext(file.filename)[1]
-    stored_path = os.path.join(kb_dir, f"{doc_id}{ext}")
-    with open(stored_path, "wb") as f:
-        f.write(content)
-
-    # 提取文本
-    text = DocumentParser.extract_text(stored_path, file.content_type or "")
-    if not text:
-        os.remove(stored_path)
-        return {"status": "error", "message": "无法从文件中提取文本内容"}
-
-    # 分块写入向量库
-    chunk_count = rag_engine.add_document(doc_id, text, metadata={
-        "source": "upload",
-        "filename": file.filename,
-    })
-
-    # 记录到 SQLite
-    save_knowledge_doc(
-        doc_id=doc_id,
-        filename=file.filename,
-        file_path=stored_path,
-        content_type=file.content_type or "",
-        chunk_count=chunk_count,
-        char_count=len(text),
-    )
-
-    return {
-        "status": "ok",
-        "doc_id": doc_id,
-        "filename": file.filename,
-        "chunk_count": chunk_count,
-        "char_count": len(text),
-        "message": f"文档已入库，生成 {chunk_count} 个知识块",
-    }
-
-
-@app.delete("/api/knowledge/{doc_id}")
-async def delete_knowledge_doc_endpoint(doc_id: str):
-    from app.core.rag_engine import rag_engine
-    from app.core.database import delete_knowledge_doc, get_knowledge_docs
-
-    # 删除向量库中的分块
-    rag_engine.remove_document(doc_id)
-
-    # 删除物理文件
-    docs = get_knowledge_docs()
-    doc = next((d for d in docs if d["id"] == doc_id), None)
-    if doc and doc.get("file_path") and os.path.isfile(doc["file_path"]):
-        os.remove(doc["file_path"])
-
-    # 删除数据库记录
-    delete_knowledge_doc(doc_id)
-    return {"status": "ok", "message": "知识文档已删除"}
-
-
-@app.post("/api/knowledge/query")
-async def query_knowledge(body: dict):
-    from app.core.rag_engine import rag_engine
-    query = body.get("query", "")
-    top_k = body.get("top_k", 5)
-    if not query.strip():
-        return {"status": "error", "message": "查询内容不能为空"}
-
-    hits = rag_engine.query(query, top_k=top_k)
-    return {"status": "ok", "results": hits}
-
-
-# ---- Langflow Workflow Serialization & Compiler REST APIs ----
-
-@app.get("/api/workflow/export/{conversation_id}")
-async def export_workflow(conversation_id: str):
-    """Export current workflow configuration, custom agents, and settings as JSON."""
-    hil = get_hil_settings()
-    custom_agents_data = []
-    for ca in get_custom_agents():
-        custom_agents_data.append(ca)
-        
-    workflow_data = {
-        "conversation_id": conversation_id,
-        "llm": {
-            "provider": llm_client.provider,
-            "base_url": llm_client.base_url,
-            "model": llm_client.model,
-            "temperature": llm_client.temperature,
-            "max_tokens": llm_client.max_tokens,
-        },
-        "hil": hil,
-        "custom_agents": custom_agents_data
-    }
-    return workflow_data
-
-
-@app.post("/api/workflow/import")
-async def import_workflow(body: dict):
-    """Import and reconstruct workflow custom agents and settings from JSON config."""
-    custom_agents = body.get("custom_agents", [])
-    imported_count = 0
-    for ca in custom_agents:
-        aid = ca.get("agent_id")
-        if aid:
-            await agent_registry.register_custom_agent(ca)
-            imported_count += 1
-            
-    hil = body.get("hil")
-    if hil:
-        save_hil_settings(hil)
-        
-    llm = body.get("llm")
-    if llm:
-        llm_client.configure(
-            provider=llm.get("provider", "openai"),
-            api_key=llm_client.api_key, # preserve current api key
-            base_url=llm.get("base_url", ""),
-            model=llm.get("model", ""),
-            temperature=llm.get("temperature"),
-            max_tokens=llm.get("max_tokens"),
-        )
-        _save_llm_config()
-        
-    return {"status": "ok", "imported_agents_count": imported_count}
-
-
-@app.post("/api/workflow/compile/{conversation_id}")
-async def compile_workflow(conversation_id: str):
-    """Compile visually designed multi-agent team and guards into a standalone, 0-dependency Python script."""
-    # Serialize agents data
-    agents_str_dict = {}
-    for aid, agent in AGENTS.items():
-        agents_str_dict[aid] = {
-            "name": agent.name,
-            "avatar": agent.avatar,
-            "role": agent.role,
-            "style": agent.style,
-            "system_prompt": agent.system_prompt,
-            "description": agent.description
-        }
-        
-    hil = get_hil_settings()
-    
-    # Standalone code template
-    code_content = f"""# -*- coding: utf-8 -*-
-\"\"\"
-Generated Standalone StateGraph Agent Team - Compiler Plan L
-Powered by AgentHub Visual-to-Code Compiler
-\"\"\"
-
-import asyncio
-import json
-import os
-import re
-import sys
-import logging
-import argparse
-import httpx
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("exported_team")
-
-# ---- EMBEDDED STATEGRAPH ENGINE ----
-class StateGraph:
-    def __init__(self):
-        self.nodes = {{}}
-        self.edges = {{}}
-        self.conditional_edges = {{}}
-        self.guards = {{}}
-        
-    def add_node(self, name, func):
-        self.nodes[name] = func
-        
-    def add_edge(self, from_node, to_node):
-        self.edges[from_node] = to_node
-        
-    def add_conditional_edge(self, from_node, router_func):
-        self.conditional_edges[from_node] = router_func
-
-    def add_guard(self, node_name, guard_func, error_fallback_node=None):
-        if node_name not in self.guards:
-            self.guards[node_name] = []
-        self.guards[node_name].append((guard_func, error_fallback_node))
-        
-    async def run(self, initial_state, human_input_mode="NEVER", cooldown_steps=2):
-        state = initial_state.copy()
-        state.setdefault("completed_nodes", [])
-        current_node = "agent_pm"
-        
-        print("\\n=== [StateGraph] Starting Standalone Execution ===")
-        
-        while current_node and current_node != "END":
-            print(f"\\n🟢 [StateGraph] Active Node: {{current_node.upper()}}")
-            
-            # Execute Node
-            node_func = self.nodes.get(current_node)
-            if not node_func:
-                break
-                
-            if isinstance(node_func, StateGraph):
-                update = await node_func.run(state, human_input_mode, cooldown_steps)
-            else:
-                update = await node_func(state)
-                
-            if update and isinstance(update, dict):
-                state.update(update)
-            if current_node not in state["completed_nodes"]:
-                state["completed_nodes"].append(current_node)
-                
-            # Resolve Next Node
-            next_node = None
-            if current_node in self.conditional_edges:
-                router = self.conditional_edges[current_node]
-                if asyncio.iscoroutinefunction(router):
-                    next_node = await router(state)
-                else:
-                    res = router(state)
-                    if asyncio.iscoroutine(res):
-                        next_node = await res
-                    else:
-                        next_node = res
-            elif current_node in self.edges:
-                next_node = self.edges[current_node]
-                
-            # Transition Guards Check
-            if next_node and next_node != "END" and next_node in self.guards:
-                failed_fallback = None
-                for guard, fallback in self.guards[next_node]:
-                    if not guard(state):
-                        failed_fallback = fallback or "agent_pm"
-                        break
-                if failed_fallback:
-                    print(f"\\n⚠️ [状态守卫强拦截] 智能体 {{next_node.upper()}} 未满足准入前置条件！")
-                    print(f"🔄 已安全自动重定向至纠偏节点 {{failed_fallback.upper()}}。")
-                    next_node = failed_fallback
-                    
-            # Human-in-the-loop Intercept Check
-            if next_node and (human_input_mode == "ALWAYS" or (human_input_mode == "COOLDOWN" and len(state.get("completed_nodes", [])) % cooldown_steps == 0)):
-                next_desc = next_node.upper() if next_node != "END" else "结束流程 (END)"
-                print(f"\\n⏳ [HIL 拦截] 智能体 {{current_node.upper()}} 运行完毕。是否批准其结果并推进至 {{next_desc}}？")
-                print("  1. Approve (批准并推进)")
-                print("  2. Terminate (终止流程)")
-                print("  3. Feedback (输入修改意见)")
-                
-                choice = input("请选择 (1-3): ").strip()
-                if choice == "2":
-                    next_node = "END"
-                elif choice == "3" or choice not in ("1", "2"):
-                    feedback = input("请输入你的修改意见: ").strip() if choice == "3" else choice
-                    print(f"🔄 [HIL 反馈] 注入修改意见，重跑 {{current_node.upper()}}...")
-                    state[f"{{current_node}}_feedback"] = feedback
-                    next_node = current_node
-                    if current_node in state["completed_nodes"]:
-                        state["completed_nodes"].remove(current_node)
-                        
-            current_node = next_node
-            
-        print("\\n=== [StateGraph] Finished Standalone Execution ===\\n")
-        return state
-
-
-# ---- EXPORTED CONFIGURATION ----
-AGENTS = {json.dumps(agents_str_dict, ensure_ascii=False, indent=4)}
-LLM_CONFIG = {{
-    "provider": "{llm_client.provider}",
-    "base_url": "{llm_client.base_url}",
-    "model": "{llm_client.model}",
-    "api_key": "{llm_client.api_key if llm_client.api_key else ''}"
-}}
-
-# ---- STANDALONE LLM CHAT CLIENT ----
-class StandaloneLLMClient:
-    async def chat_stream(self, messages, system=""):
-        url = LLM_CONFIG["base_url"] or "https://api.openai.com/v1"
-        key = LLM_CONFIG["api_key"]
-        
-        headers = {{
-            "Authorization": f"Bearer {{key}}",
-            "Content-Type": "application/json"
-        }}
-        
-        payload_messages = []
-        if system:
-            payload_messages.append({{"role": "system", "content": system}})
-        payload_messages.extend(messages)
-        
-        payload = {{
-            "model": LLM_CONFIG["model"] or "gpt-4o",
-            "messages": payload_messages,
-            "stream": True
-        }}
-        
-        target_url = url.rstrip("/") + "/chat/completions"
-        
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                async with client.stream("POST", target_url, headers=headers, json=payload) as response:
-                    if response.status_code != 200:
-                        yield f"\\n[LLM API Error {{response.status_code}}]\\n"
-                        return
-                    async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            data_str = line[6:].strip()
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                chunk = json.loads(data_str)
-                                text = chunk["choices"][0]["delta"].get("content", "")
-                                if text:
-                                    yield text
-                            except Exception:
-                                pass
-        except Exception as e:
-            yield f"\\n[API Call Exception: {{e}}]\\n"
-
-standalone_llm = StandaloneLLMClient()
-
-# ---- RUNNER HELPERS ----
-async def stream_agent_reply(agent_id, user_text, context=""):
-    agent = AGENTS[agent_id]
-    print(f"🤖 **{{agent['name']}}** ({{agent['role']}}) 正在思考...")
-    
-    messages = []
-    if context:
-        messages.append({{"role": "user", "content": f"PM 任务拆解：\\n{{context}}\\n\\n需求：{{user_text}}"}} )
-    else:
-        messages.append({{"role": "user", "content": user_text}})
-        
-    full_prompt = agent["system_prompt"]
-    
-    full_response = ""
-    async for chunk in standalone_llm.chat_stream(messages, system=full_prompt):
-        sys.stdout.write(chunk)
-        sys.stdout.flush()
-        full_response += chunk
-    print()
-    
-    assigned_agents = []
-    for match in re.finditer(r'\\[assign:(\\w+)\\]', full_response):
-        assigned_agents.append(match.group(1))
-        
-    return assigned_agents, full_response
-
-
-# ---- STANDALONE DAG RUN DEFINITION ----
-async def main_flow(task_text, human_input_mode, cooldown_steps):
-    graph = StateGraph()
-    
-    async def run_pm(state):
-        feedback = state.get("agent_pm_feedback", "")
-        prompt = task_text
-        if feedback:
-            prompt = f"{{task_text}}\\n\\n🔄 人工反馈：\\n{{feedback}}"
-        assigned, pm_res = await stream_agent_reply("agent_pm", prompt)
-        return {{"pm_response": pm_res, "assigned_agents": assigned, "agent_pm_feedback": ""}}
-        
-    async def run_designer(state):
-        feedback = state.get("agent_designer_feedback", "")
-        prompt = task_text
-        if feedback:
-            prompt = f"{{task_text}}\\n\\n🔄 人工反馈：\\n{{feedback}}"
-        _, res = await stream_agent_reply("agent_designer", prompt, context=state.get("pm_response", ""))
-        return {{"designer_response": res, "agent_designer_feedback": ""}}
-
-    async def run_frontend(state):
-        feedback = state.get("agent_frontend_feedback", "")
-        prompt = task_text
-        if feedback:
-            prompt = f"{{task_text}}\\n\\n🔄 人工反馈：\\n{{feedback}}"
-        _, res = await stream_agent_reply("agent_frontend", prompt, context=state.get("pm_response", ""))
-        return {{"frontend_response": res, "agent_frontend_feedback": ""}}
-
-    async def run_backend(state):
-        feedback = state.get("agent_backend_feedback", "")
-        prompt = task_text
-        if feedback:
-            prompt = f"{{task_text}}\\n\\n🔄 人工反馈：\\n{{feedback}}"
-        _, res = await stream_agent_reply("agent_backend", prompt, context=state.get("pm_response", ""))
-        return {{"backend_response": res, "agent_backend_feedback": ""}}
-
-    async def run_tester(state):
-        feedback = state.get("agent_tester_feedback", "")
-        prompt = task_text
-        if feedback:
-            prompt = f"{{task_text}}\\n\\n🔄 人工反馈：\\n{{feedback}}"
-        _, res = await stream_agent_reply("agent_tester", prompt, context=state.get("pm_response", ""))
-        return {{"tester_response": res, "agent_tester_feedback": ""}}
-
-    async def run_devops(state):
-        feedback = state.get("agent_devops_feedback", "")
-        prompt = task_text
-        if feedback:
-            prompt = f"{{task_text}}\\n\\n🔄 人工反馈：\\n{{feedback}}"
-        _, res = await stream_agent_reply("agent_devops", prompt, context=state.get("pm_response", ""))
-        return {{"devops_response": res, "agent_devops_feedback": ""}}
-
-    graph.add_node("agent_pm", run_pm)
-    graph.add_node("agent_designer", run_designer)
-    graph.add_node("agent_frontend", run_frontend)
-    graph.add_node("agent_backend", run_backend)
-    graph.add_node("agent_tester", run_tester)
-    graph.add_node("agent_devops", run_devops)
-
-    async def select_next_speaker(state):
-        assigned = state.get("assigned_agents", [])
-        candidates = assigned if assigned else ["agent_designer", "agent_frontend", "agent_backend", "agent_tester", "agent_devops"]
-        remaining = [c for c in candidates if c not in state.get("completed_nodes", [])]
-        
-        if not remaining:
-            return "END"
-            
-        # 💡 [Heuristic Lightweight Router Intercept (0 Latency, 0 Token Cost)]
-        rule_speaker = None
-        
-        # Rule A: Single Choice
-        if len(remaining) == 1:
-            rule_speaker = remaining[0]
-            print(f"\\n💡 [Heuristic Speaker Selection] Rule A: only one candidate remaining -> Selected '{{rule_speaker}}'")
-            
-        # Rule B: Linear SDLC Waterfall Inference
-        else:
-            completed = state.get("completed_nodes", [])
-            last_completed = completed[-1] if completed else None
-            
-            if last_completed == "agent_pm":
-                if "agent_designer" in remaining:
-                    rule_speaker = "agent_designer"
-                elif "agent_frontend" in remaining:
-                    rule_speaker = "agent_frontend"
-                elif "agent_backend" in remaining:
-                    rule_speaker = "agent_backend"
-            elif last_completed == "agent_designer":
-                if "agent_frontend" in remaining:
-                    rule_speaker = "agent_frontend"
-                elif "agent_backend" in remaining:
-                    rule_speaker = "agent_backend"
-            elif last_completed in ("agent_frontend", "agent_backend"):
-                frontend_done = "agent_frontend" in completed or "agent_frontend" not in remaining
-                backend_done = "agent_backend" in completed or "agent_backend" not in remaining
-                if frontend_done and backend_done:
-                    if "agent_tester" in remaining:
-                        rule_speaker = "agent_tester"
-                else:
-                    other = "agent_backend" if last_completed == "agent_frontend" else "agent_frontend"
-                    if other in remaining:
-                        rule_speaker = other
-            elif last_completed == "agent_tester":
-                if "agent_devops" in remaining:
-                    rule_speaker = "agent_devops"
-            elif last_completed == "agent_devops":
-                rule_speaker = "END"
-                
-            if rule_speaker:
-                print(f"\\n💡 [Heuristic Speaker Selection] Rule B: SDLC Waterfall Inference -> Selected '{{rule_speaker}}'")
-                
-        if rule_speaker:
-            return rule_speaker
-
-        print("\\n🤖 [Speaker Selection] Non-deterministic state branching. Dispatching LLM Coordinator...")
-        
-        candidates_info = ""
-        for cid in remaining:
-            if cid in AGENTS:
-                candidates_info += f"- ID: {{cid}}\\n  Name: {{AGENTS[cid]['name']}}\\n  Description: {{AGENTS[cid]['description']}}\\n\\n"
-                
-        system_prompt = f\"\"\"你是一个智能体群聊协调器 (Group Chat Coordinator)。
-根据当前的对话历史和各个候选智能体 (Agents) 的角色描述，判断下一个最适合发言的智能体是谁。
-
-候选智能体列表：
-{{candidates_info}}
-
-规则：
-1. 只能从上面的候选智能体 ID 中选择一个，或者输出 "END" 表示对话已圆满结束（所有开发/部署任务均已妥善完成，没有遗留问题）。
-2. 请只输出下一个发言的智能体 ID（例如 "agent_frontend"）或 "END"，不要附带任何其他解释、标点或 markdown 格式。
-3. 必须客观分析当前对话进度。
-\"\"\"
-        user_prompt = f"请决定下一个最适合发言的智能体。"
-        
-        selected = ""
-        try:
-            async for chunk in standalone_llm.chat_stream([{{"role": "user", "content": user_prompt}}], system=system_prompt):
-                selected += chunk
-            selected = selected.strip().strip("'\\"`").strip()
-        except Exception:
-            selected = ""
-            
-        if selected in remaining:
-            return selected
-        elif selected == "END":
-            return "END"
-        else:
-            return remaining[0]
-
-    graph.add_conditional_edge("agent_pm", select_next_speaker)
-    graph.add_conditional_edge("agent_designer", select_next_speaker)
-    graph.add_conditional_edge("agent_frontend", select_next_speaker)
-    graph.add_conditional_edge("agent_backend", select_next_speaker)
-    graph.add_conditional_edge("agent_tester", select_next_speaker)
-    graph.add_edge("agent_devops", "END")
-
-    graph.add_guard("agent_devops", lambda s: "agent_tester" in s.get("completed_nodes", []), "agent_tester")
-    graph.add_guard("agent_tester", lambda s: any(n in s.get("completed_nodes", []) for n in ["agent_frontend", "agent_backend"]), "agent_frontend")
-
-    await graph.run({{}}, human_input_mode=human_input_mode, cooldown_steps=cooldown_steps)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run Exported Standalone Agent Team")
-    parser.add_argument("--task", type=str, required=True, help="Task prompt for the agent team")
-    parser.add_argument("--hil", type=str, default="{hil.get('human_input_mode', 'NEVER')}", choices=["NEVER", "ALWAYS", "COOLDOWN"], help="Human-in-the-loop mode")
-    parser.add_argument("--cooldown", type=int, default={hil.get('cooldown_steps', 2)}, help="Cooldown steps for HIL")
-    
-    args = parser.parse_args()
-    
-    asyncio.run(main_flow(args.task, args.hil, args.cooldown))
-"""
-    return {"status": "ok", "filename": "exported_team.py", "code": code_content}
 

@@ -1,3 +1,4 @@
+import styles from './MessageBubble.module.css'
 import React, { useState } from 'react'
 import { Copy, RefreshCw, Reply, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import { useAgentStore } from '../../stores/agentStore'
@@ -32,35 +33,12 @@ function ToolCallBlock({ toolName, params }) {
   const hasParams = Object.keys(params).length > 0
 
   return (
-    <div style={{
-      margin: '12px 0',
-      borderRadius: '8px',
-      background: 'rgba(129, 140, 248, 0.03)',
-      border: '1px solid rgba(129, 140, 248, 0.12)',
-      overflow: 'hidden',
-    }}>
+    <div className={styles.toolCallBlock}>
       <div 
         onClick={() => hasParams && setExpanded(!expanded)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '10px 14px',
-          background: 'rgba(129, 140, 248, 0.05)',
-          cursor: hasParams ? 'pointer' : 'default',
-          userSelect: 'none',
-        }}
+        className={`${styles.toolCallHeader} ${!hasParams ? styles.toolCallHeaderNoParams : ''}`}
       >
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 24,
-          height: 24,
-          borderRadius: '6px',
-          background: 'rgba(129, 140, 248, 0.12)',
-          color: '#818cf8',
-        }}>
+        <div className={styles.toolCallIcon}>
           <Icon size={14} style={{ animation: 'spin-slow 4s linear infinite' }} />
         </div>
         
@@ -73,27 +51,13 @@ function ToolCallBlock({ toolName, params }) {
           </span>
         </div>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{
-            fontSize: '10px',
-            background: 'rgba(129, 140, 248, 0.15)',
-            border: '1px solid rgba(129, 140, 248, 0.3)',
-            color: '#a5b4fc',
-            padding: '2px 8px',
-            borderRadius: '10px',
-            fontWeight: 500,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-          }}>
-            <span style={{
-              width: 5, height: 5, borderRadius: '50%', background: '#818cf8',
-              boxShadow: '0 0 6px #818cf8',
-            }} />
+        <div className={styles.toolCallRight}>
+          <span className={styles.toolCallBadge}>
+            <span className={styles.toolCallDot} />
             执行中...
           </span>
           {hasParams && (
-            <span style={{ color: '#94a3b8', display: 'flex', alignItems: 'center' }}>
+            <span className={styles.toolCallChevron}>
               {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </span>
           )}
@@ -101,20 +65,9 @@ function ToolCallBlock({ toolName, params }) {
       </div>
 
       {expanded && hasParams && (
-        <div style={{
-          padding: '12px 14px',
-          background: 'rgba(0, 0, 0, 0.25)',
-          borderTop: '1px solid rgba(129, 140, 248, 0.08)',
-        }}>
-          <div style={{ fontSize: '11px', color: '#818cf8', fontWeight: 600, marginBottom: 6 }}>输入参数 (Arguments):</div>
-          <pre style={{
-            margin: 0,
-            fontSize: '11px',
-            color: '#cbd5e1',
-            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-          }}>
+        <div className={styles.toolCallExpandBody}>
+          <div className={styles.toolCallArgLabel}>输入参数 (Arguments):</div>
+          <pre className={styles.toolCallArgPre}>
             {JSON.stringify(params, null, 2)}
           </pre>
         </div>
@@ -146,35 +99,12 @@ function ToolResultBlock({ toolName, resultText }) {
   const displayedContent = expanded ? contentStr : (contentStr.slice(0, 500) + (isTruncated ? '\n\n... [数据已折叠，点击展开查看完整输出]' : ''))
 
   return (
-    <div style={{
-      margin: '12px 0',
-      borderRadius: '8px',
-      background: bg,
-      border: `1px solid ${border}`,
-      overflow: 'hidden',
-    }}>
+    <div className={`${styles.toolResultBlock} ${isError ? styles.toolResultBlockError : styles.toolResultBlockSuccess}`}>
       <div 
         onClick={() => setExpanded(!expanded)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '10px 14px',
-          background: isError ? 'rgba(239, 68, 68, 0.04)' : 'rgba(16, 185, 129, 0.04)',
-          cursor: 'pointer',
-          userSelect: 'none',
-        }}
+        className={`${styles.toolResultHeader} ${isError ? styles.toolResultHeaderError : styles.toolResultHeaderSuccess}`}
       >
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 24,
-          height: 24,
-          borderRadius: '6px',
-          background: badgeBg,
-          color: color,
-        }}>
+        <div className={`${styles.toolResultIcon} ${isError ? styles.toolResultIconError : styles.toolResultIconSuccess}`}>
           <Icon size={14} />
         </div>
 
@@ -187,7 +117,7 @@ function ToolResultBlock({ toolName, resultText }) {
           </span>
         </div>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className={styles.toolCallRight}>
           <span style={{
             fontSize: '10px',
             background: badgeBg,
@@ -403,7 +333,7 @@ export default function MessageBubble({ message, isPinned }) {
       if (optionsMatch) {
         const options = optionsMatch[1].split('|')
         return (
-          <div key={i} style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '8px 0' }}>
+          <div key={i} className={styles.optionsRow}>
             {options.map((opt, j) => (
               <button key={j} onClick={() => handleOptionClick(opt)} style={{
                 padding: '6px 14px', borderRadius: 'var(--radius-full)',
@@ -449,7 +379,7 @@ export default function MessageBubble({ message, isPinned }) {
       <div className="message-content">
         {/* Pin indicator */}
         {isPinned && (
-          <div style={{ fontSize: 11, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+          <div className={styles.pinIndicator}>
             <Pin size={10} /> 已固定
           </div>
         )}

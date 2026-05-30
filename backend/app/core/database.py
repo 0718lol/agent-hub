@@ -23,7 +23,7 @@ def db_write_transaction(func):
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'agenthub.db')
 
-from sqlalchemy import event
+from sqlalchemy import event, text
 
 # Define SQLModel engine supporting dynamic PostgreSQL cloud backend and local SQLite WAL mode
 db_url = os.environ.get("DATABASE_URL")
@@ -211,8 +211,22 @@ def init_db():
     except Exception:
         pass
         
-    # Auto-create all tables managed by SQLModel
-    SQLModel.metadata.create_all(engine)
+    # Use Alembic migrations instead of raw create_all()
+    # This ensures schema changes are tracked and reversible.
+    # Falls back to create_all() only if Alembic is not available.
+    try:
+        from alembic.config import Config
+        from alembic import command
+        alembic_cfg = Config(
+            os.path.join(os.path.dirname(__file__), '..', '..', 'alembic.ini')
+        )
+        # Override sqlalchemy.url to match the active engine
+        if not os.environ.get('DATABASE_URL'):
+            alembic_cfg.set_main_option('sqlalchemy.url', f'sqlite:///{DB_PATH}')
+        command.upgrade(alembic_cfg, 'head')
+    except Exception:
+        # Fallback: if Alembic fails (e.g. first run, no migrations), use create_all
+        SQLModel.metadata.create_all(engine)
 
     # Populate default conversations using SQLModel Sessions
     with Session(engine) as session:
@@ -231,6 +245,32 @@ def init_db():
             if not existing:
                 session.add(conv)
         session.commit()
+
+    # Create FTS5 full-text search virtual table for messages (idempotent)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
+                "content_text, content='messages', content_rowid='id', tokenize='unicode61')"
+            ))
+            # Triggers to keep FTS index in sync with messages table
+            conn.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN "
+                "INSERT INTO messages_fts(rowid, content_text) VALUES (new.id, json_extract(new.content, '$.text')); END"
+            ))
+            conn.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN "
+                "INSERT INTO messages_fts(messages_fts, rowid, content_text) VALUES('delete', old.id, json_extract(old.content, '$.text')); END"
+            ))
+            conn.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN "
+                "INSERT INTO messages_fts(messages_fts, rowid, content_text) VALUES('delete', old.id, json_extract(old.content, '$.text')); "
+                "INSERT INTO messages_fts(rowid, content_text) VALUES (new.id, json_extract(new.content, '$.text')); END"
+            ))
+            conn.commit()
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger("database").warning(f"FTS5 setup skipped: {e}")
 
 
 # ============================================================
@@ -279,6 +319,72 @@ def get_conversations():
                 conv['agents'] = json.loads(conv['agents'])
             result.append(conv)
         return result
+
+
+
+def search_messages(query: str, conversation_id: str = None, limit: int = 50) -> list[dict]:
+    """Full-text search across message content using FTS5.
+
+    Args:
+        query: Search query string (supports FTS5 syntax: AND, OR, NOT, *)
+        conversation_id: Optional filter to specific conversation
+        limit: Maximum results to return
+
+    Returns:
+        List of message dicts matching the query, ranked by relevance.
+    """
+    try:
+        with engine.connect() as conn:
+            if conversation_id:
+                sql = text(
+                    "SELECT m.id, m.conversation_id, m.sender, m.content, m.streaming, m.created_at, "
+                    "rank FROM messages m JOIN messages_fts f ON m.id = f.rowid "
+                    "WHERE messages_fts MATCH :query AND m.conversation_id = :conv_id "
+                    "ORDER BY rank LIMIT :lim"
+                )
+                rows = conn.execute(sql, {"query": query, "conv_id": conversation_id, "lim": limit}).fetchall()
+            else:
+                sql = text(
+                    "SELECT m.id, m.conversation_id, m.sender, m.content, m.streaming, m.created_at, "
+                    "rank FROM messages m JOIN messages_fts f ON m.id = f.rowid "
+                    "WHERE messages_fts MATCH :query "
+                    "ORDER BY rank LIMIT :lim"
+                )
+                rows = conn.execute(sql, {"query": query, "lim": limit}).fetchall()
+
+            return [
+                {
+                    "id": row[0],
+                    "conversation_id": row[1],
+                    "sender": row[2],
+                    "content": json.loads(row[3]),
+                    "streaming": bool(row[4]),
+                    "timestamp": row[5],
+                    "rank": row[6],
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger("database").warning(f"FTS5 search failed, falling back to LIKE: {e}")
+        # Fallback: simple LIKE search if FTS5 not available
+        with Session(engine) as session:
+            statement = select(Message)
+            if conversation_id:
+                statement = statement.where(Message.conversation_id == conversation_id)
+            statement = statement.where(Message.content.contains(query)).limit(limit)
+            results = session.exec(statement).all()
+            return [
+                {
+                    "id": msg.id,
+                    "conversation_id": msg.conversation_id,
+                    "sender": msg.sender,
+                    "content": json.loads(msg.content),
+                    "streaming": bool(msg.streaming),
+                    "timestamp": msg.created_at,
+                }
+                for msg in results
+            ]
 
 
 @db_write_transaction

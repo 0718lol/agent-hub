@@ -9,6 +9,8 @@ logger = logging.getLogger("subprocess_security")
 JOBOBJECT_EXTENDED_LIMIT_INFORMATION = 9
 JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
 JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
+JOB_OBJECT_LIMIT_PROCESS_TIME = 0x00000002
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 
 # We declare wintypes locally or conditionally to support clean imports on Unix
 if sys.platform == "win32":
@@ -55,8 +57,15 @@ else:
 _windows_job_handles = set()
 
 
-def limit_windows_process(pid: int, memory_limit_bytes: int) -> bool:
-    """Utilizes Windows Job Objects to strictly constrain the virtual/physical memory limit of the target process."""
+def limit_windows_process(pid: int, memory_limit_bytes: int, cpu_limit_secs: int = 0) -> bool:
+    """Utilizes Windows Job Objects to constrain memory and optionally CPU time of the target process.
+
+    Args:
+        pid: Target process ID
+        memory_limit_bytes: Maximum memory in bytes
+        cpu_limit_secs: Maximum CPU time in seconds (0 = no limit). When exceeded,
+                        the OS terminates the process automatically.
+    """
     if sys.platform != "win32":
         return False
 
@@ -78,9 +87,20 @@ def limit_windows_process(pid: int, memory_limit_bytes: int) -> bool:
             
         # 3. Populate Extended Limit structures
         limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION_STRUCT()
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY
+
+        # Build limit flags: memory + kill-on-close + optional CPU time
+        limit_flags = JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if cpu_limit_secs > 0:
+            limit_flags |= JOB_OBJECT_LIMIT_PROCESS_TIME
+        limits.BasicLimitInformation.LimitFlags = limit_flags
+
         limits.ProcessMemoryLimit = memory_limit_bytes
         limits.JobMemoryLimit = memory_limit_bytes
+
+        # CPU time limit: Windows uses 100-nanosecond intervals (same as FILETIME)
+        # 1 second = 10,000,000 * 100ns
+        if cpu_limit_secs > 0:
+            limits.BasicLimitInformation.PerProcessUserTimeLimit = cpu_limit_secs * 10_000_000
         
         res = kernel32.SetInformationJobObject(
             h_job,
@@ -103,7 +123,7 @@ def limit_windows_process(pid: int, memory_limit_bytes: int) -> bool:
             kernel32.CloseHandle(h_job)
         return bool(assigned)
     except Exception as e:
-        logger.error(f"[Subprocess Security] Failed to apply memory limit to Windows pid {pid}: {e}")
+        logger.error(f"[Subprocess Security] Failed to apply limits to Windows pid {pid}: {e}")
         return False
 
 

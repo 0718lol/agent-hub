@@ -1,6 +1,25 @@
 import { create } from 'zustand'
 
-const INITIAL_CONVERSATIONS = [
+/** Map backend conversation to frontend shape */
+function mapConversation(c) {
+  return {
+    id: c.id,
+    type: c.type,
+    name: c.name,
+    avatar: c.avatar || null,
+    agentId: c.agent_id || null,
+    agents: c.agents ? (typeof c.agents === 'string' ? JSON.parse(c.agents) : c.agents) : undefined,
+    role: c.preview || '',
+    preview: c.preview || '',
+    messages: [],
+    pinned: false,
+    unread: false,
+    updatedAt: c.created_at ? new Date(c.created_at).getTime() : Date.now(),
+  }
+}
+
+/** Fallback conversations when backend is unavailable */
+const FALLBACK_CONVERSATIONS = [
   { id: 'conv_pm', type: 'single', agentId: 'agent_pm', name: 'PM 小助手', avatar: null, role: '需求分析与任务拆解', messages: [], pinned: false, unread: false, updatedAt: Date.now() },
   { id: 'conv_frontend', type: 'single', agentId: 'agent_frontend', name: '前端工程师', avatar: null, role: 'React 组件与样式开发', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 1000 },
   { id: 'conv_backend', type: 'single', agentId: 'agent_backend', name: '后端工程师', avatar: null, role: 'API 接口与数据模型', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 2000 },
@@ -12,7 +31,7 @@ const INITIAL_CONVERSATIONS = [
 ]
 
 export const useChatStore = create((set, get) => ({
-  conversations: INITIAL_CONVERSATIONS,
+  conversations: [],
   activeConversationId: 'conv_pm',
   typingAgents: {},
   thinkingAgents: {},
@@ -165,5 +184,27 @@ export const useChatStore = create((set, get) => ({
   getActiveConversation: () => {
     const state = get()
     return state.conversations.find((c) => c.id === state.activeConversationId)
+  },
+
+  /** Fetch conversations from backend API. Falls back to hardcoded defaults on error. */
+  fetchConversations: async () => {
+    try {
+      const resp = await fetch('/api/conversations')
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data = await resp.json()
+      // Backend may return array or { conversations: [...] }
+      const list = Array.isArray(data) ? data : (data.conversations || [])
+      if (list.length > 0) {
+        set({
+          conversations: list.map(mapConversation),
+          activeConversationId: list[0]?.id || 'conv_pm',
+        })
+      } else {
+        set({ conversations: FALLBACK_CONVERSATIONS, activeConversationId: 'conv_pm' })
+      }
+    } catch (e) {
+      console.warn('Failed to fetch conversations from backend, using fallback:', e)
+      set({ conversations: FALLBACK_CONVERSATIONS, activeConversationId: 'conv_pm' })
+    }
   },
 }))
