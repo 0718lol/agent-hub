@@ -4,50 +4,29 @@ import OfficeSlot from '../AgentCharacter/OfficeSlot'
 import { AGENT_ACTIONS } from '../AgentCharacter/agentAction.types'
 import { useChatStore } from '../../stores/chatStore'
 import { useCanvasStore } from '../../stores/canvasStore'
+import {
+  Desk, Sofa, TV, CoffeeTable, CoffeeMachine, Treadmill,
+  Plant, Window, Whiteboard, WallArt, PendantLamp, ZenSpot,
+} from './OfficeFurniture'
 import './VirtualOffice.css'
 
 const SLOT_W = 96
 const SLOT_H = 130
 
-// 工位坐标百分比 — 上半部一行 5 个
 const WORKSTATION_PCT = [
-  { x: 0.08, y: 0.18 },
-  { x: 0.24, y: 0.18 },
-  { x: 0.40, y: 0.18 },
-  { x: 0.56, y: 0.18 },
-  { x: 0.72, y: 0.18 },
+  { x: 0.10, y: 0.30 },
+  { x: 0.26, y: 0.30 },
+  { x: 0.42, y: 0.30 },
+  { x: 0.58, y: 0.30 },
+  { x: 0.74, y: 0.30 },
 ]
 
-// 休息位 — 下半部分散在客厅/茶水/健身/散步
 const REST_SLOTS_PCT = [
-  { x: 0.08, y: 0.62, type: 'sofa', label: '🛋️' },
-  { x: 0.22, y: 0.62, type: 'sofa', label: '🛋️' },
-  { x: 0.45, y: 0.65, type: 'coffee', label: '☕' },
-  { x: 0.62, y: 0.65, type: 'walk', label: '🌿' },
-  { x: 0.80, y: 0.65, type: 'gym', label: '🏋️' },
-]
-
-// 装饰家具（不参与 layout）
-const FURNITURE_PCT = [
-  // 工作区
-  { x: 0.03, y: 0.04, emoji: '🪟', size: 44, cls: 'vo-fur-window' },
-  { x: 0.94, y: 0.05, emoji: '📋', size: 38, cls: 'vo-fur-board' },
-  { x: 0.42, y: 0.04, emoji: '💡', size: 28, cls: 'vo-fur-lamp' },
-  { x: 0.50, y: 0.04, emoji: '💡', size: 28, cls: 'vo-fur-lamp' },
-  { x: 0.58, y: 0.04, emoji: '💡', size: 28, cls: 'vo-fur-lamp' },
-
-  // 休息区 — 客厅
-  { x: 0.34, y: 0.55, emoji: '📺', size: 56, cls: 'vo-fur-tv' },
-  { x: 0.155, y: 0.84, emoji: '🪑', size: 32, cls: 'vo-fur-table' },
-  { x: 0.02, y: 0.50, emoji: '🪴', size: 36, cls: 'vo-fur-plant' },
-
-  // 茶水间 / 走道
-  { x: 0.475, y: 0.86, emoji: '🚰', size: 30, cls: 'vo-fur-water' },
-  { x: 0.66, y: 0.85, emoji: '🌳', size: 38, cls: 'vo-fur-tree' },
-
-  // 健身区
-  { x: 0.95, y: 0.55, emoji: '🪴', size: 36, cls: 'vo-fur-plant' },
-  { x: 0.85, y: 0.86, emoji: '🧘', size: 28, cls: 'vo-fur-yoga' },
+  { x: 0.10, y: 0.74, type: 'sofa' },
+  { x: 0.20, y: 0.74, type: 'sofa' },
+  { x: 0.50, y: 0.78, type: 'coffee' },
+  { x: 0.66, y: 0.82, type: 'walk' },
+  { x: 0.86, y: 0.78, type: 'gym' },
 ]
 
 const REST_ACTIONS_BY_TYPE = {
@@ -55,6 +34,35 @@ const REST_ACTIONS_BY_TYPE = {
   coffee: AGENT_ACTIONS.COFFEE,
   gym: AGENT_ACTIONS.GYM,
   walk: AGENT_ACTIONS.WALK,
+}
+
+const FURNITURE_LIST = [
+  { type: 'Window', x: 0.10, y: 0.10, w: 200, h: 140 },
+  { type: 'Whiteboard', x: 0.50, y: 0.10, w: 200, h: 130 },
+  { type: 'WallArt', x: 0.86, y: 0.08, w: 100, h: 80 },
+  { type: 'PendantLamp', x: 0.34, y: 0.04, w: 50, h: 80 },
+  { type: 'PendantLamp', x: 0.66, y: 0.04, w: 50, h: 80 },
+  { type: 'Plant', x: 0.04, y: 0.34, w: 70, h: 110 },
+  { type: 'Plant', x: 0.94, y: 0.34, w: 70, h: 110 },
+  { type: 'Desk', x: 0.10, y: 0.36, w: 160, h: 110 },
+  { type: 'Desk', x: 0.26, y: 0.36, w: 160, h: 110 },
+  { type: 'Desk', x: 0.42, y: 0.36, w: 160, h: 110 },
+  { type: 'Desk', x: 0.58, y: 0.36, w: 160, h: 110 },
+  { type: 'Desk', x: 0.74, y: 0.36, w: 160, h: 110 },
+  { type: 'TV', x: 0.16, y: 0.62, w: 220, h: 150 },
+  { type: 'Sofa', x: 0.16, y: 0.78, w: 240, h: 100 },
+  { type: 'CoffeeTable', x: 0.16, y: 0.92, w: 110, h: 50 },
+  { type: 'CoffeeMachine', x: 0.42, y: 0.74, w: 80, h: 130 },
+  { type: 'Plant', x: 0.34, y: 0.92, w: 60, h: 95 },
+  { type: 'ZenSpot', x: 0.66, y: 0.92, w: 160, h: 110 },
+  { type: 'Plant', x: 0.58, y: 0.62, w: 70, h: 110 },
+  { type: 'Treadmill', x: 0.86, y: 0.72, w: 160, h: 150 },
+  { type: 'Plant', x: 0.94, y: 0.92, w: 60, h: 95 },
+]
+
+const FURNITURE_COMPONENT_MAP = {
+  Desk, Sofa, TV, CoffeeTable, CoffeeMachine, Treadmill,
+  Plant, Window, Whiteboard, WallArt, PendantLamp, ZenSpot,
 }
 
 function hashStringToInt(s) {
@@ -123,7 +131,7 @@ export default function VirtualOffice({ open, onClose }) {
   const tasks = useCanvasStore((s) => s.tasks)
 
   const stageRef = useRef(null)
-  const [stageSize, setStageSize] = useState({ w: 1200, h: 700 })
+  const [stageSize, setStageSize] = useState({ w: 1400, h: 800 })
 
   useEffect(() => {
     if (!open) return
@@ -132,7 +140,6 @@ export default function VirtualOffice({ open, onClose }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  // 监听 stage 实际尺寸（全屏后随窗口变化）
   useEffect(() => {
     if (!open) return
     const update = () => {
@@ -166,7 +173,6 @@ export default function VirtualOffice({ open, onClose }) {
       }))
   }, [conversations])
 
-  // 把百分比转成像素，且左上角对齐到角色中心
   const toPx = (pct) => ({
     x: Math.round(pct.x * stageSize.w - SLOT_W / 2),
     y: Math.round(pct.y * stageSize.h - SLOT_H / 2),
@@ -194,7 +200,6 @@ export default function VirtualOffice({ open, onClose }) {
             slotType: 'desk',
           }))
         }
-        // 超员压缩：均匀分布在工作区横向
         const startX = WORKSTATION_PCT[0].x
         const endX = WORKSTATION_PCT[WORKSTATION_PCT.length - 1].x
         const step = (endX - startX) / (N - 1)
@@ -221,9 +226,8 @@ export default function VirtualOffice({ open, onClose }) {
           const px = toPx(pct)
           return {
             ...a,
-            slot: { x: px.x + stack * 26, y: px.y - stack * 14 },
+            slot: { x: px.x + stack * 28, y: px.y - stack * 16 },
             slotType: pct.type,
-            slotLabel: pct.label,
             action: REST_ACTIONS_BY_TYPE[pct.type] || AGENT_ACTIONS.IDLE,
             bubble: null,
           }
@@ -262,59 +266,26 @@ export default function VirtualOffice({ open, onClose }) {
         </div>
 
         <div ref={stageRef} className="vo-stage">
-          {/* 区域底色 */}
-          <div className="vo-floor vo-floor-work" />
-          <div className="vo-floor vo-floor-rest" />
-          <div className="vo-divider" />
+          <div className="vo-wall" />
+          <div className="vo-floor" />
+          <div className="vo-floor-shadow" />
 
-          {/* 区域标签 */}
-          <span className="vo-zone-label vo-zone-label-work">工位区 · WORK</span>
-          <span className="vo-zone-label vo-zone-label-rest">休息区 · CHILL</span>
-
-          {/* 工位桌（5 个） */}
-          {WORKSTATION_PCT.map((pct, i) => {
-            const px = toPx(pct)
+          {FURNITURE_LIST.map((f, i) => {
+            const Comp = FURNITURE_COMPONENT_MAP[f.type]
+            if (!Comp) return null
+            const left = Math.round(f.x * stageSize.w - f.w / 2)
+            const top = Math.round(f.y * stageSize.h - f.h / 2)
             return (
               <div
-                key={`desk-${i}`}
-                className="vo-desk"
-                style={{ left: px.x - 6, top: px.y + SLOT_H - 8 }}
-              />
-            )
-          })}
-
-          {/* 装饰家具 */}
-          {FURNITURE_PCT.map((f, i) => (
-            <div
-              key={`fur-${i}`}
-              className={`vo-furniture ${f.cls || ''}`}
-              style={{
-                left: Math.round(f.x * stageSize.w - f.size / 2),
-                top: Math.round(f.y * stageSize.h - f.size / 2),
-                fontSize: f.size,
-                width: f.size,
-                height: f.size,
-              }}
-            >
-              {f.emoji}
-            </div>
-          ))}
-
-          {/* 休息位标签（沙发/咖啡/健身/散步） */}
-          {REST_SLOTS_PCT.map((s, i) => {
-            const px = toPx(s)
-            return (
-              <div
-                key={`rest-${i}`}
-                className={`vo-rest-anchor vo-rest-${s.type}`}
-                style={{ left: px.x + SLOT_W / 2 - 16, top: px.y + SLOT_H - 4 }}
+                key={`fur-${i}`}
+                className="vo-furniture-piece"
+                style={{ left, top }}
               >
-                {s.label}
+                <Comp width={f.w} height={f.h} />
               </div>
             )
           })}
 
-          {/* 工作中的 agent */}
           {layout.working.map((agent) => (
             <OfficeSlot
               key={agent.id}
@@ -322,7 +293,7 @@ export default function VirtualOffice({ open, onClose }) {
               width={SLOT_W}
               height={SLOT_H}
               slotType="desk"
-              zIndex={3}
+              zIndex={5}
             >
               <AgentCharacter
                 agentId={agent.id}
@@ -331,13 +302,12 @@ export default function VirtualOffice({ open, onClose }) {
                 position={{ x: 0, y: 0 }}
                 action={agent.action}
                 bubble={agent.bubble}
-                scale={0.8}
+                scale={0.85}
                 onClick={() => handleAgentClick(agent)}
               />
             </OfficeSlot>
           ))}
 
-          {/* 休息中的 agent */}
           {layout.resting.map((agent) => (
             <OfficeSlot
               key={agent.id}
@@ -345,7 +315,7 @@ export default function VirtualOffice({ open, onClose }) {
               width={SLOT_W}
               height={SLOT_H}
               slotType={agent.slotType}
-              zIndex={3}
+              zIndex={5}
             >
               <AgentCharacter
                 agentId={agent.id}
@@ -353,7 +323,7 @@ export default function VirtualOffice({ open, onClose }) {
                 avatar={agent.avatar || '🤖'}
                 position={{ x: 0, y: 0 }}
                 action={agent.action}
-                scale={0.7}
+                scale={0.75}
                 onClick={() => handleAgentClick(agent)}
               />
             </OfficeSlot>

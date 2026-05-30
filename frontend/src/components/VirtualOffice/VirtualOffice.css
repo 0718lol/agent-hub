@@ -1,10 +1,10 @@
-/* VirtualOffice — 全屏二维工作室场景 */
+/* VirtualOffice — 全屏 2D 场景，矢量家具 + 现代扁平配色 */
 
 .virtual-office-overlay {
   position: fixed;
   inset: 0;
   z-index: 9000;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(6px);
   display: flex;
   animation: vo-fade-in 0.2s ease-out;
@@ -19,7 +19,7 @@
   flex: 1;
   width: 100vw;
   height: 100vh;
-  background: var(--bg-elevated, #ffffff);
+  background: #fafaf9;
   display: flex;
   flex-direction: column;
   animation: vo-pop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -27,7 +27,7 @@
 }
 
 @keyframes vo-pop-in {
-  from { opacity: 0; transform: scale(0.96); }
+  from { opacity: 0; transform: scale(0.97); }
   to   { opacity: 1; transform: scale(1); }
 }
 
@@ -36,27 +36,28 @@
   align-items: center;
   gap: 16px;
   padding: 14px 24px;
-  border-bottom: 1px solid var(--border, #e5e5ea);
-  background: var(--bg-subtle, #f5f5f7);
+  border-bottom: 1px solid #e7e5e4;
+  background: #fafaf9;
   flex-shrink: 0;
+  z-index: 10;
 }
 
 .vo-title {
   font-size: 16px;
   font-weight: 600;
-  color: var(--text-primary, #1d1d1f);
+  color: #1c1917;
 }
 
 .vo-stats {
   font-size: 13px;
-  color: var(--text-secondary, #86868b);
+  color: #78716c;
   margin-left: auto;
 }
 
 .vo-stats b {
-  color: var(--accent, #6366f1);
-  font-weight: 600;
-  margin: 0 3px;
+  color: #6366f1;
+  font-weight: 700;
+  margin: 0 4px;
   font-size: 14px;
 }
 
@@ -65,15 +66,15 @@
   border: none;
   font-size: 26px;
   line-height: 1;
-  color: var(--text-secondary, #86868b);
+  color: #78716c;
   cursor: pointer;
-  padding: 0 6px;
+  padding: 0 8px;
   border-radius: 6px;
   transition: background 0.15s;
 }
 
 .vo-close:hover {
-  color: var(--text-primary, #1d1d1f);
+  color: #1c1917;
   background: rgba(0, 0, 0, 0.05);
 }
 
@@ -84,179 +85,109 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: linear-gradient(180deg, #e8eef5 0%, #d6e1ed 35%, #f3ead8 65%, #ead9bf 100%);
 }
 
-[data-theme="tech-dark"] .vo-stage {
-  background: linear-gradient(180deg, #1a1f2e 0%, #232b3d 35%, #2a2820 65%, #2a2418 100%);
+/* ---- 墙面（上半 50%） ---- */
+.vo-wall {
+  position: absolute;
+  inset: 0 0 50% 0;
+  background: linear-gradient(180deg, #f5f0e8 0%, #ebe1d2 100%);
 }
 
-/* ---- 地板分区 ---- */
+.vo-wall::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0,
+    transparent 80px,
+    rgba(0, 0, 0, 0.025) 80px,
+    rgba(0, 0, 0, 0.025) 81px
+  );
+  opacity: 0.6;
+}
+
+/* ---- 地板（下半 50%） ---- */
 .vo-floor {
   position: absolute;
-  left: 0;
-  right: 0;
-  pointer-events: none;
+  inset: 50% 0 0 0;
+  background: linear-gradient(180deg, #d6c4a8 0%, #c4ad88 100%);
 }
 
-.vo-floor-work {
-  top: 0;
-  height: 50%;
+.vo-floor::before {
+  content: '';
+  position: absolute;
+  inset: 0;
   background:
-    repeating-linear-gradient(90deg,
+    repeating-linear-gradient(
+      0deg,
       transparent 0,
-      transparent 78px,
-      rgba(120, 140, 170, 0.08) 78px,
-      rgba(120, 140, 170, 0.08) 80px
+      transparent 60px,
+      rgba(120, 80, 40, 0.18) 60px,
+      rgba(120, 80, 40, 0.18) 62px
     ),
-    repeating-linear-gradient(0deg,
+    repeating-linear-gradient(
+      90deg,
       transparent 0,
-      transparent 78px,
-      rgba(120, 140, 170, 0.08) 78px,
-      rgba(120, 140, 170, 0.08) 80px
+      transparent 110px,
+      rgba(120, 80, 40, 0.12) 110px,
+      rgba(120, 80, 40, 0.12) 111px
     );
 }
 
-.vo-floor-rest {
-  top: 50%;
-  height: 50%;
-  background:
-    repeating-linear-gradient(45deg,
-      rgba(180, 140, 90, 0.06) 0,
-      rgba(180, 140, 90, 0.06) 12px,
-      transparent 12px,
-      transparent 24px
-    );
-}
-
-[data-theme="tech-dark"] .vo-floor-work {
-  background:
-    repeating-linear-gradient(90deg,
-      transparent 0, transparent 78px,
-      rgba(180, 200, 230, 0.04) 78px, rgba(180, 200, 230, 0.04) 80px),
-    repeating-linear-gradient(0deg,
-      transparent 0, transparent 78px,
-      rgba(180, 200, 230, 0.04) 78px, rgba(180, 200, 230, 0.04) 80px);
-}
-
-[data-theme="tech-dark"] .vo-floor-rest {
-  background:
-    repeating-linear-gradient(45deg,
-      rgba(220, 180, 120, 0.04) 0, rgba(220, 180, 120, 0.04) 12px,
-      transparent 12px, transparent 24px);
-}
-
-/* ---- 工位区 / 休息区分割线 ---- */
-.vo-divider {
+/* 墙地接缝阴影 */
+.vo-floor-shadow {
   position: absolute;
   left: 0;
   right: 0;
-  top: 50%;
-  height: 1px;
-  background: linear-gradient(90deg,
-    transparent 0%,
-    rgba(120, 140, 170, 0.25) 20%,
-    rgba(120, 140, 170, 0.25) 80%,
-    transparent 100%
+  top: calc(50% - 6px);
+  height: 16px;
+  background: linear-gradient(180deg,
+    rgba(0, 0, 0, 0.18) 0%,
+    rgba(0, 0, 0, 0) 100%
   );
   pointer-events: none;
 }
 
-/* ---- 区域标签 ---- */
-.vo-zone-label {
+/* ---- 暗色主题 ---- */
+[data-theme="tech-dark"] .virtual-office-panel {
+  background: #0c0a09;
+}
+
+[data-theme="tech-dark"] .vo-header,
+[data-theme="tech-dark"] .vo-footer {
+  background: #1c1917;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="tech-dark"] .vo-title { color: #fafaf9; }
+[data-theme="tech-dark"] .vo-stats,
+[data-theme="tech-dark"] .vo-close,
+[data-theme="tech-dark"] .vo-hint { color: #a8a29e; }
+[data-theme="tech-dark"] .vo-close:hover { background: rgba(255, 255, 255, 0.06); color: #fafaf9; }
+
+[data-theme="tech-dark"] .vo-wall {
+  background: linear-gradient(180deg, #292524 0%, #1c1917 100%);
+}
+
+[data-theme="tech-dark"] .vo-floor {
+  background: linear-gradient(180deg, #44403c 0%, #292524 100%);
+}
+
+/* ---- 家具 ---- */
+.vo-furniture-piece {
   position: absolute;
-  left: 24px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  color: var(--text-secondary, #86868b);
-  opacity: 0.55;
-  text-transform: uppercase;
   pointer-events: none;
   user-select: none;
+  z-index: 2;
+  transition: transform 0.4s ease;
 }
 
-.vo-zone-label-work { top: 12px; }
-.vo-zone-label-rest { top: calc(50% + 12px); }
-
-/* ---- 工位桌面 ---- */
-.vo-desk {
-  position: absolute;
-  width: 108px;
-  height: 14px;
-  background: linear-gradient(180deg, #d4d4d8 0%, #a1a1aa 100%);
-  border-radius: 4px 4px 0 0;
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.08);
-  pointer-events: none;
+.vo-furniture-piece svg {
+  display: block;
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.15));
 }
-
-[data-theme="tech-dark"] .vo-desk {
-  background: linear-gradient(180deg, #3a3a4a 0%, #25252f 100%);
-}
-
-/* ---- 家具：emoji 字符 + drop-shadow ---- */
-.vo-furniture {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  pointer-events: none;
-  user-select: none;
-  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.12));
-  opacity: 0.95;
-}
-
-.vo-fur-tv {
-  filter: drop-shadow(0 0 10px rgba(99, 102, 241, 0.4)) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.12));
-  animation: vo-tv-flicker 4s ease-in-out infinite;
-}
-
-@keyframes vo-tv-flicker {
-  0%, 100% { filter: drop-shadow(0 0 10px rgba(99, 102, 241, 0.4)) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.12)); }
-  50%      { filter: drop-shadow(0 0 14px rgba(168, 85, 247, 0.5)) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.12)); }
-}
-
-.vo-fur-lamp {
-  filter: drop-shadow(0 0 8px rgba(255, 220, 100, 0.5));
-  opacity: 0.85;
-}
-
-.vo-fur-plant,
-.vo-fur-tree {
-  animation: vo-plant-sway 5s ease-in-out infinite;
-  transform-origin: bottom center;
-}
-
-@keyframes vo-plant-sway {
-  0%, 100% { transform: rotate(-1.5deg); }
-  50%      { transform: rotate(1.5deg); }
-}
-
-.vo-fur-yoga {
-  animation: vo-yoga-breathe 3s ease-in-out infinite;
-}
-
-@keyframes vo-yoga-breathe {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.08); }
-}
-
-/* ---- 休息位锚点（emoji 标签贴在 agent 脚下） ---- */
-.vo-rest-anchor {
-  position: absolute;
-  font-size: 24px;
-  line-height: 1;
-  pointer-events: none;
-  user-select: none;
-  opacity: 0.7;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
-}
-
-.vo-rest-sofa  { font-size: 32px; }
-.vo-rest-coffee { font-size: 26px; }
-.vo-rest-gym    { font-size: 28px; }
-.vo-rest-walk   { font-size: 28px; }
 
 /* ---- office-slot ---- */
 .office-slot {
@@ -267,7 +198,7 @@
 
 .office-slot-label {
   font-size: 10px;
-  color: var(--text-secondary, #86868b);
+  color: #78716c;
   opacity: 0;
   margin-top: 2px;
 }
@@ -277,28 +208,19 @@
 }
 
 .office-slot-highlight {
-  filter: drop-shadow(0 0 8px var(--accent, #6366f1));
+  filter: drop-shadow(0 0 10px #6366f1);
 }
 
-/* ---- 底部提示 ---- */
+/* ---- 底部 ---- */
 .vo-footer {
   padding: 10px 24px;
-  border-top: 1px solid var(--border, #e5e5ea);
-  background: var(--bg-subtle, #f5f5f7);
+  border-top: 1px solid #e7e5e4;
+  background: #fafaf9;
   flex-shrink: 0;
+  z-index: 10;
 }
 
 .vo-hint {
   font-size: 12px;
-  color: var(--text-secondary, #86868b);
-}
-
-[data-theme="tech-dark"] .virtual-office-panel {
-  background: rgba(20, 20, 28, 0.98);
-}
-
-[data-theme="tech-dark"] .vo-header,
-[data-theme="tech-dark"] .vo-footer {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.08);
+  color: #78716c;
 }
