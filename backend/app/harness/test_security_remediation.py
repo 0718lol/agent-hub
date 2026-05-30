@@ -285,3 +285,50 @@ async def test_subprocess_sandbox_timeout():
         sandbox_manager.enable_docker = old_enable_docker
 
 
+@pytest.mark.asyncio
+async def test_path_traversal_non_existent_blocking():
+    """Verify that SystemMCPServer prevents relative traversals on non-existent directories/files."""
+    server = SystemMCPServer()
+    conversation_id = f"test-session-{uuid.uuid4().hex}"
+    
+    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
+    os.makedirs(sandbox_dir, exist_ok=True)
+    
+    try:
+        # 1. Traversal using non-existent directory structure targeting existing folder outside sandbox
+        res_list = await server.call_tool(
+            "workspace_list_dir", 
+            {"path": "nonexistent/../../../../backend"}, 
+            conversation_id=conversation_id
+        )
+        assert res_list.get("isError") is True
+        assert "Path traversal protection triggered" in res_list["content"][0]["text"]
+        
+        # 2. Traversal on read non-existent file path resolved outside
+        res_read = await server.call_tool(
+            "workspace_read_file", 
+            {"path": "nonexistent/../../../../backend/app/main.py"}, 
+            conversation_id=conversation_id
+        )
+        assert res_read.get("isError") is True
+        assert "Path traversal protection triggered" in res_read["content"][0]["text"]
+        
+        # 3. Traversal on write non-existent file path resolved outside
+        res_write = await server.call_tool(
+            "workspace_write_file", 
+            {"path": "nonexistent/../../../../backend/app/hack.py", "content": "print(1)"}, 
+            conversation_id=conversation_id
+        )
+        assert res_write.get("isError") is True
+        assert "Path traversal protection triggered" in res_write["content"][0]["text"]
+    finally:
+        # Cleanup
+        try:
+            import shutil
+            shutil.rmtree(sandbox_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+

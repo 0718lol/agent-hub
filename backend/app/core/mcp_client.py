@@ -209,12 +209,34 @@ class SystemMCPServer:
         return self.tools
 
     def _is_safe_path(self, sandbox_dir: str, target_path: str) -> bool:
-        """安全物理路径校验：确保目标路径经过真实符号链接解析后仍严格位于沙盒目录内部。"""
+        """安全物理路径校验：确保目标路径及其所有已存在的祖先目录经过真实符号链接解析后仍严格位于沙盒目录内部。"""
         try:
             abs_sandbox = os.path.realpath(sandbox_dir)
+            
+            # 1. 词法路径基本校验：防止直接的相对路径偏离
+            abs_target_lexical = os.path.abspath(target_path)
+            if os.path.commonpath([abs_sandbox, abs_target_lexical]) != abs_sandbox:
+                return False
+                
+            # 2. 真实路径物理符号链接校验：防止对已存在链接的穿越
             abs_target = os.path.realpath(target_path)
-            common = os.path.commonpath([abs_sandbox, abs_target])
-            return common == abs_sandbox
+            if os.path.commonpath([abs_sandbox, abs_target]) != abs_sandbox:
+                return False
+                
+            # 3. 递归已存在祖先路径校验：防范针对非存在路径的软链接TOCTOU绕过欺骗
+            curr = os.path.abspath(target_path)
+            while True:
+                parent = os.path.dirname(curr)
+                if parent == curr:  # 已经到达根目录
+                    break
+                if os.path.exists(parent):
+                    abs_parent = os.path.realpath(parent)
+                    if os.path.commonpath([abs_sandbox, abs_parent]) != abs_sandbox:
+                        return False
+                    break  # 只需要校验最邻近的已存在祖先即可
+                curr = parent
+                
+            return True
         except Exception:
             return False
 
