@@ -162,7 +162,146 @@
   50%      { transform: scale(var(--ac-scale, 1)) rotate(2deg); }
 }
 
-/* ---- coffee / gym：留给 VirtualOffice 后续扩展 ---- */
+/* ---- coffee：举杯 + 喝水点头 ---- */
+.ac-coffee .ac-arm-right {
+  transform-origin: 82px 80px;
+  animation: ac-coffee-drink 2s ease-in-out infinite;
+}
+
+.ac-coffee .ac-head {
+  animation: ac-head-tilt 2s ease-in-out infinite;
+}
+
+@keyframes ac-coffee-drink {
+  0%, 100% { transform: rotate(0deg); }
+  40%      { transform: rotate(-55deg) translateY(-8px); }
+  60%      { transform: rotate(-55deg) translateY(-8px); }
+}
+
+@keyframes ac-head-tilt {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50%      { transform: translateY(-1px) rotate(-8deg); }
+}
+
+/* ---- gym：上下深蹲 + 双臂屈伸 ---- */
+.ac-gym {
+  animation: ac-squat 0.8s ease-in-out infinite;
+}
+
+.ac-gym .ac-arm-left,
+.ac-gym .ac-arm-right {
+  animation: ac-arm-pump 0.8s ease-in-out infinite;
+}
+
+.ac-gym .ac-arm-left { transform-origin: 18px 87px; }
+.ac-gym .ac-arm-right { transform-origin: 82px 87px; }
+
+@keyframes ac-squat {
+  0%, 100% { transform: scale(var(--ac-scale, 1)) scaleY(1) translateY(0); }
+  50%      { transform: scale(var(--ac-scale, 1)) scaleY(0.88) translateY(6px); }
+}
+
+@keyframes ac-arm-pump {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(-30deg) translateY(-6px); }
+}
+
+/* ---- wave：举手挥动打招呼 ---- */
+.ac-wave .ac-arm-right {
+  transform-origin: 82px 87px;
+  animation: ac-arm-wave 0.5s ease-in-out infinite;
+}
+
+.ac-wave .ac-mouth {
+  d: path("M 42 50 Q 50 58 58 50");
+}
+
+@keyframes ac-arm-wave {
+  0%, 100% { transform: rotate(-95deg) translateY(-22px); }
+  50%      { transform: rotate(-115deg) translateY(-22px); }
+}
+
+/* ---- jump：原地兴奋跳跃 ---- */
+.ac-jump {
+  animation: ac-jump-up 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+}
+
+.ac-jump .ac-mouth {
+  d: path("M 42 50 Q 50 60 58 50");
+}
+
+@keyframes ac-jump-up {
+  0%, 100% { transform: scale(var(--ac-scale, 1)) translateY(0); }
+  35%      { transform: scale(var(--ac-scale, 1)) translateY(-16px) scaleY(1.06); }
+  70%      { transform: scale(var(--ac-scale, 1)) translateY(2px) scaleY(0.96); }
+}
+
+/* ---- stretch：伸懒腰，双臂上举 ---- */
+.ac-stretch .ac-arm-left {
+  transform-origin: 18px 87px;
+  animation: ac-stretch-arm-l 2s ease-in-out infinite;
+}
+
+.ac-stretch .ac-arm-right {
+  transform-origin: 82px 87px;
+  animation: ac-stretch-arm-r 2s ease-in-out infinite;
+}
+
+.ac-stretch .ac-head {
+  animation: ac-stretch-head 2s ease-in-out infinite;
+}
+
+@keyframes ac-stretch-arm-l {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(-160deg) translateY(-18px); }
+}
+
+@keyframes ac-stretch-arm-r {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(160deg) translateY(-18px); }
+}
+
+@keyframes ac-stretch-head {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+
+/* ---- happy：hover 反应：眼睛变大、嘴笑、轻微抖动 ---- */
+.ac-happy .ac-mouth {
+  d: path("M 40 50 Q 50 62 60 50");
+  stroke-width: 2.5;
+}
+
+.ac-happy .ac-eye {
+  transform: scale(1.15);
+  animation: none;
+}
+
+.ac-happy {
+  animation: ac-happy-wiggle 0.6s ease-in-out infinite;
+}
+
+@keyframes ac-happy-wiggle {
+  0%, 100% { transform: scale(var(--ac-scale, 1)) rotate(-1.5deg); }
+  50%      { transform: scale(var(--ac-scale, 1)) rotate(1.5deg); }
+}
+
+/* ---- mood-tag: 桌宠的随机表情贴纸（爱心/星星/音符），从头顶冒出来 ---- */
+.ac-mood-tag {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 16px;
+  animation: ac-mood-float 1.6s ease-out forwards;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
+}
+
+@keyframes ac-mood-float {
+  0%   { opacity: 0; transform: translateY(0) scale(0.6); }
+  20%  { opacity: 1; transform: translateY(-6px) scale(1.1); }
+  100% { opacity: 0; transform: translateY(-26px) scale(0.9); }
+}
 
 /* ---- 头顶气泡 ---- */
 .ac-bubble {

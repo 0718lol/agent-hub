@@ -9,12 +9,16 @@
  */
 export const AGENT_ACTIONS = Object.freeze({
   IDLE: 'idle',       // 默认：呼吸 + 偶尔眨眼
-  WORK: 'work',       // 工作中：双臂敲键盘
+  WORK: 'work',       // 工作中：双臂敲键盘 + 眯眼专注
   TALK: 'talk',       // 说话中：嘴巴张合 + 头点动
   SLEEP: 'sleep',     // 休息：闭眼 + Zz
   WALK: 'walk',       // 移动中：左右轻摆
   COFFEE: 'coffee',   // 喝咖啡（VirtualOffice）
   GYM: 'gym',         // 健身（VirtualOffice）
+  WAVE: 'wave',       // 挥手打招呼
+  JUMP: 'jump',       // 兴奋跳跃
+  STRETCH: 'stretch', // 伸懒腰
+  HAPPY: 'happy',     // 开心笑脸（hover 反应）
 })
 
 export const ALL_ACTIONS = Object.values(AGENT_ACTIONS)

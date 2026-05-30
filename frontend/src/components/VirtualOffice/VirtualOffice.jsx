@@ -36,6 +36,21 @@ const REST_ACTIONS_BY_TYPE = {
   walk: AGENT_ACTIONS.WALK,
 }
 
+// 自由活动节奏：每个 agent 在一个活动停留 8-22 秒后换位置
+const FREE_MOVE_CHECK_INTERVAL = 4000  // 每 4 秒检查一次
+const ACTIVITY_MIN_MS = 8000
+const ACTIVITY_MAX_MS = 22000
+
+function pickRandomRestSlot(currentIdx) {
+  // 7 成随机选不同的，3 成保持
+  if (Math.random() < 0.3) return currentIdx
+  let next = Math.floor(Math.random() * REST_SLOTS_PCT.length)
+  if (next === currentIdx) {
+    next = (next + 1 + Math.floor(Math.random() * (REST_SLOTS_PCT.length - 1))) % REST_SLOTS_PCT.length
+  }
+  return next
+}
+
 const FURNITURE_LIST = [
   { type: 'Window', x: 0.10, y: 0.10, w: 200, h: 140 },
   { type: 'Whiteboard', x: 0.50, y: 0.10, w: 200, h: 130 },
@@ -133,12 +148,58 @@ export default function VirtualOffice({ open, onClose }) {
   const stageRef = useRef(null)
   const [stageSize, setStageSize] = useState({ w: 1400, h: 800 })
 
+  // 自由活动状态：{ agentId: { slotIdx, nextChangeAt, walking } }
+  const [freeMove, setFreeMove] = useState({})
+  const freeMoveRef = useRef(freeMove)
+  freeMoveRef.current = freeMove
+
   useEffect(() => {
     if (!open) return
     const onKey = (e) => { if (e.key === 'Escape') onClose && onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
+
+  // 自由活动定时器：每 4 秒检查一次，到时间的 agent 换位
+  useEffect(() => {
+    if (!open) return
+    const tick = () => {
+      const now = Date.now()
+      setFreeMove((prev) => {
+        const next = { ...prev }
+        let changed = false
+        for (const agentId in next) {
+          const entry = next[agentId]
+          if (entry.walking) continue
+          if (now >= entry.nextChangeAt) {
+            const newIdx = pickRandomRestSlot(entry.slotIdx)
+            if (newIdx !== entry.slotIdx) {
+              next[agentId] = {
+                slotIdx: newIdx,
+                nextChangeAt: now + ACTIVITY_MIN_MS + Math.random() * (ACTIVITY_MAX_MS - ACTIVITY_MIN_MS),
+                walking: true,
+                walkEndsAt: now + 1200,
+              }
+              changed = true
+            } else {
+              // 留在原地，重置计时
+              next[agentId] = {
+                ...entry,
+                nextChangeAt: now + ACTIVITY_MIN_MS + Math.random() * (ACTIVITY_MAX_MS - ACTIVITY_MIN_MS),
+              }
+              changed = true
+            }
+          } else if (entry.walking && now >= entry.walkEndsAt) {
+            next[agentId] = { ...entry, walking: false }
+            changed = true
+          }
+        }
+        return changed ? next : prev
+      })
+    }
+    const id = setInterval(tick, FREE_MOVE_CHECK_INTERVAL / 2)
+    return () => clearInterval(id)
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -212,24 +273,47 @@ export default function VirtualOffice({ open, onClose }) {
 
       const placedResting = (() => {
         const slotCount = {}
+        const now = Date.now()
         return resting.map((a) => {
-          const preferred = hashStringToInt(String(a.id || '')) % REST_SLOTS_PCT.length
-          let bestIdx = preferred
-          for (let probe = 0; probe < REST_SLOTS_PCT.length; probe++) {
-            const i = (preferred + probe) % REST_SLOTS_PCT.length
-            if (!slotCount[i]) { bestIdx = i; break }
-            if ((slotCount[i] || 0) < (slotCount[bestIdx] || 0)) bestIdx = i
+          const fm = freeMove[a.id]
+          let bestIdx
+          if (fm && typeof fm.slotIdx === 'number') {
+            bestIdx = fm.slotIdx
+            slotCount[bestIdx] = (slotCount[bestIdx] || 0) + 1
+          } else {
+            // 第一次进入：hash 选起始位
+            const preferred = hashStringToInt(String(a.id || '')) % REST_SLOTS_PCT.length
+            bestIdx = preferred
+            for (let probe = 0; probe < REST_SLOTS_PCT.length; probe++) {
+              const i = (preferred + probe) % REST_SLOTS_PCT.length
+              if (!slotCount[i]) { bestIdx = i; break }
+              if ((slotCount[i] || 0) < (slotCount[bestIdx] || 0)) bestIdx = i
+            }
+            slotCount[bestIdx] = (slotCount[bestIdx] || 0) + 1
+            // 同时初始化它的 freeMove，下一帧定时器会用到
+            if (!freeMoveRef.current[a.id]) {
+              setTimeout(() => {
+                setFreeMove((prev) => prev[a.id] ? prev : ({
+                  ...prev,
+                  [a.id]: {
+                    slotIdx: bestIdx,
+                    nextChangeAt: now + ACTIVITY_MIN_MS + Math.random() * (ACTIVITY_MAX_MS - ACTIVITY_MIN_MS),
+                    walking: false,
+                  }
+                }))
+              }, 0)
+            }
           }
-          const stack = slotCount[bestIdx] || 0
-          slotCount[bestIdx] = stack + 1
+          const stack = (slotCount[bestIdx] || 1) - 1
           const pct = REST_SLOTS_PCT[bestIdx]
           const px = toPx(pct)
+          const isWalking = fm && fm.walking
           return {
             ...a,
             slot: { x: px.x + stack * 28, y: px.y - stack * 16 },
             slotType: pct.type,
-            action: REST_ACTIONS_BY_TYPE[pct.type] || AGENT_ACTIONS.IDLE,
-            bubble: null,
+            action: isWalking ? AGENT_ACTIONS.WALK : (REST_ACTIONS_BY_TYPE[pct.type] || AGENT_ACTIONS.IDLE),
+            bubble: isWalking ? '溜达去...' : null,
           }
         })
       })()
@@ -240,7 +324,7 @@ export default function VirtualOffice({ open, onClose }) {
       return { working: [], resting: [] }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents, typingAgents, thinkingAgents, tasks, stageSize])
+  }, [agents, typingAgents, thinkingAgents, tasks, stageSize, freeMove])
 
   const handleAgentClick = (agent) => {
     if (agent.convId) {
