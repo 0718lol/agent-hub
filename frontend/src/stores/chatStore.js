@@ -26,7 +26,7 @@ const FALLBACK_CONVERSATIONS = [
   { id: 'conv_tester', type: 'single', agentId: 'agent_tester', name: '测试工程师', avatar: null, role: '测试用例与 Bug 分析', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 3000 },
   { id: 'conv_devops', type: 'single', agentId: 'agent_devops', name: '运维工程师', avatar: null, role: 'Docker 部署与 CI/CD', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 4000 },
   { id: 'conv_designer', type: 'single', agentId: 'agent_designer', name: '设计顾问', avatar: null, role: 'UI/UX 设计建议', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 5000 },
-  { id: 'conv_agent_builder', type: 'single', agentId: 'agent_builder', name: 'Agent 工坊', avatar: null, role: '对话式创建自定义 Agent', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 6000 },
+  { id: 'conv_builder', type: 'single', agentId: 'agent_builder', name: 'Agent 工坊', avatar: null, role: '对话式创建自定义 Agent', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 6000 },
   { id: 'conv_group_demo', type: 'group', name: 'Demo 项目群', avatar: null, agents: ['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer'], messages: [], pinned: false, unread: false, updatedAt: Date.now() - 7000 },
 ]
 
