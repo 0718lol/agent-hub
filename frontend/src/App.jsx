@@ -1,10 +1,16 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import Sidebar from './components/Layout/Sidebar'
 import ChatPanel from './components/Layout/ChatPanel'
 import SlidePanel from './components/Layout/SlidePanel'
+import { useChatStore } from './stores/chatStore'
 
 export default function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+
+  // Fetch conversations from backend on first mount
+  useEffect(() => {
+    useChatStore.getState().fetchConversations()
+  }, [])
 
   return (
     <div className="app-layout">

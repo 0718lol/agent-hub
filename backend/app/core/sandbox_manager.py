@@ -92,7 +92,7 @@ class SubprocessSandbox(BaseSandbox):
                     cwd=tmp_dir,
                     env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
                 )
-                limit_windows_process(proc.pid, settings.shell_memory_limit_mb * 1024 * 1024)
+                limit_windows_process(proc.pid, settings.shell_memory_limit_mb * 1024 * 1024, cpu_limit_secs=timeout + 2)
 
             try:
                 stdin_bytes = stdin_data.encode("utf-8") if stdin_data else None
