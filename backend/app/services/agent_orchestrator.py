@@ -14,7 +14,7 @@ from typing import Any
 from app.core.websocket import manager
 from app.core.database import (
     save_message, get_messages, get_pending_hil_checkpoint, resolve_hil_checkpoint,
-    save_artifact, update_latest_artifact_quality, delete_custom_agent,
+    save_artifact, update_latest_artifact_quality,
 )
 from app.core.config import settings
 from app.core.llm_client import llm_client
@@ -27,8 +27,6 @@ logger = logging.getLogger("agent_orchestrator")
 
 # Shared state: stop events per conversation + custom graph builders
 _stop_events: dict[str, asyncio.Event] = {}
-_graph_builders = {}
-
 
 def get_agents() -> dict:
     """Return the current agent registry dict."""
@@ -39,10 +37,9 @@ def get_agents() -> dict:
 # Custom Agent helpers
 # ============================================================
 
-def _remove_custom_agent(agent_id: str):
-    """Delete a custom agent from DB, AGENTS dict, and its conversation."""
-    get_agents().pop(agent_id, None)
-    delete_custom_agent(agent_id)
+async def _remove_custom_agent(agent_id: str):
+    """Delete a custom agent via the concurrency-safe agent registry."""
+    await agent_registry.unregister_custom_agent(agent_id)
 
 
 # ============================================================
@@ -163,8 +160,7 @@ async def stream_agent_reply(
                         break
                     try:
                         agent_config = json.loads(ca_match.group(1))
-                        from app.services.agent_registry import agent_registry as _ar
-                        await _ar.register_custom_agent(agent_config)
+                        await agent_registry.register_custom_agent(agent_config)
                         await manager.broadcast(conversation_id, {
                             "type": "agent_created",
                             "conversation_id": conversation_id,
@@ -180,7 +176,7 @@ async def stream_agent_reply(
                     if not da_match:
                         break
                     del_id = da_match.group(1)
-                    _remove_custom_agent(del_id)
+                    await _remove_custom_agent(del_id)
                     await manager.broadcast(conversation_id, {
                         "type": "agent_deleted",
                         "conversation_id": conversation_id,
@@ -668,10 +664,7 @@ async def resume_graph_from_checkpoint(conversation_id: str, action: str):
             "is_generating": True,
         })
 
-        if conversation_id in _graph_builders:
-            graph = _graph_builders[conversation_id](conversation_id, original_prompt, trace, stop_event)
-        else:
-            graph = build_group_chat_graph(conversation_id, original_prompt, trace, stop_event)
+        graph = build_group_chat_graph(conversation_id, original_prompt, trace, stop_event)
         await graph.run(state_data, conversation_id, stop_event, start_node=start_node)
     finally:
         trace.finish()

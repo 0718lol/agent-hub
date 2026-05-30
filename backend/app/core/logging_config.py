@@ -154,18 +154,32 @@ def get_logger(name: str = "app"):
 
 # ---- FastAPI Middleware ----
 
-from fastapi import Request
-from starlette.middleware.base import BaseHTTPMiddleware
 
 
-class RequestIdMiddleware(BaseHTTPMiddleware):
-    """FastAPI middleware that assigns a unique request_id to every HTTP request
+class RequestIdMiddleware:
+    """Pure ASGI middleware that assigns a unique request_id to every HTTP request
     and injects it into the logging context for log correlation.
+    
+    Uses raw ASGI instead of BaseHTTPMiddleware for better performance
+    (avoids per-request coroutine wrapping overhead).
     """
 
-    async def dispatch(self, request: Request, call_next):
-        # Use X-Request-ID header if provided (e.g. from load balancer), else generate
-        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+
+        # Extract X-Request-ID from headers
+        headers = dict(scope.get("headers", []))
+        request_id = None
+        for key, val in headers.items():
+            if key == b"x-request-id":
+                request_id = val.decode("utf-8", errors="replace")
+                break
+        request_id = request_id or uuid.uuid4().hex[:12]
         set_request_id(request_id)
 
         # Also set structlog contextvars if available
@@ -174,6 +188,12 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             structlog.contextvars.clear_contextvars()
             structlog.contextvars.bind_contextvars(request_id=request_id)
 
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        return response
+        # Inject X-Request-ID into response headers
+        async def send_with_request_id(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append([b"x-request-id", request_id.encode("utf-8")])
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_request_id)

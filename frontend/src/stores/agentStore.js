@@ -47,45 +47,21 @@ export const useAgentStore = create((set, get) => ({
   addCustomAgent: (agent) =>
     set((state) => ({ agents: [...state.agents, { ...agent, status: 'idle' }] })),
 
-  // Fetch agents from backend health endpoint
+  // Fetch custom agents from backend API for full metadata
   fetchAgents: async () => {
     try {
-      const resp = await fetch('/api/health')
-      const data = await resp.json()
-      // data.agents is a list of agent_id strings
-      if (data.agents && data.agents.length > 0) {
-        set((state) => {
-          const existingIds = new Set(state.agents.map((a) => a.agent_id))
-          // Merge backend agents with presets — don't remove presets
-          const backendAgents = data.agents
-            .filter((id) => !existingIds.has(id))
-            .map((id) => ({ agent_id: id, name: id, role: '', status: 'idle' }))
-          if (backendAgents.length === 0) return {}
-          return { agents: [...state.agents, ...backendAgents] }
-        })
-      }
+      // Load custom agents with full metadata from backend
+      await get().loadCustomAgents()
     } catch (e) {
       console.warn('Failed to fetch agents from backend:', e)
     }
   },
 
-  // Fetch agents from backend health endpoint
+  // Fetch custom agents from backend API for full metadata
   fetchAgents: async () => {
     try {
-      const resp = await fetch('/api/health')
-      const data = await resp.json()
-      // data.agents is a list of agent_id strings
-      if (data.agents && data.agents.length > 0) {
-        set((state) => {
-          const existingIds = new Set(state.agents.map((a) => a.agent_id))
-          // Merge backend agents with presets — don't remove presets
-          const backendAgents = data.agents
-            .filter((id) => !existingIds.has(id))
-            .map((id) => ({ agent_id: id, name: id, role: '', status: 'idle' }))
-          if (backendAgents.length === 0) return {}
-          return { agents: [...state.agents, ...backendAgents] }
-        })
-      }
+      // Load custom agents with full metadata from backend
+      await get().loadCustomAgents()
     } catch (e) {
       console.warn('Failed to fetch agents from backend:', e)
     }
