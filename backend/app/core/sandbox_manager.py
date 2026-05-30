@@ -4,8 +4,11 @@ import os
 import sys
 import tempfile
 import time
+import shlex
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
+from app.core.config import settings
+from app.core.subprocess_security import limit_windows_process, safe_terminate_process_tree
 
 logger = logging.getLogger("sandbox_manager")
 
@@ -63,14 +66,33 @@ class SubprocessSandbox(BaseSandbox):
             cmd = config["cmd"] + [tmp_file]
             start_time = time.perf_counter()
 
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                stdin=asyncio.subprocess.PIPE if stdin_data else None,
-                cwd=tmp_dir,
-                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-            )
+            # Enforce dynamic resource limitations: ulimit for Unix/Linux, Job Objects for Windows
+            if sys.platform != "win32":
+                # Unix/Linux path: encapsulate command in bash/sh with memory and CPU ulimits
+                # CPU limit: timeout + 2 seconds buffer
+                cpu_limit_secs = int(timeout) + 2
+                memory_kb = settings.shell_memory_limit_mb * 1024
+                # We use shlex.join to construct a perfectly shell-escaped execute command
+                exec_str = f"ulimit -t {cpu_limit_secs} && ulimit -v {memory_kb} && exec {shlex.join(cmd)}"
+                proc = await asyncio.create_subprocess_exec(
+                    "sh", "-c", exec_str,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.PIPE if stdin_data else None,
+                    cwd=tmp_dir,
+                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                )
+            else:
+                # Windows path: execute directly, then attach Windows Job Object constraints immediately after creation
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.PIPE if stdin_data else None,
+                    cwd=tmp_dir,
+                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                )
+                limit_windows_process(proc.pid, settings.shell_memory_limit_mb * 1024 * 1024)
 
             try:
                 stdin_bytes = stdin_data.encode("utf-8") if stdin_data else None
@@ -104,11 +126,7 @@ class SubprocessSandbox(BaseSandbox):
                 }
 
             except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except Exception:
-                    pass
+                await safe_terminate_process_tree(proc)
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 return {
                     "language": language,
