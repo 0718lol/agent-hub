@@ -82,4 +82,26 @@ export const useCanvasStore = create((set) => ({
   ],
   setNodeStatus: (nodeId, status) =>
     set((state) => ({ dagNodes: state.dagNodes.map((n) => n.id === nodeId ? { ...n, status } : n) })),
-}))
+
+  // Fetch DAG topology from backend agents list
+  fetchDAGFromBackend: async () => {
+    try {
+      const resp = await fetch('/api/health')
+      const data = await resp.json()
+      if (!data.agents || data.agents.length === 0) return
+      const agentIds = data.agents
+      // Build DAG nodes from backend agents
+      const newNodes = [
+        { id: 'user', label: '用户', iconKey: 'user', x: 200, y: 30, status: 'idle' },
+        ...agentIds.map((id, i) => ({
+          id, label: id.replace('agent_', '').toUpperCase(), iconKey: id,
+          x: 60 + (i % 5) * 100, y: 130 + Math.floor(i / 5) * 120, status: 'idle'
+        }))
+      ]
+      const newEdges = agentIds.map((id) => ({ from: 'agent_pm', to: id }))
+      set({ dagNodes: newNodes, dagEdges: newEdges })
+    } catch (e) {
+      console.warn('Failed to fetch DAG from backend:', e)
+    }
+  },
+})

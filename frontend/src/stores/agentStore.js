@@ -7,6 +7,7 @@ const PRESET_AGENTS = [
   { agent_id: 'agent_tester', name: '测试工程师', role: '测试 · 用例设计/Bug追踪', status: 'idle' },
   { agent_id: 'agent_devops', name: '运维工程师', role: '运维部署 · Docker/CI/CD', status: 'idle' },
   { agent_id: 'agent_designer', name: '设计顾问', role: 'UI/UX 设计 · 交互体验', status: 'idle' },
+  { agent_id: 'agent_builder', name: 'Agent 工坊', role: '对话式创建自定义 Agent', status: 'idle' },
 ]
 
 function loadDeletedPresets() {
@@ -45,6 +46,50 @@ export const useAgentStore = create((set, get) => ({
   // 添加本地自定义 Agent（创建成功后调用）
   addCustomAgent: (agent) =>
     set((state) => ({ agents: [...state.agents, { ...agent, status: 'idle' }] })),
+
+  // Fetch agents from backend health endpoint
+  fetchAgents: async () => {
+    try {
+      const resp = await fetch('/api/health')
+      const data = await resp.json()
+      // data.agents is a list of agent_id strings
+      if (data.agents && data.agents.length > 0) {
+        set((state) => {
+          const existingIds = new Set(state.agents.map((a) => a.agent_id))
+          // Merge backend agents with presets — don't remove presets
+          const backendAgents = data.agents
+            .filter((id) => !existingIds.has(id))
+            .map((id) => ({ agent_id: id, name: id, role: '', status: 'idle' }))
+          if (backendAgents.length === 0) return {}
+          return { agents: [...state.agents, ...backendAgents] }
+        })
+      }
+    } catch (e) {
+      console.warn('Failed to fetch agents from backend:', e)
+    }
+  },
+
+  // Fetch agents from backend health endpoint
+  fetchAgents: async () => {
+    try {
+      const resp = await fetch('/api/health')
+      const data = await resp.json()
+      // data.agents is a list of agent_id strings
+      if (data.agents && data.agents.length > 0) {
+        set((state) => {
+          const existingIds = new Set(state.agents.map((a) => a.agent_id))
+          // Merge backend agents with presets — don't remove presets
+          const backendAgents = data.agents
+            .filter((id) => !existingIds.has(id))
+            .map((id) => ({ agent_id: id, name: id, role: '', status: 'idle' }))
+          if (backendAgents.length === 0) return {}
+          return { agents: [...state.agents, ...backendAgents] }
+        })
+      }
+    } catch (e) {
+      console.warn('Failed to fetch agents from backend:', e)
+    }
+  },
 
   // 删除 Agent
   //  预设 Agent → 标记为已删除（本地隐藏，localStorage 记录）

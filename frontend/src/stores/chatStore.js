@@ -31,7 +31,7 @@ const FALLBACK_CONVERSATIONS = [
 ]
 
 export const useChatStore = create((set, get) => ({
-  conversations: [],
+  conversations: FALLBACK_CONVERSATIONS,
   activeConversationId: 'conv_pm',
   typingAgents: {},
   thinkingAgents: {},

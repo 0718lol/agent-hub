@@ -1,3 +1,9 @@
+from app.routers import agents as agents_router
+from app.routers import uploads as uploads_router
+from app.routers import settings as settings_router
+from app.routers import cron as cron_router
+from app.routers import workflows as workflows_router
+from app.routers import mcp as mcp_router
 
 from app.routers import webhook as webhook_router
 from app.routers import conversations as conversations_router

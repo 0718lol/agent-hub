@@ -42,11 +42,11 @@ function ToolCallBlock({ toolName, params }) {
           <Icon size={14} style={{ animation: 'spin-slow 4s linear infinite' }} />
         </div>
         
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <span style={{ fontSize: '13px', fontWeight: 600, color: '#c7d2fe' }}>
+        <div className={styles.toolCallInfo}>
+          <span className={styles.toolCallName}>
             调用工具：{toolName}
           </span>
-          <span style={{ fontSize: '10px', color: '#818cf8', opacity: 0.8, letterSpacing: '0.5px' }}>
+          <span className={styles.toolCallLabel}>
             System Tool Call
           </span>
         </div>
@@ -108,51 +108,29 @@ function ToolResultBlock({ toolName, resultText }) {
           <Icon size={14} />
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+        <div className={styles.toolResultInfo}>
+          <span className={styles.toolResultName}>
             {toolName} {isError ? '执行失败' : '执行成功'}
           </span>
-          <span style={{ fontSize: '10px', color: 'var(--text-muted)', letterSpacing: '0.5px' }}>
+          <span className={styles.toolResultLabel}>
             Tool Output Received
           </span>
         </div>
 
         <div className={styles.toolCallRight}>
-          <span style={{
-            fontSize: '10px',
-            background: badgeBg,
-            border: `1px solid ${border}`,
-            color: color,
-            padding: '2px 8px',
-            borderRadius: '10px',
-            fontWeight: 500,
-          }}>
+          <span className={`${styles.toolResultBadge} ${isError ? styles.toolResultBadgeError : styles.toolResultBadgeSuccess}`}>
             {isError ? 'Failed' : 'Success'}
           </span>
-          <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
+          <span className={styles.toolResultChevron}>
             {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </span>
         </div>
       </div>
 
-      <div style={{
-        padding: '12px 14px',
-        background: 'rgba(0, 0, 0, 0.25)',
-        borderTop: `1px solid ${border}`,
-      }}>
+      <div className={`${styles.toolResultBody} ${isError ? styles.toolResultBodyError : styles.toolResultBodySuccess}`}>
         <pre 
           onClick={() => !expanded && setExpanded(true)}
-          style={{
-            margin: 0,
-            fontSize: '11px',
-            color: isError ? '#fca5a5' : '#a7f3d0',
-            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-            maxHeight: expanded ? '400px' : '150px',
-            overflow: 'auto',
-            cursor: !expanded ? 'pointer' : 'text',
-          }}
+          className={`${styles.toolResultPre} ${isError ? styles.toolResultPreError : styles.toolResultPreSuccess} ${expanded ? styles.toolResultPreExpanded : ''}`}>
         >
           {displayedContent}
         </pre>
