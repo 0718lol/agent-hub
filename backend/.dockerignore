@@ -1,13 +1,21 @@
+# Data directory (contains user data, should not be in image)
+data/
+
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
-.env
-venv/
+*.egg-info/
 .venv/
-data/
-*.db
-harness_*.json
-harness_*.html
-report.html
-nul
-.git/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Test artifacts
+.pytest_cache/
+
+# Patch scripts
+_patch_*.py
+_refactor_*.py

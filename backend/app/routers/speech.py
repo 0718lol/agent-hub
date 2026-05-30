@@ -6,7 +6,7 @@ from fastapi import APIRouter, UploadFile, File
 from pydantic import BaseModel
 from app.core.speech import stt_client
 from app.core.llm_client import llm_client
-from app.core.config import obfuscate_key, deobfuscate_key
+from app.core.config import obfuscate_key as encrypt_key, deobfuscate_key as decrypt_key
 
 logger = logging.getLogger("routers.speech")
 router = APIRouter(tags=["speech"])
@@ -20,7 +20,7 @@ def _load_stt_config():
             with open(STT_CONFIG_PATH, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             api_key = cfg.get("api_key", "")
-            api_key = deobfuscate_key(api_key)
+            api_key = decrypt_key(api_key)
             stt_client.configure(
                 api_key=api_key,
                 base_url=cfg.get("base_url", ""),
@@ -34,7 +34,7 @@ def _load_stt_config():
 def _save_stt_config():
     try:
         os.makedirs(os.path.dirname(STT_CONFIG_PATH), exist_ok=True)
-        obfuscated_api_key = obfuscate_key(stt_client.api_key)
+        obfuscated_api_key = encrypt_key(stt_client.api_key)
         with open(STT_CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump({
                 "api_key": obfuscated_api_key,
