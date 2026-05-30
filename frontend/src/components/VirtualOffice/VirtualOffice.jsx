@@ -117,58 +117,64 @@ export default function VirtualOffice({ open, onClose }) {
   }, [conversations])
 
   const layout = useMemo(() => {
-    const working = []
-    const resting = []
+    try {
+      const working = []
+      const resting = []
 
-    for (const agent of agents) {
-      const state = determineAgentAction(agent.id, typingAgents, thinkingAgents, tasks)
-      if (state) working.push({ ...agent, ...state })
-      else resting.push(agent)
-    }
-
-    // 工位：超员时按宽度均匀压缩，避免重叠
-    const placedWorking = (() => {
-      const N = working.length
-      if (N === 0) return []
-      if (N <= WORKSTATIONS.length) {
-        return working.map((a, i) => ({ ...a, slot: WORKSTATIONS[i], slotType: 'desk' }))
+      for (const agent of agents) {
+        if (!agent || !agent.id) continue
+        const state = determineAgentAction(agent.id, typingAgents, thinkingAgents, tasks)
+        if (state) working.push({ ...agent, ...state })
+        else resting.push(agent)
       }
-      const startX = WORKSTATIONS[0].x
-      const endX = WORKSTATIONS[WORKSTATIONS.length - 1].x
-      const step = (endX - startX) / (N - 1)
-      return working.map((a, i) => ({
-        ...a,
-        slot: { x: Math.round(startX + i * step), y: WORKSTATIONS[0].y },
-        slotType: 'desk',
-      }))
-    })()
 
-    // 休息位：贪心分配，hash 冲突时找最少占用的位置 + 阶梯偏移
-    const placedResting = (() => {
-      const slotCount = {}
-      return resting.map((a) => {
-        const preferred = hashStringToInt(a.id) % REST_SLOTS.length
-        let bestIdx = preferred
-        for (let probe = 0; probe < REST_SLOTS.length; probe++) {
-          const i = (preferred + probe) % REST_SLOTS.length
-          if (!slotCount[i]) { bestIdx = i; break }
-          if ((slotCount[i] || 0) < (slotCount[bestIdx] || 0)) bestIdx = i
+      // 工位：超员时按宽度均匀压缩，避免重叠
+      const placedWorking = (() => {
+        const N = working.length
+        if (N === 0) return []
+        if (N <= WORKSTATIONS.length) {
+          return working.map((a, i) => ({ ...a, slot: WORKSTATIONS[i], slotType: 'desk' }))
         }
-        const stack = slotCount[bestIdx] || 0
-        slotCount[bestIdx] = stack + 1
-        const slot = REST_SLOTS[bestIdx]
-        return {
+        const startX = WORKSTATIONS[0].x
+        const endX = WORKSTATIONS[WORKSTATIONS.length - 1].x
+        const step = (endX - startX) / (N - 1)
+        return working.map((a, i) => ({
           ...a,
-          slot: { x: slot.x + stack * 22, y: slot.y - stack * 14 },
-          slotType: slot.type,
-          slotLabel: slot.label,
-          action: REST_ACTIONS_BY_TYPE[slot.type] || AGENT_ACTIONS.IDLE,
-          bubble: null,
-        }
-      })
-    })()
+          slot: { x: Math.round(startX + i * step), y: WORKSTATIONS[0].y },
+          slotType: 'desk',
+        }))
+      })()
 
-    return { working: placedWorking, resting: placedResting }
+      // 休息位：贪心分配，hash 冲突时找最少占用的位置 + 阶梯偏移
+      const placedResting = (() => {
+        const slotCount = {}
+        return resting.map((a) => {
+          const preferred = hashStringToInt(String(a.id || '')) % REST_SLOTS.length
+          let bestIdx = preferred
+          for (let probe = 0; probe < REST_SLOTS.length; probe++) {
+            const i = (preferred + probe) % REST_SLOTS.length
+            if (!slotCount[i]) { bestIdx = i; break }
+            if ((slotCount[i] || 0) < (slotCount[bestIdx] || 0)) bestIdx = i
+          }
+          const stack = slotCount[bestIdx] || 0
+          slotCount[bestIdx] = stack + 1
+          const slot = REST_SLOTS[bestIdx]
+          return {
+            ...a,
+            slot: { x: slot.x + stack * 22, y: slot.y - stack * 14 },
+            slotType: slot.type,
+            slotLabel: slot.label,
+            action: REST_ACTIONS_BY_TYPE[slot.type] || AGENT_ACTIONS.IDLE,
+            bubble: null,
+          }
+        })
+      })()
+
+      return { working: placedWorking, resting: placedResting }
+    } catch (err) {
+      console.error('[VirtualOffice] layout 计算失败：', err)
+      return { working: [], resting: [], error: err && err.message }
+    }
   }, [agents, typingAgents, thinkingAgents, tasks])
 
   const handleAgentClick = (agent) => {

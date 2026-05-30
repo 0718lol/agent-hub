@@ -49,6 +49,12 @@ export default function DesktopPet({ enabled = true }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+    }
+  }, [])
+
   // 工作室开着时桌宠完全隐藏（共用资源、避免遮挡）
   if (officeOpen) return null
 
@@ -78,12 +84,6 @@ export default function DesktopPet({ enabled = true }) {
       setChatOpen((v) => !v)
     }, DOUBLE_CLICK_MS)
   }
-
-  useEffect(() => {
-    return () => {
-      if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
-    }
-  }, [])
 
   const handleContextMenu = (e) => {
     e.preventDefault()
