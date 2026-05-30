@@ -143,3 +143,102 @@ async def test_local_rce_execution_allowed_and_script_wrapped():
             shutil.rmtree(sandbox_dir, ignore_errors=True)
         except Exception:
             pass
+
+
+@pytest.mark.asyncio
+async def test_local_rce_cpu_timeout():
+    """Verify that subprocesses exceeding the execution timeout are forcefully killed."""
+    server = SystemMCPServer()
+    conversation_id = f"test-session-{uuid.uuid4().hex}"
+    
+    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
+    os.makedirs(sandbox_dir, exist_ok=True)
+
+    # Git initialization
+    await (await asyncio.create_subprocess_exec("git", "init", cwd=sandbox_dir)).communicate()
+    await (await asyncio.create_subprocess_exec("git", "config", "user.name", "TestUser", cwd=sandbox_dir)).communicate()
+    await (await asyncio.create_subprocess_exec("git", "config", "user.email", "test@test.com", cwd=sandbox_dir)).communicate()
+    with open(os.path.join(sandbox_dir, "init.txt"), "w") as f:
+        f.write("init")
+    await (await asyncio.create_subprocess_exec("git", "add", ".", cwd=sandbox_dir)).communicate()
+    await (await asyncio.create_subprocess_exec("git", "commit", "-m", "init", cwd=sandbox_dir)).communicate()
+
+    # 使用 Python 跨平台挂起命令，避免 Windows timeout 命令在输入重定向下直接崩溃退出
+    sleep_cmd = f'"{sys.executable}" -c "import time; time.sleep(30)"'
+
+    old_timeout = settings.shell_timeout
+    old_allow = settings.allow_unsandboxed_shell
+    try:
+        settings.shell_timeout = 2.0
+        settings.allow_unsandboxed_shell = True
+        
+        with patch.dict(os.environ, {"AGENTHUB_DOCKER_SANDBOX": "false"}):
+            start_time = asyncio.get_event_loop().time()
+            res = await server.call_tool(
+                "workspace_run_command",
+                {"command": sleep_cmd},
+                conversation_id=conversation_id
+            )
+            elapsed = asyncio.get_event_loop().time() - start_time
+            
+            assert elapsed < 10.0 # Must not run full 30s
+            assert res.get("isError") is True
+            assert "超过了物理资源配额硬超时限制" in res["content"][0]["text"]
+    finally:
+        settings.shell_timeout = old_timeout
+        settings.allow_unsandboxed_shell = old_allow
+        try:
+            import shutil
+            shutil.rmtree(sandbox_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_local_rce_memory_exhaustion():
+    """Verify that processes allocating excessive memory are terminated by ulimit or Job Objects."""
+    server = SystemMCPServer()
+    conversation_id = f"test-session-{uuid.uuid4().hex}"
+    
+    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
+    os.makedirs(sandbox_dir, exist_ok=True)
+
+    # Git initialization
+    await (await asyncio.create_subprocess_exec("git", "init", cwd=sandbox_dir)).communicate()
+    await (await asyncio.create_subprocess_exec("git", "config", "user.name", "TestUser", cwd=sandbox_dir)).communicate()
+    await (await asyncio.create_subprocess_exec("git", "config", "user.email", "test@test.com", cwd=sandbox_dir)).communicate()
+    with open(os.path.join(sandbox_dir, "init.txt"), "w") as f:
+        f.write("init")
+    await (await asyncio.create_subprocess_exec("git", "add", ".", cwd=sandbox_dir)).communicate()
+    await (await asyncio.create_subprocess_exec("git", "commit", "-m", "init", cwd=sandbox_dir)).communicate()
+
+    # Memory allocation python payload (tries to allocate 60MB)
+    py_payload = f'"{sys.executable}" -c "import time; x = bytearray(60 * 1024 * 1024); time.sleep(0.5); print(len(x))"'
+
+    old_mem_limit = settings.shell_memory_limit_mb
+    old_allow = settings.allow_unsandboxed_shell
+    try:
+        settings.shell_memory_limit_mb = 15
+        settings.allow_unsandboxed_shell = True
+        
+        with patch.dict(os.environ, {"AGENTHUB_DOCKER_SANDBOX": "false"}):
+            res = await server.call_tool(
+                "workspace_run_command",
+                {"command": py_payload},
+                conversation_id=conversation_id
+            )
+            
+            # Since 60MB allocation >> 15MB limit, the process must fail or be aborted
+            assert res.get("isError") is True
+            assert "指令执行失败" in res["content"][0]["text"]
+    finally:
+        settings.shell_memory_limit_mb = old_mem_limit
+        settings.allow_unsandboxed_shell = old_allow
+        try:
+            import shutil
+            shutil.rmtree(sandbox_dir, ignore_errors=True)
+        except Exception:
+            pass
+

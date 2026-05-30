@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # Security config
     api_secret: str = ""
     allow_unsandboxed_shell: bool = False
+    shell_timeout: float = 15.0
+    shell_memory_limit_mb: int = 256
 
 
 settings = Settings()

@@ -2,6 +2,96 @@ import asyncio
 import json
 import os
 import sys
+import ctypes
+from ctypes import wintypes
+
+# ---- Windows Job Objects 内存限制 API 接口声明 ----
+JOBOBJECT_EXTENDED_LIMIT_INFORMATION = 9
+JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
+JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
+
+class IO_COUNTERS(ctypes.Structure):
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_uint64),
+        ("WriteOperationCount", ctypes.c_uint64),
+        ("OtherOperationCount", ctypes.c_uint64),
+        ("ReadTransferCount", ctypes.c_uint64),
+        ("WriteTransferCount", ctypes.c_uint64),
+        ("OtherTransferCount", ctypes.c_uint64),
+    ]
+
+class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", wintypes.DWORD),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", wintypes.DWORD),
+        ("SchedulingClass", wintypes.DWORD),
+    ]
+
+class JOBOBJECT_EXTENDED_LIMIT_INFORMATION_STRUCT(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        ("IoInfo", IO_COUNTERS),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+_windows_job_handles = set()
+
+def limit_windows_process(pid: int, memory_limit_bytes: int) -> bool:
+    """利用 Windows Job Objects 作业对象，硬性限制指定子进程的物理与虚拟内存上限（内核级强制）。"""
+    try:
+        kernel32 = ctypes.windll.kernel32
+        
+        # 1. 创建 Job Object 作业容器
+        h_job = kernel32.CreateJobObjectW(None, None)
+        if not h_job:
+            return False
+            
+        # 2. 打开进程句柄，赋予配额及终止权限
+        PROCESS_SET_QUOTA = 0x0100
+        PROCESS_TERMINATE = 0x0001
+        h_process = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid)
+        if not h_process:
+            kernel32.CloseHandle(h_job)
+            return False
+            
+        # 3. 填充 Extended Limit 限制配置
+        limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION_STRUCT()
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY
+        limits.ProcessMemoryLimit = memory_limit_bytes
+        limits.JobMemoryLimit = memory_limit_bytes
+        
+        res = kernel32.SetInformationJobObject(
+            h_job,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(limits),
+            ctypes.sizeof(limits)
+        )
+        if not res:
+            kernel32.CloseHandle(h_process)
+            kernel32.CloseHandle(h_job)
+            return False
+            
+        # 4. 将进程强绑定至 Job Object 容器
+        assigned = kernel32.AssignProcessToJobObject(h_job, h_process)
+        kernel32.CloseHandle(h_process)
+        
+        if assigned:
+            _windows_job_handles.add(h_job)
+        else:
+            kernel32.CloseHandle(h_job)
+        return bool(assigned)
+    except Exception:
+        return False
+
 
 MCP_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "mcp_config.json")
 
@@ -357,8 +447,11 @@ class SystemMCPServer:
                             exec_cmd = ["cmd.exe", "/c", script_path]
                         else:
                             script_path = os.path.join(sandbox_dir, f"{script_name}.sh")
+                            # 🐧 Unix/Linux OS 级 CPU 耗时与虚拟内存 ulimit 配额限制
+                            memory_kb = settings.shell_memory_limit_mb * 1024
+                            cpu_limit_secs = int(settings.shell_timeout) + 2
                             with open(script_path, "w", encoding="utf-8") as f:
-                                f.write(f"#!/bin/bash\ncd \"$(dirname \"$0\")\"\n{cmd}\n")
+                                f.write(f"#!/bin/bash\nulimit -t {cpu_limit_secs}\nulimit -v {memory_kb}\ncd \"$(dirname \"$0\")\"\n{cmd}\n")
                             try:
                                 os.chmod(script_path, 0o755)
                             except Exception:
@@ -372,8 +465,41 @@ class SystemMCPServer:
                             cwd=sandbox_dir,
                             creationflags=0x08000000 if sys.platform == "win32" else 0
                         )
+                        
+                        # 🪟 Windows OS 底层作业对象 (Job Objects) 内存隔离限制挂载
+                        if sys.platform == "win32":
+                            limit_windows_process(proc.pid, settings.shell_memory_limit_mb * 1024 * 1024)
                     
-                    stdout, stderr = await proc.communicate()
+                    # ⏱️ 跨平台 CPU 挂载硬超时包络拦截
+                    from app.core.config import settings
+                    try:
+                        stdout, stderr = await asyncio.wait_for(
+                            proc.communicate(),
+                            timeout=settings.shell_timeout
+                        )
+                    except asyncio.TimeoutError:
+                        try:
+                            if sys.platform == "win32":
+                                # Windows 底层强杀整个子进程树以关闭管道
+                                kill_proc = await asyncio.create_subprocess_exec(
+                                    "taskkill", "/F", "/T", "/PID", str(proc.pid),
+                                    stdout=asyncio.subprocess.PIPE,
+                                    stderr=asyncio.subprocess.PIPE,
+                                    creationflags=0x08000000
+                                )
+                                await asyncio.wait_for(kill_proc.communicate(), timeout=2.0)
+                            else:
+                                proc.kill()
+                            await proc.wait()
+                        except Exception:
+                            try:
+                                proc.kill()
+                                await proc.wait()
+                            except Exception:
+                                pass
+                        # 超时触发 Git 安全回滚自愈
+                        await git_rollback(sandbox_dir)
+                        return {"isError": True, "content": [{"type": "text", "text": f"❌ 指令执行失败！执行超过了物理资源配额硬超时限制（系统限制为 {settings.shell_timeout} 秒）。沙盒工作空间已安全自愈回滚。"}]}
                 finally:
                     # Physically clean up the wrapped script file so it doesn't pollute the git sandbox
                     if script_path and os.path.exists(script_path):
