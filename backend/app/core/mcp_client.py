@@ -205,6 +205,16 @@ class SystemMCPServer:
     async def list_tools(self) -> list:
         return self.tools
 
+    def _is_safe_path(self, sandbox_dir: str, target_path: str) -> bool:
+        """安全物理路径校验：确保目标路径经过真实符号链接解析后仍严格位于沙盒目录内部。"""
+        try:
+            abs_sandbox = os.path.realpath(sandbox_dir)
+            abs_target = os.path.realpath(target_path)
+            common = os.path.commonpath([abs_sandbox, abs_target])
+            return common == abs_sandbox
+        except Exception:
+            return False
+
     async def call_tool(self, tool_name: str, arguments: dict, conversation_id: str = None) -> dict:
         if not conversation_id:
             return {"isError": True, "content": [{"type": "text", "text": "Error: conversation_id is required to resolve sandboxed paths"}]}
@@ -217,7 +227,7 @@ class SystemMCPServer:
             if tool_name == "workspace_list_dir":
                 sub_path = arguments.get("path", "")
                 target_dir = os.path.abspath(os.path.join(sandbox_dir, sub_path))
-                if not target_dir.startswith(sandbox_dir):
+                if not self._is_safe_path(sandbox_dir, target_dir):
                     return {"isError": True, "content": [{"type": "text", "text": "Error: Path traversal protection triggered"}]}
 
                 if not os.path.exists(target_dir):
@@ -235,7 +245,7 @@ class SystemMCPServer:
             elif tool_name == "workspace_read_file":
                 sub_path = arguments.get("path", "")
                 target_file = os.path.abspath(os.path.join(sandbox_dir, sub_path))
-                if not target_file.startswith(sandbox_dir):
+                if not self._is_safe_path(sandbox_dir, target_file):
                     return {"isError": True, "content": [{"type": "text", "text": "Error: Path traversal protection triggered"}]}
 
                 if not os.path.exists(target_file) or not os.path.isfile(target_file):
@@ -249,8 +259,9 @@ class SystemMCPServer:
                 sub_path = arguments.get("path", "")
                 content = arguments.get("content", "")
                 target_file = os.path.abspath(os.path.join(sandbox_dir, sub_path))
-                if not target_file.startswith(sandbox_dir):
+                if not self._is_safe_path(sandbox_dir, target_file):
                     return {"isError": True, "content": [{"type": "text", "text": "Error: Path traversal protection triggered"}]}
+
 
                 # 1. Create pre-write checkpoint
                 from app.core.git_sandbox import git_checkpoint, git_rollback
@@ -304,41 +315,73 @@ class SystemMCPServer:
                     except Exception:
                         docker_available = False
 
-                if enable_docker and docker_available:
-                    # Select suitable image
-                    image = "node:20-slim"
-                    if "python" in cmd or ".py" in cmd:
-                        image = "python:3.12-slim"
-                    elif "npm" in cmd or "node" in cmd or "vite" in cmd:
+                script_path = None
+                try:
+                    if enable_docker and docker_available:
+                        # Select suitable image
                         image = "node:20-slim"
+                        if "python" in cmd or ".py" in cmd:
+                            image = "python:3.12-slim"
+                        elif "npm" in cmd or "node" in cmd or "vite" in cmd:
+                            image = "node:20-slim"
 
-                    docker_cmd = [
-                        "docker", "run", "--rm",
-                        "--network", "none",
-                        "--memory", "128m",
-                        "--cpus", "0.5",
-                        "-v", f"{os.path.abspath(sandbox_dir)}:/workspace",
-                        "-w", "/workspace",
-                        image,
-                        "sh", "-c", cmd
-                    ]
+                        docker_cmd = [
+                            "docker", "run", "--rm",
+                            "--network", "none",
+                            "--memory", "128m",
+                            "--cpus", "0.5",
+                            "-v", f"{os.path.abspath(sandbox_dir)}:/workspace",
+                            "-w", "/workspace",
+                            image,
+                            "sh", "-c", cmd
+                        ]
+                        
+                        proc = await asyncio.create_subprocess_exec(
+                            *docker_cmd,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            creationflags=0x08000000 if sys.platform == "win32" else 0
+                        )
+                    else:
+                        # Non-Docker fallback verification and wrapping
+                        from app.core.config import settings
+                        if not settings.allow_unsandboxed_shell:
+                            return {"isError": True, "content": [{"type": "text", "text": "❌ 安全限制：未启用或未检测到 Docker 环境，且本地非沙盒命令执行开关已禁用。若需在本地宿主机执行，请设置环境变量 AGENTHUB_ALLOW_UNSANDBOXED_SHELL=true"}]}
+
+                        import uuid
+                        script_name = f"temp_run_{uuid.uuid4().hex}"
+                        if sys.platform == "win32":
+                            script_path = os.path.join(sandbox_dir, f"{script_name}.bat")
+                            with open(script_path, "w", encoding="utf-8") as f:
+                                f.write(f"@echo off\r\ncd /d %~dp0\r\n{cmd}\r\n")
+                            exec_cmd = ["cmd.exe", "/c", script_path]
+                        else:
+                            script_path = os.path.join(sandbox_dir, f"{script_name}.sh")
+                            with open(script_path, "w", encoding="utf-8") as f:
+                                f.write(f"#!/bin/bash\ncd \"$(dirname \"$0\")\"\n{cmd}\n")
+                            try:
+                                os.chmod(script_path, 0o755)
+                            except Exception:
+                                pass
+                            exec_cmd = ["/bin/bash", script_path]
+
+                        proc = await asyncio.create_subprocess_exec(
+                            *exec_cmd,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            cwd=sandbox_dir,
+                            creationflags=0x08000000 if sys.platform == "win32" else 0
+                        )
                     
-                    proc = await asyncio.create_subprocess_exec(
-                        *docker_cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        creationflags=0x08000000 if sys.platform == "win32" else 0
-                    )
-                else:
-                    proc = await asyncio.create_subprocess_shell(
-                        cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        cwd=sandbox_dir,
-                        creationflags=0x08000000 if sys.platform == "win32" else 0
-                    )
-                
-                stdout, stderr = await proc.communicate()
+                    stdout, stderr = await proc.communicate()
+                finally:
+                    # Physically clean up the wrapped script file so it doesn't pollute the git sandbox
+                    if script_path and os.path.exists(script_path):
+                        try:
+                            os.remove(script_path)
+                        except Exception:
+                            pass
+
                 out_str = stdout.decode("utf-8", errors="replace")
                 err_str = stderr.decode("utf-8", errors="replace")
 

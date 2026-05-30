@@ -14,7 +14,7 @@ from app.core.database import (
     init_db, save_message, get_messages, get_conversations, clear_messages,
     save_custom_agent, get_custom_agents, delete_custom_agent, create_conversation,
 )
-from app.core.config import settings
+from app.core.config import settings, obfuscate_key, deobfuscate_key
 from app.core.llm_client import llm_client
 from app.core.quality_gate import quality_gate
 from app.core.quality_retry import evaluate_and_retry
@@ -113,6 +113,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ---- 全局 API 鉴权 / 本地 Localhost 防火墙中间件 ----
+from fastapi import Request, status
+from fastapi.responses import JSONResponse
+
+@app.middleware("http")
+async def api_security_middleware(request: Request, call_next):
+    path = request.url.path
+    # 豁免 Swagger UI 文档、公共静态资源和 Webhook 回调接口的安全策略
+    if path in ("/", "/docs", "/openapi.json", "/redoc", "/api/health") or path.startswith("/api/webhook/callback/") or path.startswith("/uploads/"):
+        return await call_next(request)
+
+    # 仅针对以 /api 开头的内部 API 路由进行防护
+    if not path.startswith("/api"):
+        return await call_next(request)
+
+    # 1. 若配置了外部鉴权密钥 AGENTHUB_API_SECRET，开启强制 Bearer Token 校验
+    if settings.api_secret:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Unauthorized: Missing or invalid Authorization header"}
+            )
+        token = auth_header.split(" ", 1)[1]
+        if token != settings.api_secret:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Unauthorized: Invalid API secret token"}
+            )
+    else:
+        # 2. 若未配置外部鉴权密钥，默认开启本地 Localhost 纯物理环回防火墙，拒绝局域网或公网外部访问
+        client_host = request.client.host if request.client else None
+        if client_host not in ("127.0.0.1", "::1", "localhost"):
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": f"Forbidden: Access from external IP '{client_host}' is blocked. To enable, configure AGENTHUB_API_SECRET in the environment."}
+            )
+
+    return await call_next(request)
+
+
 from app.services.agent_registry import agent_registry
 AGENTS = agent_registry._agents
 
@@ -139,7 +181,13 @@ def _load_llm_config():
                 cfg = json.load(f)
         
         provider = cfg.get("provider") or settings.llm_provider
-        api_key = cfg.get("api_key") or settings.llm_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        api_key = cfg.get("api_key") or ""
+        # 还原可能经由前端混淆后落盘的密钥
+        api_key = deobfuscate_key(api_key)
+        
+        if not api_key:
+            api_key = settings.llm_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+            
         base_url = cfg.get("base_url") or settings.llm_base_url
         model = cfg.get("model") or settings.llm_model
         
@@ -161,6 +209,9 @@ def _save_llm_config():
     # 如果 API Key 与系统默认 Pydantic Key 或者是系统环境变量 Key 相同，安全地对落盘值进行置空过滤
     if api_key_to_save == settings.llm_api_key or api_key_to_save == os.environ.get("ANTHROPIC_API_KEY", ""):
         api_key_to_save = ""
+    else:
+        # 对用户自定义设置的密钥执行混淆后存盘
+        api_key_to_save = obfuscate_key(api_key_to_save)
         
     with open(LLM_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump({
@@ -287,6 +338,23 @@ async def delete_messages(conversation_id: str):
 
 @app.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
+    # ---- WebSocket IP/Token 鉴权 ----
+    client_host = websocket.client.host if websocket.client else None
+    authorized = False
+    
+    if settings.api_secret:
+        query_token = websocket.query_params.get("token")
+        if query_token == settings.api_secret:
+            authorized = True
+    else:
+        if client_host in ("127.0.0.1", "::1", "localhost"):
+            authorized = True
+            
+    if not authorized:
+        await websocket.accept()
+        await websocket.close(code=4001, reason="Unauthorized connection attempt")
+        return
+
     await manager.connect(websocket, conversation_id)
     # Tasks spawned for ongoing generations on this connection, so we can
     # await them at disconnect time. Stop is signalled via _stop_events.
@@ -1348,8 +1416,10 @@ def _load_stt_config():
         if os.path.exists(STT_CONFIG_PATH):
             with open(STT_CONFIG_PATH, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
+            api_key = cfg.get("api_key", "")
+            api_key = deobfuscate_key(api_key)
             stt_client.configure(
-                api_key=cfg.get("api_key", ""),
+                api_key=api_key,
                 base_url=cfg.get("base_url", ""),
                 model=cfg.get("model", "whisper-1"),
                 language=cfg.get("language", "zh"),
@@ -1360,9 +1430,10 @@ def _load_stt_config():
 
 def _save_stt_config():
     os.makedirs(os.path.dirname(STT_CONFIG_PATH), exist_ok=True)
+    obfuscated_api_key = obfuscate_key(stt_client.api_key)
     with open(STT_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump({
-            "api_key": stt_client.api_key,
+            "api_key": obfuscated_api_key,
             "base_url": stt_client.base_url,
             "model": stt_client.model,
             "language": stt_client.language,

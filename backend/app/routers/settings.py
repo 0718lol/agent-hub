@@ -3,7 +3,7 @@ import json
 import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel
-from app.core.config import settings
+from app.core.config import settings, obfuscate_key
 from app.core.llm_client import llm_client
 
 router = APIRouter(tags=["settings"])
@@ -34,6 +34,8 @@ def _save_llm_config():
     # 如果 API Key 与系统默认 Pydantic Key 或者是系统环境变量 Key 相同，安全地对落盘值进行置空过滤
     if api_key_to_save == settings.llm_api_key or api_key_to_save == os.environ.get("ANTHROPIC_API_KEY", ""):
         api_key_to_save = ""
+    else:
+        api_key_to_save = obfuscate_key(api_key_to_save)
         
     with open(LLM_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump({
