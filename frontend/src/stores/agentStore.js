@@ -57,16 +57,6 @@ export const useAgentStore = create((set, get) => ({
     }
   },
 
-  // Fetch custom agents from backend API for full metadata
-  fetchAgents: async () => {
-    try {
-      // Load custom agents with full metadata from backend
-      await get().loadCustomAgents()
-    } catch (e) {
-      console.warn('Failed to fetch agents from backend:', e)
-    }
-  },
-
   // 删除 Agent
   //  预设 Agent → 标记为已删除（本地隐藏，localStorage 记录）
   //  自定义 Agent → 从列表移除 + 调后端 DELETE

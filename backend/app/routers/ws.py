@@ -140,9 +140,9 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             if prev_event and not prev_event.is_set():
                 prev_event.set()
 
-            if target_agent and target_agent in AGENTS:
+            if target_agent and target_agent in get_agents():
                 task = asyncio.create_task(
-                    run_target_agent_flow(conversation_id, AGENTS[target_agent], text)
+                    run_target_agent_flow(conversation_id, get_agents()[target_agent], text)
                 )
                 bg_tasks.add(task)
                 task.add_done_callback(bg_tasks.discard)
