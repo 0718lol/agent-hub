@@ -55,19 +55,24 @@ class ConnectionManager:
         """Broadcasts a message directly to WebSockets hosted on this local server process."""
         if conversation_id in self.active_connections:
             data = json.dumps(message, ensure_ascii=False)
+            stale_connections = []
             for connection in list(self.active_connections[conversation_id]):
                 lock = self.locks.get(connection)
-                if lock:
-                    async with lock:
-                        try:
-                            await connection.send_text(data)
-                        except Exception:
-                            pass
-                else:
-                    try:
-                        await connection.send_text(data)
-                    except Exception:
-                        pass
+                try:
+                    if lock:
+                        async with lock:
+                            await asyncio.wait_for(connection.send_text(data), timeout=5.0)
+                    else:
+                        await asyncio.wait_for(connection.send_text(data), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning(f"WebSocket send timeout for connection in conv {conversation_id}, removing stale connection")
+                    stale_connections.append(connection)
+                except Exception:
+                    stale_connections.append(connection)
+            # Clean up stale connections that failed to receive
+            for conn in stale_connections:
+                self.active_connections.get(conversation_id, set()).discard(conn)
+                self.locks.pop(conn, None)
 
     async def _redis_listener(self):
         """Background listener subscribing to the Redis broadcast channel.

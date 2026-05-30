@@ -112,7 +112,7 @@ export const useChatStore = create((set, get) => ({
         if (conv.id !== conversationId) return conv
         // 如果提供了 id，检查是否已存在（防止重复）
         if (message.id && conv.messages.some((m) => m.id === message.id)) return conv
-        const msgId = message.id || Date.now() + Math.random()
+        const msgId = message.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2))
         return {
           ...conv,
           messages: [...conv.messages, { ...message, id: msgId, timestamp: message.timestamp || new Date().toISOString() }],
