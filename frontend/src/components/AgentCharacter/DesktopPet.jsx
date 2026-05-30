@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import AgentCharacter from './AgentCharacter'
 import DraggableFloating from './DraggableFloating'
 import PetMiniChat from './PetMiniChat'
@@ -7,6 +7,7 @@ import './DesktopPet.css'
 
 const PET_WIDTH = 96
 const PET_HEIGHT = 130
+const DOUBLE_CLICK_MS = 260
 
 export default function DesktopPet({ enabled = true }) {
   const [chatOpen, setChatOpen] = useState(false)
@@ -15,6 +16,7 @@ export default function DesktopPet({ enabled = true }) {
   const [hidden, setHidden] = useState(() => {
     try { return localStorage.getItem('agenthub-pet-hidden') === '1' } catch { return false }
   })
+  const clickTimerRef = useRef(null)
 
   const { action, bubble, setBubble } = useAgentAction(null)
 
@@ -62,11 +64,33 @@ export default function DesktopPet({ enabled = true }) {
 
   const handleClick = () => {
     setMenuOpen(false)
-    setChatOpen((v) => !v)
+    // 单击延迟 260ms 执行，期间收到第二次点击则升级为双击（打开工作室）
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current)
+      clickTimerRef.current = null
+      setChatOpen(false)
+      setBubble('打开工作室啦~', 1500)
+      window.dispatchEvent(new Event('agenthub:toggle-office'))
+      return
+    }
+    clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = null
+      setChatOpen((v) => !v)
+    }, DOUBLE_CLICK_MS)
   }
+
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+    }
+  }, [])
 
   const handleContextMenu = (e) => {
     e.preventDefault()
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current)
+      clickTimerRef.current = null
+    }
     setChatOpen(false)
     setMenuOpen(true)
   }

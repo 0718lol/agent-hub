@@ -14,6 +14,7 @@ export default function AgentCharacter({
   bubble = null,
   bubbleVariant = 'default',
   onClick,
+  onDoubleClick,
   onContextMenu,
   style = {},
   className = '',
@@ -32,6 +33,7 @@ export default function AgentCharacter({
         ...style,
       }}
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       data-agent-id={agentId}
       title={agentName}

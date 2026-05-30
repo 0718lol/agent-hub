@@ -39,22 +39,54 @@ function hashStringToInt(s) {
   return Math.abs(h)
 }
 
+const ROLE_DEFAULT_BUBBLES = {
+  agent_pm: '正在拆解任务...',
+  agent_frontend: '正在写组件...',
+  agent_backend: '正在写 API...',
+  agent_designer: '正在画 UI...',
+  agent_tester: '正在跑测试...',
+  agent_devops: '正在部署...',
+  agent_builder: '正在生成 agent...',
+}
+
+function getDefaultWorkBubble(agentId, tasks) {
+  if (ROLE_DEFAULT_BUBBLES[agentId]) return ROLE_DEFAULT_BUBBLES[agentId]
+  const myTasks = tasks.filter((t) => t.assignee === agentId)
+  const inProgress = myTasks.find((t) => ['in_progress', 'doing', 'running'].includes(t.status))
+  if (inProgress?.title) {
+    const t = inProgress.title
+    return t.length > 18 ? t.slice(0, 18) + '…' : t
+  }
+  const id = (agentId || '').toLowerCase()
+  if (id.includes('frontend')) return '正在写组件...'
+  if (id.includes('backend')) return '正在写 API...'
+  if (id.includes('design')) return '正在画 UI...'
+  if (id.includes('test')) return '正在跑测试...'
+  if (id.includes('deploy') || id.includes('devops')) return '正在部署...'
+  if (id.includes('pm')) return '正在拆解任务...'
+  return '正在生成代码...'
+}
+
 function determineAgentAction(agentId, typingAgents, thinkingAgents, tasks) {
   for (const convId in typingAgents) {
     const set = typingAgents[convId]
-    if (set && set.has && set.has(agentId)) return { action: AGENT_ACTIONS.TALK, bubble: null }
+    if (set && set.has && set.has(agentId)) {
+      return { action: AGENT_ACTIONS.TALK, bubble: '正在回复...' }
+    }
   }
   for (const convId in thinkingAgents) {
     const map = thinkingAgents[convId] || {}
     if (map[agentId]) {
       const t = String(map[agentId]).trim()
-      const bubble = t ? (t.length > 20 ? t.slice(0, 20) + '…' : t) : null
+      const bubble = t
+        ? (t.length > 18 ? t.slice(0, 18) + '…' : t)
+        : getDefaultWorkBubble(agentId, tasks)
       return { action: AGENT_ACTIONS.WORK, bubble }
     }
   }
   const myTasks = tasks.filter((t) => t.assignee === agentId)
   if (myTasks.some((t) => ['in_progress', 'doing', 'running'].includes(t.status))) {
-    return { action: AGENT_ACTIONS.WORK, bubble: null }
+    return { action: AGENT_ACTIONS.WORK, bubble: getDefaultWorkBubble(agentId, tasks) }
   }
   return null
 }
@@ -94,23 +126,47 @@ export default function VirtualOffice({ open, onClose }) {
       else resting.push(agent)
     }
 
-    const placedWorking = working.slice(0, WORKSTATIONS.length).map((a, i) => ({
-      ...a,
-      slot: WORKSTATIONS[i],
-      slotType: 'desk',
-    }))
-
-    const placedResting = resting.map((a) => {
-      const idx = hashStringToInt(a.id) % REST_SLOTS.length
-      return {
-        ...a,
-        slot: REST_SLOTS[idx],
-        slotType: REST_SLOTS[idx].type,
-        slotLabel: REST_SLOTS[idx].label,
-        action: REST_ACTIONS_BY_TYPE[REST_SLOTS[idx].type] || AGENT_ACTIONS.IDLE,
-        bubble: null,
+    // 工位：超员时按宽度均匀压缩，避免重叠
+    const placedWorking = (() => {
+      const N = working.length
+      if (N === 0) return []
+      if (N <= WORKSTATIONS.length) {
+        return working.map((a, i) => ({ ...a, slot: WORKSTATIONS[i], slotType: 'desk' }))
       }
-    })
+      const startX = WORKSTATIONS[0].x
+      const endX = WORKSTATIONS[WORKSTATIONS.length - 1].x
+      const step = (endX - startX) / (N - 1)
+      return working.map((a, i) => ({
+        ...a,
+        slot: { x: Math.round(startX + i * step), y: WORKSTATIONS[0].y },
+        slotType: 'desk',
+      }))
+    })()
+
+    // 休息位：贪心分配，hash 冲突时找最少占用的位置 + 阶梯偏移
+    const placedResting = (() => {
+      const slotCount = {}
+      return resting.map((a) => {
+        const preferred = hashStringToInt(a.id) % REST_SLOTS.length
+        let bestIdx = preferred
+        for (let probe = 0; probe < REST_SLOTS.length; probe++) {
+          const i = (preferred + probe) % REST_SLOTS.length
+          if (!slotCount[i]) { bestIdx = i; break }
+          if ((slotCount[i] || 0) < (slotCount[bestIdx] || 0)) bestIdx = i
+        }
+        const stack = slotCount[bestIdx] || 0
+        slotCount[bestIdx] = stack + 1
+        const slot = REST_SLOTS[bestIdx]
+        return {
+          ...a,
+          slot: { x: slot.x + stack * 22, y: slot.y - stack * 14 },
+          slotType: slot.type,
+          slotLabel: slot.label,
+          action: REST_ACTIONS_BY_TYPE[slot.type] || AGENT_ACTIONS.IDLE,
+          bubble: null,
+        }
+      })
+    })()
 
     return { working: placedWorking, resting: placedResting }
   }, [agents, typingAgents, thinkingAgents, tasks])

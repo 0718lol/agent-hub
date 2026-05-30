@@ -63,7 +63,7 @@
   94%, 98%      { transform: scaleY(0.1); }
 }
 
-/* ---- work：敲键盘，手臂抖动 ---- */
+/* ---- work：敲键盘 + 眯眼专注 + 嘴巴抿成一条线 ---- */
 .ac-work .ac-arm-left {
   transform-origin: 18px 65px;
   animation: ac-arm-type 0.4s ease-in-out infinite;
@@ -79,28 +79,52 @@
   d: path("M 44 52 L 56 52");
 }
 
+.ac-work .ac-eye {
+  animation: ac-eye-focus 1.6s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.ac-work .ac-eye-right {
+  animation-delay: 0.05s;
+}
+
 @keyframes ac-arm-type {
   0%, 100% { transform: rotate(0deg) translateY(0); }
   50%      { transform: rotate(-8deg) translateY(-3px); }
 }
 
-/* ---- talk：嘴巴张合 + 微微点头 ---- */
+@keyframes ac-eye-focus {
+  0%, 100% { transform: scaleY(0.45); }
+  50%      { transform: scaleY(0.35); }
+}
+
+/* ---- talk：嘴巴明显张开 + 微微点头 ---- */
 .ac-talk .ac-mouth {
-  animation: ac-mouth-talk 0.35s ease-in-out infinite;
+  animation: ac-mouth-talk 0.32s ease-in-out infinite;
 }
 
 .ac-talk .ac-head {
   animation: ac-head-nod 0.7s ease-in-out infinite;
 }
 
+.ac-talk .ac-eye {
+  animation: ac-eye-bright 1.2s ease-in-out infinite;
+}
+
 @keyframes ac-mouth-talk {
-  0%, 100% { d: path("M 44 52 Q 50 56 56 52"); }
-  50%      { d: path("M 44 52 Q 50 58 56 52"); transform: scaleY(1.3); }
+  0%, 100% { d: path("M 44 52 Q 50 55 56 52"); }
+  35%      { d: path("M 42 50 Q 50 60 58 50"); }
+  70%      { d: path("M 43 51 Q 50 57 57 51"); }
 }
 
 @keyframes ac-head-nod {
   0%, 100% { transform: translateY(0); }
   50%      { transform: translateY(-2px); }
+}
+
+@keyframes ac-eye-bright {
+  0%, 100% { transform: scaleY(1); }
+  50%      { transform: scaleY(1.15); }
 }
 
 /* ---- sleep：眼睛闭起来，整体下沉 ---- */
