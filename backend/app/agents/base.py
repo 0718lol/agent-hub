@@ -99,7 +99,14 @@ class BaseAgent:
                 if conversation_id:
                     from app.core.event_stream import event_stream_manager, ObservationEvent
                     obs_output = result.data if result.success else result.error
-                    obs_images = result.data.get("images", []) if (result.success and isinstance(result.data, dict)) else []
+                    obs_images = []
+                    if result.success and isinstance(result.data, dict):
+                        if "images" in result.data:
+                            obs_images = result.data["images"]
+                        elif "screenshot_base64" in result.data:
+                            obs_images = [result.data["screenshot_base64"]]
+                        elif "screenshot" in result.data:
+                            obs_images = [result.data["screenshot"]]
                     event_stream_manager.append_event(
                         conversation_id,
                         ObservationEvent(tool_name=tool_name, success=result.success, output=obs_output, images=obs_images)

@@ -26,5 +26,8 @@ class Settings(BaseSettings):
     # Redis config
     redis_url: str = "redis://localhost:6379/0"
 
+    # Sandbox config
+    docker_sandbox: bool = True
+
 
 settings = Settings()

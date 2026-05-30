@@ -21,16 +21,70 @@ class ContextOptimizer:
 
     @staticmethod
     def compress_single_message(content: str, max_chars: int = 6000) -> str:
-        """Truncate the middle of extremely long messages (e.g. from tool outputs or raw files)
-        while preserving the head and tail context.
         """
-        if not isinstance(content, str) or len(content) <= max_chars:
+        Compresses a single message by:
+        1. Filtering console progress bars and heavy verbose logs (like npm, webpack, vite progress counters, and warnings).
+        2. Folding extremely long code bodies (if content contains code blocks with > 100 lines).
+        3. Falling back to head/tail truncation if the content is still too long.
+        """
+        if not isinstance(content, str) or not content:
             return content
 
-        keep = 1500
-        head = content[:keep]
-        tail = content[-keep:]
-        num_pruned = len(content) - 2 * keep
+        import re
+
+        # Step 1: Filter console progress bars, webpack/vite verbose progress indicators
+        # Filter e.g. "99% progress...", "[15:30:10] ...", or npm percentages
+        content = re.sub(r'(?i)(\b\d+%\s+(?:progress|building|compile|webpack|vite|rollup|node_modules).*|\[\d{2}:\d{2}:\d{2}\].*(?:progress|building|compile|webpack|vite|rollup).*)', '', content)
+        # Filter npm warnings and general warnings to reduce log bloat
+        content = re.sub(r'(?i)(Warning:.*|npm WARN.*)\n', '', content)
+
+        # Step 2: AST/Outline-based semantic code folding for extremely long code blocks (> 100 lines)
+        # Identify fenced code blocks like ```python ... ``` or ```javascript ... ```
+        code_blocks = re.findall(r'(```(\w*)\n(.*?)```)', content, re.DOTALL)
+        for full_block, lang, code in code_blocks:
+            lines = code.split("\n")
+            if len(lines) > 100:
+                # We perform an outline fold: keeping imports, class definitions, and def (function) signatures,
+                # but folding long inner function bodies.
+                folded_lines = []
+                folded_count = 0
+                in_class_or_def = False
+                
+                for idx, line in enumerate(lines):
+                    stripped = line.strip()
+                    # We keep header elements (first 10 lines, last 10 lines) and class/def/import signatures
+                    if (idx < 10 or idx > len(lines) - 10 or 
+                        stripped.startswith("import ") or 
+                        stripped.startswith("from ") or 
+                        stripped.startswith("class ") or 
+                        stripped.startswith("def ") or 
+                        stripped.startswith("function ") or
+                        stripped.startswith("export ")):
+                        if in_class_or_def and folded_count > 0:
+                            folded_lines.append(f"    # [... 中段 {folded_count} 行实现被折叠以节省 Token ...]")
+                            folded_count = 0
+                        folded_lines.append(line)
+                        in_class_or_def = stripped.startswith("class ") or stripped.startswith("def ") or stripped.startswith("function ")
+                    else:
+                        if in_class_or_def:
+                            folded_count += 1
+                        else:
+                            folded_lines.append(line)
+                
+                if folded_count > 0:
+                    folded_lines.append(f"    # [... 中段 {folded_count} 行实现被折叠以节省 Token ...]")
+                
+                folded_code = "\n".join(folded_lines)
+                content = content.replace(code, folded_code)
+
+        # Step 3: Default Head/Tail truncation if the total characters still exceed max_chars
+        if len(content) <= max_chars:
+            return content
+
+        keep = max_chars // 4
+        head = content[:keep * 2]
+        tail = content[-keep * 2:]
+        num_pruned = len(content) - 4 * keep
 
         return (
             f"{head}\n\n"

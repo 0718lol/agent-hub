@@ -194,7 +194,18 @@ class EventStreamManager:
                     f"{json.dumps(obs_data, ensure_ascii=False, indent=2)}\n\n"
                     f"请基于以上工具结果继续回复用户。"
                 )
-                messages.append({"role": "user", "content": obs_content})
+                
+                if ev.images:
+                    content_list = [{"type": "text", "text": obs_content}]
+                    for img in ev.images:
+                        if img:
+                            content_list.append({
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{img}"}
+                            })
+                    messages.append({"role": "user", "content": content_list})
+                else:
+                    messages.append({"role": "user", "content": obs_content})
 
         # Flush trailing assistant text
         if current_assistant_text:

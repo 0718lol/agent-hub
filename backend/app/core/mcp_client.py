@@ -289,13 +289,55 @@ class SystemMCPServer:
                 await git_checkpoint(sandbox_dir, f"Pre-command: {cmd}")
 
                 # 2. Execute command
-                proc = await asyncio.create_subprocess_shell(
-                    cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=sandbox_dir,
-                    creationflags=0x08000000 if sys.platform == "win32" else 0
-                )
+                enable_docker = os.environ.get("AGENTHUB_DOCKER_SANDBOX", "true").lower() == "true"
+                docker_available = False
+                if enable_docker:
+                    try:
+                        proc_check = await asyncio.create_subprocess_exec(
+                            "docker", "info",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            creationflags=0x08000000 if sys.platform == "win32" else 0
+                        )
+                        await asyncio.wait_for(proc_check.communicate(), timeout=2.0)
+                        docker_available = (proc_check.returncode == 0)
+                    except Exception:
+                        docker_available = False
+
+                if enable_docker and docker_available:
+                    # Select suitable image
+                    image = "node:20-slim"
+                    if "python" in cmd or ".py" in cmd:
+                        image = "python:3.12-slim"
+                    elif "npm" in cmd or "node" in cmd or "vite" in cmd:
+                        image = "node:20-slim"
+
+                    docker_cmd = [
+                        "docker", "run", "--rm",
+                        "--network", "none",
+                        "--memory", "128m",
+                        "--cpus", "0.5",
+                        "-v", f"{os.path.abspath(sandbox_dir)}:/workspace",
+                        "-w", "/workspace",
+                        image,
+                        "sh", "-c", cmd
+                    ]
+                    
+                    proc = await asyncio.create_subprocess_exec(
+                        *docker_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        creationflags=0x08000000 if sys.platform == "win32" else 0
+                    )
+                else:
+                    proc = await asyncio.create_subprocess_shell(
+                        cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=sandbox_dir,
+                        creationflags=0x08000000 if sys.platform == "win32" else 0
+                    )
+                
                 stdout, stderr = await proc.communicate()
                 out_str = stdout.decode("utf-8", errors="replace")
                 err_str = stderr.decode("utf-8", errors="replace")

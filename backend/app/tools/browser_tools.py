@@ -409,5 +409,67 @@ class BrowserActionTool(AgentTool):
 
         return best_el["x"], best_el["y"], best_el["text"]
 
+class WorkspaceCaptureScreenshotTool(AgentTool):
+    name = "workspace_capture_screenshot"
+    description = "使用 Playwright Headless 自动截取当前沙箱内网页（如 http://localhost:5173 或 index.html）的高清视觉截图以执行多模态审查。"
+    icon = "📸"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "conversation_id": {
+                "type": "string",
+                "description": "对话 ID（自动注入）",
+            },
+            "url": {
+                "type": "string",
+                "description": "可选的重定向网页地址或本地 HTML 文件名（例如 'http://localhost:5173' 或 'index.html'）",
+            }
+        }
+    }
+
+    async def execute(self, params: dict) -> ToolResult:
+        conv_id = params.get("conversation_id", "default")
+        url = params.get("url", "").strip()
+        
+        try:
+            page = await browser_session_manager.get_page(conv_id)
+        except Exception as e:
+            return ToolResult(success=False, error=f"浏览器启动失败: {str(e)}")
+
+        try:
+            if url:
+                # Check for sandboxed local file resolution
+                if not url.startswith(("http://", "https://", "file://")):
+                    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+                    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conv_id)
+                    abs_path = os.path.abspath(os.path.join(sandbox_dir, url))
+                    if abs_path.startswith(sandbox_dir) and os.path.exists(abs_path):
+                        url = "file:///" + abs_path.replace(os.sep, "/")
+                    else:
+                        url = f"http://localhost:5173/{url.lstrip('/')}"
+                
+                logger.info(f"[CyberBrowser] Navigating to target URL for screenshot: {url}")
+                try:
+                    await page.goto(url, wait_until="load", timeout=10000)
+                except Exception as go_ex:
+                    logger.warning(f"[CyberBrowser] Failed navigating to {url}: {go_ex}. Capturing current state instead.")
+            
+            # Capture screenshot
+            screenshot_bytes = await page.screenshot(type="png")
+            screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+            
+            return ToolResult(
+                success=True,
+                data={
+                    "screenshot_base64": screenshot_b64,
+                    "url": page.url,
+                    "message": f"📸 成功截取当前沙箱视口高清截图：{page.url}"
+                }
+            )
+        except Exception as ex:
+            return ToolResult(success=False, error=f"网页截图生成失败: {type(ex).__name__}: {str(ex)}")
+
+
 # Auto-register on import
 register_tool(BrowserActionTool())
+register_tool(WorkspaceCaptureScreenshotTool())

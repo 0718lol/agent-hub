@@ -30,7 +30,8 @@ class TestSkyvernVisionLocator(unittest.IsolatedAsyncioTestCase):
         bt.manager = self.mock_manager
 
         # Prepare sandboxed test workspace
-        self.conv_id = "test_skyvern_vision_conv"
+        import uuid
+        self.conv_id = f"test_skyvern_vision_conv_{uuid.uuid4().hex[:8]}"
         self.workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
         self.sandbox_dir = os.path.join(self.workspace_dir, "agenthub_export", self.conv_id)
         os.makedirs(self.sandbox_dir, exist_ok=True)

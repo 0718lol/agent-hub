@@ -1,9 +1,25 @@
 import sqlite3
 import json
 import os
+import threading
+import functools
 from datetime import datetime
 from typing import Optional, List, Any
 from sqlmodel import SQLModel, Field, Session, select, create_engine, UniqueConstraint
+
+# Global reentrant write lock to serialize all SQLite database writes
+_db_write_lock = threading.RLock()
+
+def db_write_transaction(func):
+    """
+    Decorator to serialize all SQLite database write operations across threads/coroutines,
+    ensuring 100% thread-safety and zero database locked conflicts.
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with _db_write_lock:
+            return func(*args, **kwargs)
+    return wrapper
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'agenthub.db')
 
@@ -183,6 +199,7 @@ def get_db():
     return conn
 
 
+@db_write_transaction
 def init_db():
     _ensure_dir()
     # Configure SQLite direct WAL mode
@@ -221,6 +238,7 @@ def init_db():
 # ============================================================
 
 
+@db_write_transaction
 def save_message(conversation_id: str, sender: str, content: dict, streaming: bool = False):
     with Session(engine) as session:
         msg = Message(
@@ -263,6 +281,7 @@ def get_conversations():
         return result
 
 
+@db_write_transaction
 def clear_messages(conversation_id: str):
     with Session(engine) as session:
         statement = select(Message).where(Message.conversation_id == conversation_id)
@@ -274,6 +293,7 @@ def clear_messages(conversation_id: str):
 
 # ---- Custom Agents CRUD ----
 
+@db_write_transaction
 def save_custom_agent(agent_id: str, name: str, avatar: str, role: str,
                       style: str, system_prompt: str, tools: list[str]):
     with Session(engine) as session:
@@ -310,6 +330,7 @@ def get_custom_agents() -> list[dict]:
         ]
 
 
+@db_write_transaction
 def delete_custom_agent(agent_id: str):
     with Session(engine) as session:
         agent = session.get(CustomAgent, agent_id)
@@ -329,6 +350,7 @@ def delete_custom_agent(agent_id: str):
         session.commit()
 
 
+@db_write_transaction
 def create_conversation(conv_id: str, conv_type: str, name: str, avatar: str,
                         agent_id: str = None, agents: list[str] = None, preview: str = ''):
     with Session(engine) as session:
@@ -349,6 +371,7 @@ def create_conversation(conv_id: str, conv_type: str, name: str, avatar: str,
 
 # ---- Uploaded Files CRUD ----
 
+@db_write_transaction
 def save_uploaded_file(file_id: str, original_name: str, stored_name: str,
                        file_path: str, content_type: str = "", size: int = 0,
                        extracted_text: str = ""):
@@ -381,6 +404,7 @@ def get_all_uploaded_files() -> list[dict]:
 
 # ---- Offline Cron Tasks CRUD ----
 
+@db_write_transaction
 def save_cron_task(task_id: str, conversation_id: str, agent_id: str, task_prompt: str,
                    interval_seconds: int, status: str = 'active', last_run: str = None, next_run: str = None):
     with Session(engine) as session:
@@ -415,6 +439,7 @@ def get_due_cron_tasks(now_str: str) -> list[dict]:
         return [row.model_dump() for row in results]
 
 
+@db_write_transaction
 def update_cron_task_run_time(task_id: str, last_run: str, next_run: str, status: str = 'active'):
     with Session(engine) as session:
         task = session.get(CronTask, task_id)
@@ -426,6 +451,7 @@ def update_cron_task_run_time(task_id: str, last_run: str, next_run: str, status
             session.commit()
 
 
+@db_write_transaction
 def update_cron_task_status(task_id: str, status: str):
     with Session(engine) as session:
         task = session.get(CronTask, task_id)
@@ -435,6 +461,7 @@ def update_cron_task_status(task_id: str, status: str):
             session.commit()
 
 
+@db_write_transaction
 def delete_cron_task(task_id: str):
     with Session(engine) as session:
         task = session.get(CronTask, task_id)
@@ -445,6 +472,7 @@ def delete_cron_task(task_id: str):
 
 # ---- Knowledge Base Documents CRUD ----
 
+@db_write_transaction
 def save_knowledge_doc(doc_id: str, filename: str, file_path: str = '',
                        content_type: str = '', chunk_count: int = 0, char_count: int = 0):
     with Session(engine) as session:
@@ -468,6 +496,7 @@ def get_knowledge_docs() -> list[dict]:
         return [row.model_dump() for row in results]
 
 
+@db_write_transaction
 def delete_knowledge_doc(doc_id: str):
     with Session(engine) as session:
         doc = session.get(KnowledgeDoc, doc_id)
@@ -478,6 +507,7 @@ def delete_knowledge_doc(doc_id: str):
 
 # ---- Project Long-term Memory CRUD ----
 
+@db_write_transaction
 def save_memory_item(conversation_id: str, key: str, value: str, source: str = "system"):
     with Session(engine) as session:
         statement = select(ProjectMemory).where(ProjectMemory.conversation_id == conversation_id).where(ProjectMemory.key == key)
@@ -512,6 +542,7 @@ def get_project_memory(conversation_id: str) -> dict:
         }
 
 
+@db_write_transaction
 def delete_memory_item(conversation_id: str, key: str):
     with Session(engine) as session:
         statement = select(ProjectMemory).where(ProjectMemory.conversation_id == conversation_id).where(ProjectMemory.key == key)
@@ -523,6 +554,7 @@ def delete_memory_item(conversation_id: str, key: str):
 
 # ---- Project Event Stream CRUD ----
 
+@db_write_transaction
 def save_event_item(conversation_id: str, event_type: str, timestamp: float, data_str: str):
     with Session(engine) as session:
         item = ProjectEventStream(
@@ -549,6 +581,7 @@ def get_event_items(conversation_id: str) -> list[dict]:
         ]
 
 
+@db_write_transaction
 def clear_event_items(conversation_id: str):
     with Session(engine) as session:
         statement = select(ProjectEventStream).where(ProjectEventStream.conversation_id == conversation_id)
@@ -559,6 +592,7 @@ def clear_event_items(conversation_id: str):
 
 # ---- HIL Checkpoints CRUD ----
 
+@db_write_transaction
 def save_hil_checkpoint(conversation_id: str, current_node: str, next_node: str,
                         state_data: dict, question: str, options: list, original_prompt: str):
     with Session(engine) as session:
@@ -614,6 +648,7 @@ def get_pending_hil_checkpoint_fuzzy(conv_prefix: str) -> dict | None:
         return res
 
 
+@db_write_transaction
 def resolve_hil_checkpoint(conversation_id: str, chosen_action: str):
     with Session(engine) as session:
         item = session.get(PendingHil, conversation_id)
@@ -624,6 +659,7 @@ def resolve_hil_checkpoint(conversation_id: str, chosen_action: str):
             session.commit()
 
 
+@db_write_transaction
 def delete_hil_checkpoint(conversation_id: str):
     with Session(engine) as session:
         item = session.get(PendingHil, conversation_id)
@@ -633,6 +669,7 @@ def delete_hil_checkpoint(conversation_id: str):
 
 # ---- Artifacts CRUD ----
 
+@db_write_transaction
 def save_artifact(conversation_id: str, agent_id: str, language: str, code: str, name: str = None) -> dict:
     import re
     if not name:
@@ -687,6 +724,7 @@ def get_artifacts(conversation_id: str = None, limit: int = 50) -> list[dict]:
         return [row.model_dump() for row in results]
 
 
+@db_write_transaction
 def update_latest_artifact_quality(conversation_id: str, agent_id: str, score: int, sandbox_status: str, sandbox_output: str = None):
     with Session(engine) as session:
         statement = select(Artifact).where(

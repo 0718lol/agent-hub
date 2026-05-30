@@ -6,6 +6,32 @@ from app.core.database import get_due_cron_tasks, update_cron_task_run_time, upd
 logger = logging.getLogger("daemon_scheduler")
 
 
+import multiprocessing
+
+def _run_task_process_entry(task: dict, retry_counts_dict: dict):
+    """
+    Subprocess entry point to run a single cron task in an isolated process,
+    releasing the main FastAPI event loop from heavy LLM/reasoning tasks.
+    """
+    import asyncio
+    import logging
+    
+    # Configure logging for the child process
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("daemon_scheduler.worker")
+    
+    from app.services.daemon_scheduler import DaemonScheduler
+    
+    scheduler = DaemonScheduler()
+    # Share the manager-backed dict reference
+    scheduler._retry_counts = retry_counts_dict
+    
+    try:
+        asyncio.run(scheduler._run_task(task))
+    except Exception as e:
+        logger.error(f"Isolated worker process crashed for task {task.get('id')}: {e}")
+
+
 class DaemonScheduler:
     """
     Always-on Offline Daemon Scheduler.
@@ -15,11 +41,20 @@ class DaemonScheduler:
     def __init__(self):
         self._running = False
         self._task = None
+        self._manager = None
         self._retry_counts = {}  # 存储任务重试次数: {task_id: current_retry_count}
 
     def start(self):
         if not self._running:
             self._running = True
+            import multiprocessing
+            try:
+                self._manager = multiprocessing.Manager()
+                self._retry_counts = self._manager.dict()
+            except Exception as e:
+                logger.error(f"Failed to initialize multiprocessing Manager: {e}. Falling back to standard dict.")
+                self._manager = None
+                self._retry_counts = {}
             self._task = asyncio.create_task(self._loop())
             logger.info("Always-on Offline Daemon Scheduler started successfully.")
 
@@ -32,6 +67,11 @@ class DaemonScheduler:
                     await self._task
                 except asyncio.CancelledError:
                     pass
+            if self._manager:
+                try:
+                    self._manager.shutdown()
+                except Exception:
+                    pass
             logger.info("Always-on Offline Daemon Scheduler stopped.")
 
     async def _loop(self):
@@ -41,7 +81,15 @@ class DaemonScheduler:
                 due_tasks = get_due_cron_tasks(now_str)
 
                 for task in due_tasks:
-                    asyncio.create_task(self._run_task(task))
+                    # Guard against double firing by setting running status before process spawn
+                    update_cron_task_status(task["id"], "running")
+                    
+                    import multiprocessing
+                    p = multiprocessing.Process(
+                        target=_run_task_process_entry,
+                        args=(task, self._retry_counts)
+                    )
+                    p.start()
 
             except Exception as e:
                 logger.error(f"Daemon Scheduler poll loop error: {e}")
