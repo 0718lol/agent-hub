@@ -256,16 +256,16 @@ def init_db():
             # Triggers to keep FTS index in sync with messages table
             conn.execute(text(
                 "CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN "
-                "INSERT INTO messages_fts(rowid, content_text) VALUES (new.id, COALESCE(json_extract(new.content, '$.text'), new.content)); END"
+                "INSERT INTO messages_fts(rowid, content_text) VALUES (new.id, COALESCE(json_extract(new.content, '$.text'), '')); END"
             ))
             conn.execute(text(
                 "CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN "
-                "INSERT INTO messages_fts(messages_fts, rowid, content_text) VALUES('delete', old.id, COALESCE(json_extract(old.content, '$.text'), old.content)); END"
+                "INSERT INTO messages_fts(messages_fts, rowid, content_text) VALUES('delete', old.id, COALESCE(json_extract(old.content, '$.text'), '')); END"
             ))
             conn.execute(text(
                 "CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN "
-                "INSERT INTO messages_fts(messages_fts, rowid, content_text) VALUES('delete', old.id, COALESCE(json_extract(old.content, '$.text'), old.content)); "
-                "INSERT INTO messages_fts(rowid, content_text) VALUES (new.id, COALESCE(json_extract(new.content, '$.text'), new.content)); END"
+                "INSERT INTO messages_fts(messages_fts, rowid, content_text) VALUES('delete', old.id, COALESCE(json_extract(old.content, '$.text'), '')); "
+                "INSERT INTO messages_fts(rowid, content_text) VALUES (new.id, COALESCE(json_extract(new.content, '$.text'), '')); END"
             ))
             conn.commit()
     except Exception as e:

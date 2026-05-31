@@ -2,8 +2,8 @@
 
 This module is responsible for:
 - App initialization, lifespan, and middleware
-- WebSocket endpoint (orchestration delegated to agent_orchestrator.py)
 - Mounting all API routers
+- WebSocket endpoint (in routers/ws.py)
 
 Business logic is delegated to focused router modules:
 - routers/settings.py — LLM & HIL configuration
@@ -19,37 +19,25 @@ Business logic is delegated to focused router modules:
 - routers/cron.py — Cron task management
 - routers/workflows.py — Workflow import/export/compile
 - routers/mcp.py — MCP tools
+- routers/ws.py — WebSocket real-time communication
+- routers/tools.py — Tool listing & testing
 """
-import json
 import os
-import re
-import uuid
 import asyncio
-import logging
 from pydantic import BaseModel
-from typing import Any
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 
-from app.core.websocket import manager
-from app.core.database import (
-    init_db, save_message, get_messages, get_conversations, clear_messages,
-    save_custom_agent, get_custom_agents, delete_custom_agent, create_conversation,
-)
+from app.core.database import init_db
 from app.core.config import settings
-from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config, load_llm_config
+from app.core.config_persistence import save_llm_config, load_llm_config
 from app.core.llm_client import llm_client
-from app.core.quality_gate import quality_gate
-from app.core.quality_retry import evaluate_and_retry
-from app.core.prompt_engine import prompt_engine
-from app.core.speech import stt_client
-from app.core.sandbox import execute_code
-from app.core.metrics import metrics
-from app.core.benchmark import run_benchmark, get_current_run, BENCHMARK_CASES
+import app.tools  # noqa: F401 — trigger auto-registration
 from app.routers import (
+    ws as ws_router,
     agents as agents_router,
     uploads as uploads_router,
     settings as settings_router,
@@ -63,6 +51,7 @@ from app.routers import (
     speech as speech_router,
     sandbox as sandbox_router,
     benchmark as benchmark_router,
+    tools as tools_router,
 )
 
 from app.core.logging_config import get_logger, RequestIdMiddleware, setup_logging
@@ -73,28 +62,6 @@ from app.services.agent_orchestrator import (
     _stop_events,
 )
 logger = get_logger("main")
-
-_BACKGROUND_TASKS: set[asyncio.Task] = set()
-
-
-def create_tracked_task(coro, name: str = None) -> asyncio.Task:
-    """Create and strongly reference a background asyncio task to prevent GC."""
-    task = asyncio.create_task(coro, name=name)
-    _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_BACKGROUND_TASKS.discard)
-    return task
-
-
-# ---- Agent imports ----
-from app.agents.pm import PMAgent
-from app.agents.frontend import FrontendAgent
-from app.agents.backend_agent import BackendAgent
-from app.agents.tester import TesterAgent
-from app.agents.devops import DevopsAgent
-from app.agents.designer import DesignerAgent
-from app.agents.builder import AgentBuilderAgent
-from app.agents.custom import CustomAgent, AVAILABLE_TOOLS
-import app.tools  # noqa: F401 — trigger auto-registration of runtime tools
 
 
 # ---- App lifespan ----
@@ -178,6 +145,8 @@ app.include_router(prompt_router.router, prefix="/api")
 app.include_router(speech_router.router, prefix="/api")
 app.include_router(sandbox_router.router, prefix="/api")
 app.include_router(benchmark_router.router, prefix="/api")
+app.include_router(ws_router.router)
+app.include_router(tools_router.router, prefix="/api")
 
 # ---- Initialize database ----
 init_db()
