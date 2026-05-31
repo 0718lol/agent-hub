@@ -2,8 +2,6 @@ import React, { useState, useRef } from 'react'
 import { X, Upload } from 'lucide-react'
 import { useAgentStore } from '../../stores/agentStore'
 
-const emojiOptions = ['🤖', '🧠', '💻', '🎨', '🔧', '🐛', '🚀', '📊', '⚡', '🛡️']
-
 export default function AgentCreator({ onClose, onBack }) {
   const addCustomAgent = useAgentStore((s) => s.addCustomAgent)
   const [name, setName] = useState('')
@@ -134,20 +132,6 @@ export default function AgentCreator({ onClose, onBack }) {
                 </div>
               </div>
             )}
-
-            {/* Emoji 选择（一行） */}
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
-              {emojiOptions.map((emoji) => (
-                <button
-                  key={emoji}
-                  className={`agent-emoji-btn ${avatar === emoji && !avatarPreview ? 'active' : ''}`}
-                  onClick={() => { setAvatar(emoji); setAvatarPreview(null) }}
-                  type="button"
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
 
             {/* 本地上传 + 手动输入 */}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

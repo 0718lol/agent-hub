@@ -27,19 +27,9 @@ class BaseAgent:
     enabled_tools: list[str] | None = None
 
     async def stream_reply(self, message: str, context: list = None,
-                           history: list = None, attachments: list = None,
-                           conversation_id: str = "") -> AsyncGenerator[str, None]:
+                           history: list = None, conversation_id: str = None) -> AsyncGenerator[str, None]:
         if llm_client.is_configured() and self.system_prompt:
-            if conversation_id:
-                from app.core.event_stream import event_stream_manager, MessageEvent
-                stream = event_stream_manager.get_stream(conversation_id)
-                has_user_prompt = any(isinstance(ev, MessageEvent) and ev.sender == "user" and ev.content == message for ev in stream)
-                if not has_user_prompt:
-                    event_stream_manager.append_event(conversation_id, MessageEvent(sender="user", content=message))
-                messages = event_stream_manager.compile_to_messages(conversation_id)
-            else:
-                messages = self._build_messages(message, context, history, attachments)
-
+            messages = self._build_messages(message, context, history)
             # Structured layered prompt injection
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
             prompt_context = {"task_type": task_type, "conversation_id": conversation_id}
@@ -233,35 +223,7 @@ class BaseAgent:
                 if text:
                     messages.append({"role": role, "content": text})
 
-        # RAG 知识库检索注入
-        rag_context = ""
-        try:
-            from app.core.rag_engine import rag_engine
-            rag_context = rag_engine.build_context_prompt(message)
-            if rag_context:
-                logger.debug(f"RAG: injecting context for query '{message[:50]}...'")
-        except Exception as e:
-            logger.debug(f"RAG: skipped ({e})")
-
-        # 附件文件内容注入：将 extracted_text 追加到用户消息中
-        enhanced_message = message
-        if attachments:
-            file_contexts = []
-            for att in attachments:
-                extracted = att.get("extracted_text", "")
-                if extracted:
-                    file_contexts.append(
-                        f"[文件: {att.get('original_name', 'unknown')}]\n{extracted[:2000]}"
-                    )
-            if file_contexts:
-                enhanced_message = message + "\n\n" + "\n\n".join(file_contexts)
-
-        # 将 RAG 上下文作为 system 级参考，插在用户消息前
-        if rag_context:
-            messages.append({"role": "user", "content": rag_context})
-            messages.append({"role": "assistant", "content": "好的，我已了解参考资料，请继续提问。"})
-
-        messages.append({"role": "user", "content": enhanced_message})
+        messages.append({"role": "user", "content": message})
         return messages
 
     def _generate_reply(self, message: str, context: list = None) -> str:

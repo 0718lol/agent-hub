@@ -210,7 +210,7 @@ def init_db():
         conn.close()
     except Exception:
         pass
-        
+
     # Use Alembic migrations instead of raw create_all()
     # This ensures schema changes are tracked and reversible.
     # Falls back to create_all() only if Alembic is not available.
@@ -442,14 +442,16 @@ def delete_custom_agent(agent_id: str):
         agent = session.get(CustomAgent, agent_id)
         if agent:
             session.delete(agent)
+        # 删除关联会话（两种 ID 格式都尝试）
         conv = session.get(Conversation, agent_id)
         if conv:
             session.delete(conv)
         conv_c = session.get(Conversation, f"conv_{agent_id}")
         if conv_c:
             session.delete(conv_c)
-            
-        statement = select(Message).where(Message.conversation_id == f"conv_{agent_id}")
+        # 删除关联消息（两种会话 ID 格式都覆盖）
+        conv_ids = [agent_id, f"conv_{agent_id}"]
+        statement = select(Message).where(Message.conversation_id.in_(conv_ids))
         results = session.exec(statement).all()
         for msg in results:
             session.delete(msg)

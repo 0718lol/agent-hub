@@ -1,10 +1,13 @@
 import styles from './MessageBubble.module.css'
 import React, { useState } from 'react'
 import { Copy, RefreshCw, Reply, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useAgentStore } from '../../stores/agentStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useCanvasStore } from '../../stores/canvasStore'
-import CodeCard from './CodeCard'
 import MockupCard from './MockupCard'
 import ClarificationCard from './ClarificationCard'
 import AskUserCard from './AskUserCard'
@@ -131,7 +134,6 @@ function ToolResultBlock({ toolName, resultText }) {
         <pre 
           onClick={() => !expanded && setExpanded(true)}
           className={`${styles.toolResultPre} ${isError ? styles.toolResultPreError : styles.toolResultPreSuccess} ${expanded ? styles.toolResultPreExpanded : ''}`}>
-        >
           {displayedContent}
         </pre>
       </div>
@@ -227,6 +229,47 @@ export default function MessageBubble({ message, isPinned }) {
       },
     })
   }
+
+  // Markdown 渲染组件配置
+  const markdownComponents = {
+    code({ node, inline, className, children, ...props }) {
+      const match = /language-(\w+)/.exec(className || '')
+      const codeStr = String(children).replace(/\n$/, '')
+      if (!inline && match) {
+        return (
+          <div className="code-block">
+            <div className="code-block-header">
+              <span>{match[1]}</span>
+              <button onClick={() => navigator.clipboard.writeText(codeStr)}>
+                <Copy size={12} />
+              </button>
+            </div>
+            <SyntaxHighlighter
+              style={oneDark}
+              language={match[1]}
+              PreTag="div"
+              customStyle={{ margin: 0, borderRadius: '0 0 8px 8px', fontSize: 13, background: 'var(--code-bg)' }}
+            >
+              {codeStr}
+            </SyntaxHighlighter>
+          </div>
+        )
+      }
+      return <code className="markdown-inline-code" {...props}>{children}</code>
+    },
+    table({ children }) {
+      return <div className="markdown-table-wrap"><table>{children}</table></div>
+    },
+    a({ children, href, ...props }) {
+      return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+    },
+  }
+
+  const renderMarkdown = (text) => (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {text}
+    </ReactMarkdown>
+  )
 
   const renderText = (t) => {
     let clean = t.replace(/\[thinking\][\s\S]*?\[\/thinking\]/g, '')
@@ -342,7 +385,8 @@ export default function MessageBubble({ message, isPinned }) {
         )
       }
 
-      return <span key={i}>{part}</span>
+      // 普通文本 → Markdown 渲染
+      return <span key={i}>{renderMarkdown(part)}</span>
     })
   }
 

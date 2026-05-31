@@ -466,6 +466,11 @@ class LLMClient:
                     self.base_url = "http://127.0.0.1:11434/v1"
                 async for chunk in resilience_manager.execute_with_retry(self, self._openai_stream, optimized_messages, system, enabled_tools):
                     yield chunk
+            elif self.provider == "ollama":
+                if not self.base_url:
+                    self.base_url = "http://127.0.0.1:11434/v1"
+                async for chunk in self._openai_stream(messages, system):
+                    yield chunk
             else:
                 async for chunk in resilience_manager.execute_with_retry(self, self._openai_stream, optimized_messages, system, enabled_tools):
                     yield chunk
@@ -688,6 +693,8 @@ llm_client = LLMClient()
 
 
 def _sanitize_for_anthropic(messages: list[dict]) -> list[dict]:
+    """Anthropic 要求 messages 以 user 开头且 user/assistant 交替。
+    合并相邻同 role 的消息，丢弃开头的 assistant 消息。"""
     cleaned: list[dict] = []
     for m in messages:
         role = m.get("role")

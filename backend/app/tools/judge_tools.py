@@ -253,13 +253,13 @@ class UserInteractionJudgeTool:
             desc_part = ""
             if "::" in opt:
                 label_part, desc_part = opt.split("::", 1)
-            
+
             recommended = False
             label = label_part.strip()
             if label.startswith("*"):
                 recommended = True
                 label = label[1:].strip()
-            
+
             parsed_options.append({
                 "label": label,
                 "description": desc_part.strip(),
@@ -268,7 +268,7 @@ class UserInteractionJudgeTool:
 
         # CLI / Terminal 模式 (如果没有活跃连接或者没有 conversation_id)
         is_cli = not conversation_id or not hasattr(manager, "active_connections") or conversation_id not in manager.active_connections
-        
+
         if is_cli:
             # 打印类似 claude code 风格的提示
             print("\n" + "="*50)
@@ -307,7 +307,7 @@ class UserInteractionJudgeTool:
             # 在线程池中异步等待输入，避免阻塞事件循环
             loop = asyncio.get_running_loop()
             answer = await loop.run_in_executor(None, get_cli_input)
-        
+
         # WebSocket 模式
         else:
             # 构造前端 [ask_user:...] 标记格式
@@ -317,7 +317,7 @@ class UserInteractionJudgeTool:
                 prefix = "*" if opt["recommended"] else ""
                 desc = f"::{opt['description']}" if opt["description"] else ""
                 opt_segments.append(f"{prefix}{opt['label']}{desc}")
-            
+
             tag = f"[ask_user: {question} | {' | '.join(opt_segments)}]"
 
             # 广播给前端
@@ -341,7 +341,7 @@ class UserInteractionJudgeTool:
             # 注册 Future 挂起等待
             fut = asyncio.get_running_loop().create_future()
             _pending_interactions[conversation_id] = fut
-            
+
             try:
                 # 等待用户回复（通过 websocket 触发的 set_result）
                 answer = await fut
@@ -351,7 +351,7 @@ class UserInteractionJudgeTool:
         # 整理输出决策和评分
         decision = answer.strip()
         score = 100.0 if decision.lower() in ("yes", "y", "pass", "approve") or any(decision.lower() == o["label"].lower() and o["recommended"] for o in parsed_options) else 50.0
-        
+
         return JudgeResult(
             decision=decision,
             score=score,

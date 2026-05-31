@@ -92,7 +92,6 @@ def setup_logging():
         # Colored console output for development
         renderer = structlog.dev.ConsoleRenderer(
             colors=True,
-            level_styles=structlog.dev.DEFAULT_LEVEL_COLORS,
         )
 
     structlog.configure(
@@ -108,7 +107,7 @@ def setup_logging():
     # Configure standard logging to use structlog formatter
     formatter = structlog.stdlib.ProcessorFormatter(
         processors=[
-            structlog.stdlib.ProcessorFormatter.remove_processor_meta,
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             renderer,
         ],
         foreign_pre_chain=shared_processors,

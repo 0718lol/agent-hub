@@ -6,12 +6,12 @@ export default defineConfig({
   server: {
     port: 3001,
     proxy: {
-      '/api': 'http://localhost:8001',
+      '/api': 'http://127.0.0.1:8000',
       '/ws': {
-        target: 'ws://localhost:8001',
+        target: 'ws://127.0.0.1:8000',
         ws: true,
       },
-      '/uploads': 'http://localhost:8001',
+      '/uploads': 'http://127.0.0.1:8000',
     },
   },
 })

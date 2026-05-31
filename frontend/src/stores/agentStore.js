@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useChatStore } from './chatStore'
 
 const PRESET_AGENTS = [
   { agent_id: 'agent_pm', name: 'PM 小助手', role: '产品经理 · 需求分析与任务拆解', status: 'idle' },
@@ -69,28 +70,6 @@ export const useAgentStore = create((set, get) => ({
     }
   },
 
-  // Fetch agents from backend health endpoint
-  fetchAgents: async () => {
-    try {
-      const resp = await fetch('/api/health')
-      const data = await resp.json()
-      // data.agents is a list of agent_id strings
-      if (data.agents && data.agents.length > 0) {
-        set((state) => {
-          const existingIds = new Set(state.agents.map((a) => a.agent_id))
-          // Merge backend agents with presets — don't remove presets
-          const backendAgents = data.agents
-            .filter((id) => !existingIds.has(id))
-            .map((id) => ({ agent_id: id, name: id, role: '', status: 'idle' }))
-          if (backendAgents.length === 0) return {}
-          return { agents: [...state.agents, ...backendAgents] }
-        })
-      }
-    } catch (e) {
-      console.warn('Failed to fetch agents from backend:', e)
-    }
-  },
-
   // 删除 Agent
   //  预设 Agent → 标记为已删除（本地隐藏，localStorage 记录）
   //  自定义 Agent → 从列表移除 + 调后端 DELETE
@@ -101,6 +80,9 @@ export const useAgentStore = create((set, get) => ({
     }
     set((state) => {
       if (isCustom) {
+        // 同步删除该 Agent 的会话
+        const convId = `conv_${agentId}`
+        useChatStore.getState().removeConversation(convId)
         return { agents: state.agents.filter((a) => a.agent_id !== agentId) }
       }
       const newDeleted = [...new Set([...state.deletedPresetIds, agentId])]

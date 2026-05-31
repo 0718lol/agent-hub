@@ -1,11 +1,15 @@
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { MessageSquare, Code2, GitBranch, LayoutList, Menu, X, Search } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
+import { useTabStore } from '../../stores/tabStore'
 import MessageBubble from '../Chat/MessageBubble'
 import InputBar from '../Chat/InputBar'
 import InlineDeployCard from '../Chat/InlineDeployCard'
+import ChatPanelHeader from './ChatPanelHeader'
+import ChatPanelContent from './ChatPanelContent'
+import TabBar from './TabBar'
 import TaskBoard from '../Canvas/TaskBoard'
 import AgentDAG from '../Canvas/AgentDAG'
 import { wsClient } from '../../utils/websocket'
@@ -13,7 +17,11 @@ import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import IconAvatar from '../IconAvatar'
 
 export default function ChatPanel({ onToggleSidebar }) {
-  const activeId = useChatStore((s) => s.activeConversationId)
+  const openTabs = useTabStore((s) => s.openTabs)
+  const activeTabId = useTabStore((s) => s.activeTabId)
+  const activeTab = openTabs.find((t) => t.id === activeTabId)
+  const activeId = activeTab?.convId || 'conv_pm'
+
   const conversations = useChatStore((s) => s.conversations)
   const addMessage = useChatStore((s) => s.addMessage)
   const updateLastAgentMessage = useChatStore((s) => s.updateLastAgentMessage)
@@ -23,7 +31,6 @@ export default function ChatPanel({ onToggleSidebar }) {
   const setTyping = useChatStore((s) => s.setTyping)
   const setThinking = useChatStore((s) => s.setThinking)
   const setGenerating = useChatStore((s) => s.setGenerating)
-  const generatingConvs = useChatStore((s) => s.generatingConvs)
   const markRead = useChatStore((s) => s.markRead)
   const typingAgents = useChatStore((s) => s.typingAgents)
   const thinkingAgents = useChatStore((s) => s.thinkingAgents)
@@ -46,6 +53,7 @@ export default function ChatPanel({ onToggleSidebar }) {
   const typingAgentIds = [...typingSet]
   const thinkingMap = thinkingAgents[activeId] || {}
   const thinkingEntries = Object.entries(thinkingMap)
+  const generatingConvs = useChatStore((s) => s.generatingConvs)
   const isGenerating = generatingConvs.has(activeId)
   const isGroup = conv?.type === 'group'
   const currentPinned = pinnedMessages[activeId] || []
@@ -82,14 +90,18 @@ export default function ChatPanel({ onToggleSidebar }) {
     }
   }, [conv?.messages, activeId])
 
-  // WS connection
+  // WS connection — 延迟到下一帧，不阻塞 UI 更新
   useEffect(() => {
     markRead(activeId)
     wsClient.send({ type: 'read', conversation_id: activeId, sender: 'user' })
   }, [activeId])
 
   useEffect(() => {
-    wsClient.connect(activeId)
+    // 使用 requestAnimationFrame 延迟 WebSocket 连接，让 UI 先更新
+    const rafId = requestAnimationFrame(() => {
+      wsClient.connect(activeId)
+    })
+
     const unsub = wsClient.onMessage((data) => {
       if (data.conversation_id !== activeId) return
       if (data.type === 'typing') {
@@ -126,6 +138,9 @@ export default function ChatPanel({ onToggleSidebar }) {
       }
       if (data.type === 'deploy_status') {
         const { status, log, url } = data
+        if (useCanvasStore.getState().deployStatus === 'idle') {
+          useCanvasStore.getState().startDeploy()
+        }
         if (log) useCanvasStore.getState().appendDeployLog(log)
         if (status === 'success' && url) useCanvasStore.getState().finishDeploy(url)
         if (status === 'failed') useCanvasStore.getState().failDeploy()
@@ -193,6 +208,7 @@ export default function ChatPanel({ onToggleSidebar }) {
       }
     })
     return () => {
+      cancelAnimationFrame(rafId)
       unsub(); wsClient.disconnect()
       if (generationTimeoutRef.current) {
         clearTimeout(generationTimeoutRef.current)
@@ -249,11 +265,6 @@ export default function ChatPanel({ onToggleSidebar }) {
     }
   }
 
-  // Active typing agent for group indicator
-  const activeTypingAgent = typingAgentIds.length > 0
-    ? agents.find((a) => a.agent_id === typingAgentIds[0])
-    : null
-
   if (!conv) return (
     <div className="chat-panel">
       <div className="empty-state">
@@ -265,197 +276,28 @@ export default function ChatPanel({ onToggleSidebar }) {
 
   return (
     <div className="chat-panel">
-      {/* Header — 通栏，不受居中宽度限制 */}
-      <div className="chat-header">
-        <div className="chat-header-left">
-          <button className="hamburger-btn" onClick={onToggleSidebar} title="菜单">
-            <Menu size={18} />
-          </button>
-          {isGroup ? (
-            <>
-              <div className="group-avatar-stack">
-                {(conv.agents || []).slice(0, 4).map((agentId) => (
-                  <div key={agentId} className="mini-avatar">
-                    <IconAvatar agentId={agentId} size={10} />
-                  </div>
-                ))}
-              </div>
-              <div className="chat-header-info">
-                <div className="chat-header-name">{conv.name}</div>
-                <div className="chat-header-desc">
-                  {conv.agents?.length || 0} 人
-                  {activeTypingAgent && (
-                    <span style={{ color: 'var(--accent)', marginLeft: 8 }}>
-                      · {activeTypingAgent.name} 正在回复...
-                    </span>
-                  )}
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="chat-header-avatar">
-                <IconAvatar agentId={conv.agentId} size={20} />
-              </div>
-              <div className="chat-header-info">
-                <div className="chat-header-name">{conv.name}</div>
-                <div className="chat-header-desc">
-                  {agents.find((a) => a.agent_id === conv.agentId)?.role || ''}
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-        <div className="chat-header-spacer" />
-        <div className="chat-header-right">
-          {typingAgentIds.length > 0 && !activeTypingAgent && (
-            <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
-          )}
-          <button
-            className="header-icon-btn"
-            onClick={() => toggleSlidePanel('search')}
-            style={slidePanelOpen && slidePanelContent === 'search' ? { color: 'var(--accent)' } : undefined}
-          >
-            <Search size={20} />
-            <span className="icon-tooltip">搜索对话</span>
-          </button>
-          <button
-            className="header-icon-btn"
-            onClick={() => setTaskPopup(!taskPopup)}
-            style={taskPopup ? { color: 'var(--accent)' } : undefined}
-          >
-            <LayoutList size={20} />
-            <span className="icon-tooltip">任务看板</span>
-          </button>
-          <button
-            className="header-icon-btn"
-            onClick={() => setDagPopup(!dagPopup)}
-            style={dagPopup ? { color: 'var(--accent)' } : undefined}
-          >
-            <GitBranch size={20} />
-            <span className="icon-tooltip">协作图</span>
-          </button>
-          <button
-            className="header-icon-btn"
-            onClick={() => { toggleSlidePanel('code'); useCanvasStore.getState().setSlidePanelTab('code') }}
-            style={slidePanelOpen && slidePanelContent === 'code' && useCanvasStore.getState().slidePanelTab === 'code' ? { color: 'var(--accent)' } : undefined}
-          >
-            <Code2 size={20} />
-            <span className="icon-tooltip">代码</span>
-          </button>
-          <button
-            className="header-icon-btn"
-            onClick={() => { toggleSlidePanel('code'); useCanvasStore.getState().setSlidePanelTab('preview') }}
-            style={slidePanelOpen && slidePanelContent === 'code' && useCanvasStore.getState().slidePanelTab === 'preview' ? { color: 'var(--accent)' } : undefined}
-          >
-            <span style={{ fontSize: 16 }}>🌐</span>
-            <span className="icon-tooltip">项目预览</span>
-          </button>
-          <button
-            className="header-icon-btn"
-            onClick={() => { toggleSlidePanel('code'); useCanvasStore.getState().setSlidePanelTab('deploy') }}
-            style={slidePanelOpen && slidePanelContent === 'code' && useCanvasStore.getState().slidePanelTab === 'deploy' ? { color: 'var(--accent)' } : undefined}
-          >
-            <span style={{ fontSize: 16 }}>🚀</span>
-            <span className="icon-tooltip">部署</span>
-          </button>
-        </div>
-        <button
-          onClick={handleClearHistory}
-          title="清空对话历史"
-          style={{
-            background: 'rgba(239,68,68,0.08)',
-            border: '1px solid rgba(239,68,68,0.2)',
-            color: '#f87171',
-            borderRadius: 8,
-            padding: '6px 12px',
-            fontSize: 12,
-            cursor: 'pointer',
-            transition: 'all 0.15s',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-          }}
-          onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.15)' }}
-          onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)' }}
-        >
-          🗑️ 新对话
-        </button>
-      </div>
+      <ChatPanelHeader
+        convId={activeId}
+        onToggleSidebar={onToggleSidebar}
+        onToggleTask={() => setTaskPopup((v) => !v)}
+        onToggleDag={() => setDagPopup((v) => !v)}
+        taskOpen={taskPopup}
+        dagOpen={dagPopup}
+        onClearHistory={handleClearHistory}
+      />
 
-      <div className="chat-panel-inner">
-        {/* Messages */}
-        <div className="chat-messages" ref={messagesRef}>
-          {conv.messages.length === 0 && (
-            <div className="empty-state">
-              <div className="text">发送消息开始对话</div>
-            </div>
-          )}
-          {conv.messages.map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              isPinned={currentPinned.includes(msg.id)}
-            />
-          ))}
+      <TabBar />
 
-          {/* Typing indicator */}
-          {typingAgentIds.length > 0 && (
-            <div className="message-row">
-              <div className="msg-avatar">
-                {typingAgentIds.length === 1
-                  ? <IconAvatar agentId={typingAgentIds[0]} size={16} />
-                  : <IconAvatar iconKey="group" size={16} />
-                }
-              </div>
-              <div className="message-content">
-                <div className="typing-dots">
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Thinking bubbles */}
-        {thinkingEntries.length > 0 && (
-          <div style={{ padding: '4px var(--space-5) 0', display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
-            {thinkingEntries.map(([agentId, text]) => {
-              const agent = agents.find(a => a.agent_id === agentId)
-              return (
-                <div key={agentId} style={{
-                  display: 'flex', alignItems: 'flex-start', gap: 8,
-                  padding: '8px 12px', borderRadius: 'var(--radius-md)',
-                  background: 'var(--accent-bg)', border: '1px solid var(--border)',
-                  fontSize: 'var(--text-xs)',
-                }}>
-                  <IconAvatar agentId={agentId} size={18} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 500, color: 'var(--accent)', marginBottom: 2 }}>
-                      {agent?.name || agentId} 正在思考...
-                    </div>
-                    <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-word' }}>
-                      {text}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
+      <div className="chat-panel-tabs-container">
+        {openTabs.map((tab) => (
+          <div
+            key={tab.id}
+            className="chat-panel-tab-content"
+            style={tab.id !== activeTabId ? { display: 'none' } : undefined}
+          >
+            <ChatPanelContent convId={tab.convId} isActive={tab.id === activeTabId} />
           </div>
-        )}
-
-        {/* Deploy inline card */}
-        {conv.messages.length > 0 && <InlineDeployCard />}
-
-        {/* Input */}
-        <InputBar
-          onSend={handleSend}
-          isGenerating={isGenerating}
-          onStop={handleStop}
-          isGroup={isGroup}
-        />
+        ))}
       </div>
 
       {/* 任务看板悬浮窗 */}
