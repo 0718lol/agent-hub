@@ -234,10 +234,15 @@ export default function VirtualOffice({ open, onClose }) {
       }))
   }, [conversations])
 
-  const toPx = (pct) => ({
-    x: Math.round(pct.x * stageSize.w - SLOT_W / 2),
-    y: Math.round(pct.y * stageSize.h - SLOT_H / 2),
-  })
+  const toPx = (pct) => {
+    const x = Math.round(pct.x * stageSize.w - SLOT_W / 2)
+    const y = Math.round(pct.y * stageSize.h - SLOT_H / 2)
+    // 边界检查：确保不超出 stage
+    return {
+      x: Math.max(0, Math.min(x, stageSize.w - SLOT_W)),
+      y: Math.max(0, Math.min(y, stageSize.h - SLOT_H)),
+    }
+  }
 
   const layout = useMemo(() => {
     try {

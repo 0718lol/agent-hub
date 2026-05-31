@@ -232,6 +232,15 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 "stream": False,
             })
 
+            # 快速过滤无意义消息：太短、纯数字、纯标点、纯空格
+            if sender == "user":
+                stripped = text.strip()
+                if len(stripped) < 2:
+                    continue
+                # 纯数字或纯标点（允许中文/英文字母）
+                if stripped.isdigit() or all(c in "!@#$%^&*()_+-=[]{}|;:',.<>?/~`" for c in stripped):
+                    continue
+
             # If a previous generation is still running for this conversation,
             # signal it to stop before starting a new one.
             prev_event = _stop_events.get(conversation_id)
