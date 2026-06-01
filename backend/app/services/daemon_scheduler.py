@@ -75,14 +75,15 @@ class DaemonScheduler:
             logger.info("Always-on Offline Daemon Scheduler stopped.")
 
     async def _loop(self):
+        loop = asyncio.get_running_loop()
         while self._running:
             try:
                 now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                due_tasks = get_due_cron_tasks(now_str)
+                due_tasks = await loop.run_in_executor(None, get_due_cron_tasks, now_str)
 
                 for task in due_tasks:
                     # Guard against double firing by setting running status before process spawn
-                    update_cron_task_status(task["id"], "running")
+                    await loop.run_in_executor(None, update_cron_task_status, task["id"], "running")
                     
                     import multiprocessing
                     p = multiprocessing.Process(
@@ -131,11 +132,8 @@ class DaemonScheduler:
         try:
             from app.services.agent_registry import agent_registry
             from app.core.database import get_messages, save_message
-            # Lazy import to avoid circular dependency: main.py -> daemon_scheduler.py -> main.py
-            try:
-                from app.core.agent_stream import stream_agent_reply as _stream_agent_reply
-            except ImportError:
-                from app.main import _stream_agent_reply
+            # Lazy import to avoid circular dependency
+            from app.services.agent_orchestrator import stream_agent_reply as _stream_agent_reply
 
             agent = await agent_registry.get_agent(agent_id)
             if not agent:

@@ -1,6 +1,9 @@
+import shlex
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.core.mcp_bridge import mcp_bridge_manager
+
+ALLOWED_MCP_COMMANDS = {"npx", "node", "python", "uvx"}
 
 router = APIRouter(tags=["mcp"])
 
@@ -20,6 +23,9 @@ async def list_mcp_servers():
 @router.post("/mcp/servers")
 async def register_mcp_server(body: MCPServerRegister):
     """Dynamically launch and connect to a new stdio JSON-RPC MCP server."""
+    cmd_base = shlex.split(body.command)[0] if body.command else ""
+    if cmd_base not in ALLOWED_MCP_COMMANDS:
+        return {"status": "error", "message": f"Command '{cmd_base}' not allowed. Allowed: {ALLOWED_MCP_COMMANDS}"}
     success = await mcp_bridge_manager.register_server(
         name=body.name,
         command=body.command,

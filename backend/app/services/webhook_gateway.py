@@ -55,7 +55,7 @@ class WebhookGatewayManager:
             logger.info(f"[WebhookGateway] Dispatching Telegram inline keyboard payload to bot chat {self.telegram_chat_id}")
             sent_any = True
 
-        return sent_any or True # Always return True for simulated success
+        return sent_any
 
     def _format_slack_message(self, conversation_id: str, question: str, options: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Construct Slack interactive blocks payload with buttons."""

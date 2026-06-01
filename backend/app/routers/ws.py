@@ -35,8 +35,9 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     authorized = False
     
     if settings.api_secret:
+        header_token = websocket.headers.get("x-api-secret")
         query_token = websocket.query_params.get("token")
-        if query_token == settings.api_secret:
+        if header_token == settings.api_secret or query_token == settings.api_secret:
             authorized = True
     else:
         if client_host in ("127.0.0.1", "::1", "localhost"):
@@ -54,7 +55,14 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     try:
         while True:
             data = await websocket.receive_text()
-            msg = json.loads(data)
+            try:
+                msg = json.loads(data)
+            except json.JSONDecodeError:
+                await manager.broadcast(conversation_id, {
+                    "type": "error", "conversation_id": conversation_id,
+                    "content": {"text": "Invalid JSON message"},
+                })
+                continue
 
             msg_type = msg.get("type", "message")
             sender = msg.get("sender", "user")
@@ -83,7 +91,10 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 if is_active_hil:
                     fut = _pending_interactions[conversation_id]
                     if not fut.done():
-                        fut.set_result(reply_text)
+                        try:
+                            fut.set_result(reply_text)
+                        except asyncio.InvalidStateError:
+                            pass
                 else:
                     # Recovery path: trigger asynchronous recovery task
                     create_tracked_task(resume_graph_from_checkpoint(conversation_id, reply_text), name=f"resume_graph_{conversation_id}")
@@ -159,5 +170,9 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
         event = _stop_events.get(conversation_id)
         if event:
             event.set()
+        for task in bg_tasks:
+            task.cancel()
+        if bg_tasks:
+            await asyncio.gather(*bg_tasks, return_exceptions=True)
 
 

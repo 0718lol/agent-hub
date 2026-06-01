@@ -112,6 +112,7 @@ export const useChatStore = create((set, get) => ({
   loadMessages: async (conversationId) => {
     try {
       const resp = await fetch(`/api/conversations/${conversationId}/messages`)
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const messages = await resp.json()
       set((state) => ({
         conversations: state.conversations.map((conv) =>
@@ -176,9 +177,22 @@ export const useChatStore = create((set, get) => ({
     }),
 
   removeConversation: (convId) =>
+    set((state) => {
+      const remaining = state.conversations.filter((c) => c.id !== convId)
+      const needsSwitch = state.activeConversationId === convId
+      return {
+        conversations: remaining,
+        activeConversationId: needsSwitch
+          ? (remaining[0]?.id || 'conv_pm')
+          : state.activeConversationId,
+      }
+    }),
+
+  updateConversation: (convId, updates) =>
     set((state) => ({
-      conversations: state.conversations.filter((c) => c.id !== convId),
-      activeConversationId: state.activeConversationId === convId ? (state.conversations[0]?.id || 'conv_pm') : state.activeConversationId,
+      conversations: state.conversations.map((c) =>
+        c.id === convId ? { ...c, ...updates } : c
+      ),
     })),
 
   getActiveConversation: () => {

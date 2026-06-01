@@ -241,9 +241,9 @@ class BuiltinMCPServer:
         if uri == "workspace://repomap":
             from app.core.repo_map import codebase_map_scanner
             # Pick workspace sandbox directory safely
-            workspace_dir = r"D:\project\high agent-hub\backend"
+            workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
             if conversation_id:
-                sandbox_dir = os.path.join(r"D:\project\high agent-hub", "agenthub_export", conversation_id)
+                sandbox_dir = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")), "agenthub_export", conversation_id)
                 if os.path.exists(sandbox_dir):
                     workspace_dir = sandbox_dir
                     

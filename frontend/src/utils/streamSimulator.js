@@ -1,8 +1,11 @@
 export function simulateStream(text, onChunk, onDone, speed = 35) {
   let index = 0
   const chars = text.split('')
+  let timerId = null
+  let cancelled = false
 
   const tick = () => {
+    if (cancelled) return
     if (index >= chars.length) {
       onDone()
       return
@@ -14,8 +17,13 @@ export function simulateStream(text, onChunk, onDone, speed = 35) {
     onChunk(chunk)
 
     const delay = speed + Math.random() * 30
-    setTimeout(tick, delay)
+    timerId = setTimeout(tick, delay)
   }
 
   tick()
+
+  return () => {
+    cancelled = true
+    if (timerId) clearTimeout(timerId)
+  }
 }

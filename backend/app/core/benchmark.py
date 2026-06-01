@@ -200,7 +200,7 @@ async def run_benchmark(
                 result.normal_output,
                 agent_id=case.agent_id,
             )
-            result.normal_score = normal_eval.get("score", 0) if isinstance(normal_eval, dict) else 50
+            result.normal_score = normal_eval.score
 
             # ---- Best-of-N generation ----
             start = time.perf_counter()
@@ -214,7 +214,7 @@ async def run_benchmark(
 
             result.bon_output = bon_output
             result.bon_duration_ms = int((time.perf_counter() - start) * 1000)
-            result.bon_score = bon_report.get("score", 0) if isinstance(bon_report, dict) else 70
+            result.bon_score = bon_report.score
             result.bon_n = 3
 
             # Calculate improvement

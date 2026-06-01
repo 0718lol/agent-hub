@@ -57,7 +57,7 @@ function ToolCallBlock({ toolName, params }) {
         <div className={styles.toolCallRight}>
           <span className={styles.toolCallBadge}>
             <span className={styles.toolCallDot} />
-            执行中...
+            System Call
           </span>
           {hasParams && (
             <span className={styles.toolCallChevron}>

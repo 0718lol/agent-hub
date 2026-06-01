@@ -1,8 +1,12 @@
 """Tool listing and testing endpoints."""
+import asyncio
 from fastapi import APIRouter
 from app.agents.custom import AVAILABLE_TOOLS
 
 router = APIRouter()
+
+# Module-level lock to prevent race condition on tool toggle
+_tool_toggle_lock = asyncio.Lock()
 
 
 @router.get("/tools")
@@ -42,5 +46,6 @@ async def toggle_runtime_tool(tool_name: str):
     tool = get_tool(tool_name)
     if not tool:
         return {"error": f"Tool not found: {tool_name}"}
-    tool.enabled = not tool.enabled
+    async with _tool_toggle_lock:
+        tool.enabled = not tool.enabled
     return {"tool": tool_name, "enabled": tool.enabled}

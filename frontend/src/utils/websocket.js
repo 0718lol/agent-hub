@@ -23,17 +23,15 @@ class WSClient {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     let url = `${protocol}//${window.location.host}/ws/${conversationId}`
     
-    // 自动追加可能存在的 API 鉴权 Token
-    const token = localStorage.getItem('agenthub_api_secret')
-    if (token) {
-      url += `?token=${encodeURIComponent(token)}`
-    }
-    
     const ws = new WebSocket(url)
     this.ws = ws
 
     ws.onopen = () => {
       if (this.ws !== ws) return // Safe guard against stale connections
+      const authToken = localStorage.getItem('agenthub_api_secret')
+      if (authToken) {
+        ws.send(JSON.stringify({ type: 'auth', token: authToken }))
+      }
       this.reconnectAttempts = 0
       while (this.pendingMessages.length > 0) {
         const msg = this.pendingMessages.shift()

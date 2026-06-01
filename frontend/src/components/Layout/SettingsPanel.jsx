@@ -426,10 +426,10 @@ export default function SettingsPanel({ onClose }) {
     { id: 'security', label: '🔒 安全' },
   ]
 
-  // Light theme styles
+  // Theme-aware styles
   const labelStyle = {
     fontSize: 13,
-    color: '#6b7280',
+    color: 'var(--text-muted)',
     marginBottom: 6,
     display: 'block',
     fontWeight: 500,
@@ -441,8 +441,8 @@ export default function SettingsPanel({ onClose }) {
     alignItems: 'center',
     padding: '12px 14px',
     borderRadius: 10,
-    background: '#f9fafb',
-    border: '1px solid #e5e7eb',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
   }
 
   const btnStyle = {
@@ -462,10 +462,10 @@ export default function SettingsPanel({ onClose }) {
   const inputStyle = {
     width: '100%',
     padding: '10px 14px',
-    background: 'white',
-    border: '1px solid #d1d5db',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
     borderRadius: 8,
-    color: '#1f2937',
+    color: 'var(--text-primary)',
     fontSize: 13,
     outline: 'none',
     fontFamily: 'inherit',
@@ -480,17 +480,17 @@ export default function SettingsPanel({ onClose }) {
     }} onClick={onClose}>
       <div className="settings-modal-scroll" style={{
         width: 500, maxHeight: '88vh', overflow: 'auto',
-        background: 'white',
-        border: '1px solid #e5e7eb',
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
         borderRadius: 16, padding: 28,
         boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
         scrollbarWidth: 'none', msOverflowStyle: 'none',
       }} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 18, color: '#1f2937', fontWeight: 600 }}>设置</h2>
+          <h2 style={{ margin: 0, fontSize: 18, color: 'var(--text-primary)', fontWeight: 600 }}>设置</h2>
           <button onClick={onClose} style={{
-            background: 'none', border: 'none', color: '#9ca3af',
+            background: 'none', border: 'none', color: 'var(--text-muted)',
             fontSize: 20, cursor: 'pointer', padding: '0 4px',
           }}>×</button>
         </div>
@@ -501,13 +501,13 @@ export default function SettingsPanel({ onClose }) {
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             padding: '12px 14px', borderRadius: 10,
-            background: '#f9fafb', border: '1px solid #e5e7eb',
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {theme === 'light' ? <Sun size={16} color="#f59e0b" /> : <Moon size={16} color="#6366f1" />}
               <div>
-                <div style={{ fontSize: 14, color: '#1f2937', fontWeight: 500 }}>界面主题</div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 500 }}>界面主题</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                   {theme === 'light' ? '浅色模式' : '深色模式'}
                 </div>
               </div>
@@ -519,13 +519,13 @@ export default function SettingsPanel({ onClose }) {
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             padding: '12px 14px', borderRadius: 10,
-            background: '#f9fafb', border: '1px solid #e5e7eb',
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Trash2 size={16} color="#ef4444" />
+              <Trash2 size={16} color="var(--danger, #ef4444)" />
               <div>
-                <div style={{ fontSize: 14, color: '#1f2937', fontWeight: 500 }}>清空当前会话历史</div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>删除所有消息，不可恢复</div>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 500 }}>清空当前会话历史</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>删除所有消息，不可恢复</div>
               </div>
             </div>
             <button
@@ -533,7 +533,7 @@ export default function SettingsPanel({ onClose }) {
               style={{
                 padding: '6px 14px', borderRadius: 8, fontSize: 12,
                 background: '#fef2f2', border: '1px solid #fecaca',
-                color: '#ef4444', cursor: 'pointer', fontWeight: 500,
+                color: 'var(--danger, #ef4444)', cursor: 'pointer', fontWeight: 500,
               }}
             >
               清空
@@ -542,12 +542,12 @@ export default function SettingsPanel({ onClose }) {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: '#f3f4f6', borderRadius: 10, padding: 4 }}>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: 'var(--bg-secondary)', borderRadius: 10, padding: 4 }}>
           {tabs.map((t) => (
             <button key={t.id} onClick={() => { setTab(t.id); setMsg('') }} style={{
               flex: 1, padding: '8px 12px', borderRadius: 8, fontSize: 12,
               background: tab === t.id ? '#4f46e5' : 'transparent',
-              border: 'none', color: tab === t.id ? 'white' : '#6b7280',
+              border: 'none', color: tab === t.id ? 'white' : 'var(--text-muted)',
               cursor: 'pointer', fontWeight: tab === t.id ? 600 : 400,
               transition: 'all 0.2s',
             }}>{t.label}</button>
@@ -561,7 +561,7 @@ export default function SettingsPanel({ onClose }) {
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
               background: configured ? '#ecfdf5' : '#fffbeb',
               border: `1px solid ${configured ? '#a7f3d0' : '#fde68a'}`,
-              fontSize: 13, color: configured ? '#059669' : '#d97706',
+              fontSize: 13, color: configured ? 'var(--text-primary)' : '#d97706',
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
             }}>
               <span style={{ flex: 1, minWidth: 0 }}>
@@ -573,7 +573,7 @@ export default function SettingsPanel({ onClose }) {
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                   <button onClick={handleDisconnect} disabled={saving} style={{
                     padding: '4px 10px', borderRadius: 6, fontSize: 11,
-                    background: 'white', border: '1px solid #a7f3d0',
+                    background: 'var(--bg-secondary)', border: '1px solid #a7f3d0',
                     color: '#059669', cursor: 'pointer', fontWeight: 500,
                     whiteSpace: 'nowrap',
                   }}>断开接入</button>
@@ -623,9 +623,9 @@ export default function SettingsPanel({ onClose }) {
                     }
                   }} style={{
                     flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
-                    background: provider === p ? '#4f46e5' : '#f9fafb',
-                    border: `1px solid ${provider === p ? '#4f46e5' : '#e5e7eb'}`,
-                    color: provider === p ? 'white' : '#6b7280',
+                    background: provider === p ? '#4f46e5' : 'var(--bg-secondary)',
+                    border: `1px solid ${provider === p ? '#4f46e5' : 'var(--border)'}`,
+                    color: provider === p ? 'white' : 'var(--text-muted)',
                     cursor: 'pointer', fontWeight: provider === p ? 600 : 400,
                   }}>
                     {p === 'openai' ? 'OpenAI 兼容' : p === 'anthropic' ? 'Anthropic' : 'Ollama 本地'}
@@ -707,7 +707,7 @@ export default function SettingsPanel({ onClose }) {
                 <input type="range" min="0" max="1" step="0.1" value={temperature}
                   onChange={(e) => setTemperature(parseFloat(e.target.value))}
                   style={{ width: '100%', accentColor: '#4f46e5' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#9ca3af' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)' }}>
                   <span>精确</span><span>创意</span>
                 </div>
               </div>
@@ -735,8 +735,8 @@ export default function SettingsPanel({ onClose }) {
             {/* Enable toggle */}
             <div style={{ ...rowStyle, marginBottom: 16 }}>
               <div>
-                <div style={{ fontSize: 14, color: '#1f2937', fontWeight: 500 }}>启用质量门</div>
-                <div style={{ fontSize: 12, color: '#9ca3af' }}>关闭后 Agent 直接输出不评估</div>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 500 }}>启用质量门</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>关闭后 Agent 直接输出不评估</div>
               </div>
               <ToggleSwitch checked={qEnabled} onChange={setQEnabled} />
             </div>
@@ -748,9 +748,9 @@ export default function SettingsPanel({ onClose }) {
                 {[1, 2, 3].map((n) => (
                   <button key={n} onClick={() => setBestOfN(n)} style={{
                     flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
-                    background: bestOfN === n ? '#4f46e5' : '#f9fafb',
-                    border: `1px solid ${bestOfN === n ? '#4f46e5' : '#e5e7eb'}`,
-                    color: bestOfN === n ? 'white' : '#6b7280',
+                    background: bestOfN === n ? '#4f46e5' : 'var(--bg-secondary)',
+                    border: `1px solid ${bestOfN === n ? '#4f46e5' : 'var(--border)'}`,
+                    color: bestOfN === n ? 'white' : 'var(--text-muted)',
                     cursor: 'pointer', fontWeight: bestOfN === n ? 600 : 400,
                   }}>
                     {n === 1 ? '关闭' : `${n} 候选`}
@@ -771,9 +771,9 @@ export default function SettingsPanel({ onClose }) {
                 {[0, 1, 2].map((n) => (
                   <button key={n} onClick={() => setMaxRetries(n)} style={{
                     flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
-                    background: maxRetries === n ? '#4f46e5' : '#f9fafb',
-                    border: `1px solid ${maxRetries === n ? '#4f46e5' : '#e5e7eb'}`,
-                    color: maxRetries === n ? 'white' : '#6b7280',
+                    background: maxRetries === n ? '#4f46e5' : 'var(--bg-secondary)',
+                    border: `1px solid ${maxRetries === n ? '#4f46e5' : 'var(--border)'}`,
+                    color: maxRetries === n ? 'white' : 'var(--text-muted)',
                     cursor: 'pointer', fontWeight: maxRetries === n ? 600 : 400,
                   }}>
                     {n === 0 ? '不重写' : `${n} 次`}
@@ -785,8 +785,8 @@ export default function SettingsPanel({ onClose }) {
             {/* LLM Judge */}
             <div style={{ ...rowStyle, marginBottom: 20 }}>
               <div>
-                <div style={{ fontSize: 14, color: '#1f2937', fontWeight: 500 }}>LLM 深度评审</div>
-                <div style={{ fontSize: 12, color: '#9ca3af' }}>用 LLM 做语义级质量评分（额外消耗 Token）</div>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 500 }}>LLM 深度评审</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>用 LLM 做语义级质量评分（额外消耗 Token）</div>
               </div>
               <ToggleSwitch checked={useLlmJudge} onChange={setUseLlmJudge} />
             </div>
@@ -808,17 +808,17 @@ export default function SettingsPanel({ onClose }) {
               <div key={layer.id} style={{
                 ...rowStyle,
                 marginBottom: 10, padding: '12px 14px', borderRadius: 10,
-                background: layer.enabled ? '#f9fafb' : '#f3f4f6',
-                border: `1px solid ${layer.enabled ? '#e5e7eb' : '#e5e7eb'}`,
+                background: layer.enabled ? 'var(--bg-secondary)' : 'var(--bg-secondary)',
+                border: `1px solid ${layer.enabled ? 'var(--border)' : 'var(--border)'}`,
                 opacity: layer.enabled ? 1 : 0.5,
               }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, color: '#1f2937', fontWeight: 500 }}>
-                    <span style={{ fontSize: 11, color: '#4f46e5', marginRight: 6 }}>L{layer.level}</span>
+                  <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
+                    <span style={{ fontSize: 11, color: 'var(--accent)', marginRight: 6 }}>L{layer.level}</span>
                     {layer.id}
                     {layer.has_condition && <span style={{ fontSize: 10, color: '#d97706', marginLeft: 6 }}>条件注入</span>}
                   </div>
-                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
                     {layer.content_preview}
                   </div>
                 </div>
@@ -849,22 +849,22 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>当前后台自治作业</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '25vh', overflowY: 'auto' }}>
                 {cronTasks.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: '16px 0', fontSize: 12 }}>
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px 0', fontSize: 12 }}>
                     暂无活动中的后台自治作业
                   </div>
                 ) : (
                   cronTasks.map((t) => (
                     <div key={t.id} style={{
-                      padding: '10px 14px', borderRadius: 10, background: '#f9fafb',
+                      padding: '10px 14px', borderRadius: 10, background: 'var(--bg-secondary)',
                       border: `1px solid ${t.status === 'running' ? '#a78bfa' : t.status === 'active' ? '#a7f3d0' : '#fde68a'}`,
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: '#1f2937' }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
                           {t.status === 'running' ? '🔵' : t.status === 'active' ? '🟢' : '🟡'} {t.agent_id}
                         </span>
-                        <span style={{ fontSize: 10, color: '#6b7280' }}>每 {t.interval_seconds}s</span>
+                        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>每 {t.interval_seconds}s</span>
                       </div>
-                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 8 }}>{t.task_prompt.slice(0, 60)}...</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>{t.task_prompt.slice(0, 60)}...</div>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button onClick={() => handleToggleCronTask(t.id, t.status)} disabled={saving} style={{
                           padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
@@ -886,7 +886,7 @@ export default function SettingsPanel({ onClose }) {
             </div>
 
             {/* Create Form */}
-            <div style={{ padding: '16px', borderRadius: 12, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+            <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
               <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>创建新离线自治任务</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ display: 'flex', gap: 10 }}>
@@ -946,20 +946,20 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>已注册工具 ({rtTools.length})</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {rtLoading ? (
-                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: 16, fontSize: 12 }}>加载中...</div>
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 16, fontSize: 12 }}>加载中...</div>
                 ) : rtTools.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: 16, fontSize: 12 }}>暂无工具</div>
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 16, fontSize: 12 }}>暂无工具</div>
                 ) : (
                   rtTools.map((tool) => (
                     <div key={tool.name} style={{
-                      padding: '12px 14px', borderRadius: 10, background: '#f9fafb',
-                      border: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '12px 14px', borderRadius: 10, background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     }}>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#1f2937' }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
                           {tool.icon} {tool.name}
                         </div>
-                        <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                           {tool.description}
                         </div>
                       </div>
@@ -984,7 +984,7 @@ export default function SettingsPanel({ onClose }) {
             </div>
 
             {/* Test Tool */}
-            <div style={{ padding: '16px', borderRadius: 12, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+            <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
               <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>工具测试</label>
               <div style={{ marginBottom: 10 }}>
                 <select
@@ -1015,11 +1015,11 @@ export default function SettingsPanel({ onClose }) {
                   border: `1px solid ${rtTestResult.success ? '#bbf7d0' : '#fecaca'}`,
                   maxHeight: '25vh', overflowY: 'auto',
                 }}>
-                  <div style={{ fontSize: 11, color: rtTestResult.success ? '#166534' : '#dc2626', fontWeight: 600, marginBottom: 4 }}>
+                  <div style={{ fontSize: 11, color: rtTestResult.success ? 'var(--text-primary)' : 'var(--danger, #dc2626)', fontWeight: 600, marginBottom: 4 }}>
                     {rtTestResult.success ? '✅ 成功' : '❌ 失败'} {rtTestResult.usage?.time_ms ? `(${rtTestResult.usage.time_ms}ms)` : ''}
                   </div>
                   <pre style={{
-                    fontSize: 11, color: '#374151', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                    fontSize: 11, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
                     margin: 0, maxHeight: '20vh', overflow: 'auto',
                   }}>
                     {JSON.stringify(rtTestResult.data || rtTestResult.error, null, 2)}
@@ -1052,10 +1052,10 @@ export default function SettingsPanel({ onClose }) {
               <label style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px',
                 borderRadius: 10, border: '2px dashed #d1d5db', cursor: 'pointer',
-                background: kbUploading ? '#f3f4f6' : 'white', transition: 'all 0.2s',
+                background: kbUploading ? 'var(--bg-secondary)' : 'var(--bg-secondary)', transition: 'all 0.2s',
               }}>
                 <input type="file" accept=".txt,.md,.pdf,.docx,.json,.csv" onChange={handleKbUpload} style={{ display: 'none' }} />
-                <span style={{ fontSize: 13, color: '#6b7280' }}>
+                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
                   {kbUploading ? '正在处理...' : '点击选择文件上传到知识库'}
                 </span>
               </label>
@@ -1066,18 +1066,18 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>已入库文档</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '25vh', overflowY: 'auto' }}>
                 {kbDocs.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: '16px 0', fontSize: 12 }}>
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px 0', fontSize: 12 }}>
                     暂无文档，请上传文件到知识库
                   </div>
                 ) : (
                   kbDocs.map((doc) => (
                     <div key={doc.id} style={{
-                      padding: '10px 14px', borderRadius: 10, background: '#f9fafb',
-                      border: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '10px 14px', borderRadius: 10, background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     }}>
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 500, color: '#1f2937' }}>{doc.filename}</div>
-                        <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{doc.filename}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                           {doc.chunk_count} 块 | {doc.char_count} 字符
                         </div>
                       </div>
@@ -1092,7 +1092,7 @@ export default function SettingsPanel({ onClose }) {
             </div>
 
             {/* Test Query */}
-            <div style={{ padding: '16px', borderRadius: 12, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+            <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
               <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>检索测试</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
@@ -1111,14 +1111,14 @@ export default function SettingsPanel({ onClose }) {
               {kbResults && (
                 <div style={{ marginTop: 12, maxHeight: '20vh', overflowY: 'auto' }}>
                   {kbResults.length === 0 ? (
-                    <div style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', padding: 8 }}>未找到相关内容</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 8 }}>未找到相关内容</div>
                   ) : (
                     kbResults.map((r, i) => (
                       <div key={i} style={{
-                        padding: '8px 10px', borderRadius: 6, background: 'white', border: '1px solid #e5e7eb',
-                        marginBottom: 6, fontSize: 12, color: '#374151',
+                        padding: '8px 10px', borderRadius: 6, background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                        marginBottom: 6, fontSize: 12, color: 'var(--text-primary)',
                       }}>
-                        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>
                           相关度: {r.score} | 来源: {r.metadata?.filename || '未知'}
                         </div>
                         {r.text?.slice(0, 200)}{r.text?.length > 200 ? '...' : ''}
@@ -1142,7 +1142,7 @@ export default function SettingsPanel({ onClose }) {
               🔒 全局安全门禁与 API/WebSocket 会话密钥管理
             </div>
 
-            <div style={{ padding: '16px', borderRadius: 12, background: '#f9fafb', border: '1px solid #e5e7eb', marginBottom: 20 }}>
+            <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>
               <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>API Secret 密钥配置</label>
               
               <div style={{ marginBottom: 16 }}>
@@ -1159,8 +1159,8 @@ export default function SettingsPanel({ onClose }) {
                     onClick={() => setShowToken(!showToken)}
                     style={{
                       padding: '10px 12px',
-                      background: '#f3f4f6',
-                      border: '1px solid #d1d5db',
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border)',
                       borderRadius: 8,
                       cursor: 'pointer',
                       fontSize: 14,
@@ -1174,7 +1174,7 @@ export default function SettingsPanel({ onClose }) {
                     {showToken ? '👁️' : '👁️‍🗨️'}
                   </button>
                 </div>
-                <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, lineHeight: 1.4 }}>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
                   密钥将保存在您的浏览器本地 LocalStorage 中。在开启后端 <code>AGENTHUB_API_SECRET</code> 保护时，前端所有的 Fetch 和 WebSocket 请求将自动注入此凭证以完成双向身份鉴权。
                 </p>
               </div>
@@ -1195,14 +1195,14 @@ export default function SettingsPanel({ onClose }) {
                     setSecurityToken('');
                     setMsg('安全凭证已成功清除，浏览器当前处于无凭证访问状态。');
                   }}
-                  style={{ ...btnStyle, flex: 1, background: '#f3f4f6', border: '1px solid #d1d5db', color: '#374151' }}
+                  style={{ ...btnStyle, flex: 1, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                 >
                   清除密钥
                 </button>
               </div>
             </div>
 
-            <div style={{ padding: '14px', borderRadius: 10, background: '#f9fafb', border: '1px solid #e5e7eb', fontSize: 12, color: '#4b5563', lineHeight: 1.5 }}>
+            <div style={{ padding: '14px', borderRadius: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>
               <b>💡 物理安全说明：</b>
               <br />
               - 当密钥清除且后端未设置密钥时，系统默认激活 <b>Localhost 纯物理环回防火墙</b>，阻止任何外界物理设备访问此编排系统。

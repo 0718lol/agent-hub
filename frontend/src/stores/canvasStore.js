@@ -89,6 +89,7 @@ export const useCanvasStore = create((set) => ({
   fetchDAGFromBackend: async () => {
     try {
       const resp = await fetch('/api/health')
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
       if (!data.agents || data.agents.length === 0) return
       const agentIds = data.agents

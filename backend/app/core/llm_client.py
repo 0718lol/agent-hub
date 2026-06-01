@@ -498,7 +498,13 @@ class LLMClient:
         return bool(self.api_key and self.base_url and self.model)
 
     def is_ollama_active(self) -> bool:
-        return True
+        """Check if local Ollama service is running."""
+        import socket
+        try:
+            with socket.create_connection(("127.0.0.1", 11434), timeout=0.5):
+                return True
+        except (ConnectionRefusedError, TimeoutError, OSError):
+            return False
 
     async def _openai_stream_fallback_ollama(self, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
         original_provider = self.provider
@@ -570,11 +576,6 @@ class LLMClient:
                 if not self.base_url:
                     self.base_url = "http://127.0.0.1:11434/v1"
                 async for chunk in resilience_manager.execute_with_retry(self, self._openai_stream, optimized_messages, system, enabled_tools):
-                    yield chunk
-            elif self.provider == "ollama":
-                if not self.base_url:
-                    self.base_url = "http://127.0.0.1:11434/v1"
-                async for chunk in self._openai_stream(messages, system):
                     yield chunk
             else:
                 async for chunk in resilience_manager.execute_with_retry(self, self._openai_stream, optimized_messages, system, enabled_tools):

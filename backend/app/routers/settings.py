@@ -1,4 +1,5 @@
 import httpx
+from typing import Literal
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.core.config import settings
@@ -18,7 +19,7 @@ class LLMSettings(BaseModel):
 
 
 class HILSettings(BaseModel):
-    human_input_mode: str = "NEVER"
+    human_input_mode: Literal["NEVER", "ALWAYS", "AUTO"] = "NEVER"
     cooldown_steps: int = 2
 
 

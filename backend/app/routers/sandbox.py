@@ -24,7 +24,7 @@ async def sandbox_run(req: CodeRunRequest):
     result = await execute_code(
         code=req.code,
         language=req.language,
-        timeout=min(req.timeout, 30),
+        timeout=max(1, min(req.timeout, 30)),
         stdin_data=req.stdin,
     )
     metrics.record_sandbox(req.language, result.status, result.duration_ms)

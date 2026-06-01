@@ -55,6 +55,7 @@ else:
     class JOBOBJECT_EXTENDED_LIMIT_INFORMATION_STRUCT: pass
 
 _windows_job_handles = set()
+_windows_job_handles_map: dict = {}  # pid -> h_job mapping for cleanup
 
 
 def limit_windows_process(pid: int, memory_limit_bytes: int, cpu_limit_secs: int = 0) -> bool:
@@ -119,12 +120,26 @@ def limit_windows_process(pid: int, memory_limit_bytes: int, cpu_limit_secs: int
         
         if assigned:
             _windows_job_handles.add(h_job)
+            _windows_job_handles_map[pid] = h_job
         else:
             kernel32.CloseHandle(h_job)
         return bool(assigned)
     except Exception as e:
         logger.error(f"[Subprocess Security] Failed to apply limits to Windows pid {pid}: {e}")
         return False
+
+
+def release_job_handle(pid: int):
+    """Release the Windows Job Object handle associated with the given pid."""
+    if sys.platform != "win32":
+        return
+    h_job = _windows_job_handles_map.pop(pid, None)
+    if h_job and h_job in _windows_job_handles:
+        _windows_job_handles.discard(h_job)
+        try:
+            ctypes.windll.kernel32.CloseHandle(h_job)
+        except Exception:
+            pass
 
 
 async def safe_terminate_process_tree(proc: asyncio.subprocess.Process):

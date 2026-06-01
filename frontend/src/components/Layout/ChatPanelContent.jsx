@@ -48,6 +48,13 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
     loadMessages(convId)
   }, [convId])
 
+  // 清理已删除消息的缓存
+  useEffect(() => {
+    if (conv && conv.messages.length === 0 && loadedConvs.has(convId)) {
+      loadedConvs.delete(convId)
+    }
+  }, [conv?.messages?.length, convId])
+
   // 标记已读
   useEffect(() => {
     if (isActive && convId) {

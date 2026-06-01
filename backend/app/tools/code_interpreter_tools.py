@@ -3,8 +3,8 @@
 import os
 import re
 import sys
+import asyncio
 import logging
-import subprocess
 import shutil
 from typing import Dict, Any
 from .registry import AgentTool, ToolResult, register_tool
@@ -108,6 +108,9 @@ class E2BPythonInterpreterTool(AgentTool):
         code = params.get("code", "").strip()
         conv_id = params.get("conversation_id", "default")
 
+        if not re.match(r'^[a-zA-Z0-9_\-]+$', conv_id):
+            return ToolResult(success=False, error=f"conversation_id 包含非法字符: {conv_id}")
+
         if not code:
             return ToolResult(success=False, error="执行代码不能为空")
 
@@ -129,22 +132,29 @@ class E2BPythonInterpreterTool(AgentTool):
         except IOError as ioe:
             return ToolResult(success=False, error=f"写入临时执行文件失败: {ioe}")
 
-        # 4. Safely execute code via subprocess python runner
+        # 4. Safely execute code via async subprocess python runner
         # Run with a 15-second timeout to prevent denial-of-service/infinite loops
         try:
             # Explicitly use the same python interpreter running this host to ensure path and package matches
-            proc = subprocess.run(
-                [sys.executable, script_file_name],
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, script_file_name,
                 cwd=sandbox_dir,
-                capture_output=True,
-                text=True,
-                timeout=15.0
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except subprocess.TimeoutExpired:
-            return ToolResult(
-                success=False,
-                error="🔒 执行超时！脚本已超过最大运行上限 15 秒并被强制终止，可能存在死循环。"
-            )
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(), timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return ToolResult(
+                    success=False,
+                    error="🔒 执行超时！脚本已超过最大运行上限 15 秒并被强制终止。"
+                )
+        except Exception as e:
+            return ToolResult(success=False, error=f"子进程启动失败: {e}")
         finally:
             # Clean up the temporary script file to keep the sandbox clean
             if os.path.exists(script_path):
@@ -154,8 +164,8 @@ class E2BPythonInterpreterTool(AgentTool):
                     pass
 
         # 5. Extract images and sanitize stdout
-        stdout_raw = proc.stdout or ""
-        stderr_raw = proc.stderr or ""
+        stdout_raw = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+        stderr_raw = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
         
         # Pull out any embedded plots
         images = []

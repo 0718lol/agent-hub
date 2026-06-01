@@ -1,7 +1,9 @@
 """HTTP request tool — allows agents to make HTTP calls to APIs."""
 
 import time
+import ipaddress
 import logging
+from urllib.parse import urlparse
 from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_http_request")
@@ -49,6 +51,21 @@ class HttpRequestTool(AgentTool):
             return ToolResult(success=False, error="URL 不能为空")
         if not url.startswith(("http://", "https://")):
             return ToolResult(success=False, error="URL 必须以 http:// 或 https:// 开头")
+
+        # SSRF protection: block internal/private addresses
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+
+        BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "metadata.google.internal", "169.254.169.254"}
+        if hostname in BLOCKED_HOSTS:
+            return ToolResult(success=False, error=f"安全策略禁止访问内部地址: {hostname}")
+
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return ToolResult(success=False, error=f"安全策略禁止访问私有/保留 IP: {hostname}")
+        except ValueError:
+            pass
 
         method = params.get("method", "GET").upper()
         if method not in ("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"):

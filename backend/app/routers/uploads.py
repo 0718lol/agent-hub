@@ -12,9 +12,15 @@ router = APIRouter(prefix="/api", tags=["uploads"])
 @router.get("/uploads/{file_id}")
 async def get_uploaded_file(file_id: str):
     """返回已上传文件（通过 file_id = stored_name 定位）"""
+    if ".." in file_id or "/" in file_id or "\\" in file_id:
+        raise HTTPException(status_code=400, detail="Invalid file_id")
     if not FileStorageManager.exists(file_id):
         raise HTTPException(status_code=404, detail="文件不存在")
     path = FileStorageManager.get_absolute_path(file_id)
+    real_path = os.path.realpath(path)
+    real_upload = os.path.realpath(UPLOAD_DIR)
+    if not real_path.startswith(real_upload + os.sep) and real_path != real_upload:
+        raise HTTPException(status_code=403, detail="Access denied")
     return FileResponse(path)
 
 

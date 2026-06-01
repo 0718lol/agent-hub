@@ -139,7 +139,8 @@ class CustomAgent(BaseAgent):
         self.style = style
         self.tools = tools or []
         # Separate prompt-addon tools from executable runtime tools
-        self.enabled_tools = [t for t in self.tools if t in RUNTIME_TOOL_IDS] or None
+        filtered = [t for t in self.tools if t in RUNTIME_TOOL_IDS]
+        self.enabled_tools = filtered if self.tools else None
         # Build the final system prompt with tool capabilities
         self.system_prompt = self._build_full_prompt(system_prompt)
 

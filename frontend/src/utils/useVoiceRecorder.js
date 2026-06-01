@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 
 /**
  * Voice Recorder Hook
@@ -99,6 +99,16 @@ export function useVoiceRecorder(onTranscribed) {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop())
       streamRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      clearInterval(timerRef.current)
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
+      }
     }
   }, [])
 

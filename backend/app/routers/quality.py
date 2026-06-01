@@ -1,6 +1,6 @@
 """Quality gate settings and evaluation endpoints."""
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.core.deps import get_quality_gate
 from app.core.quality_gate import QualityGate
 
@@ -11,7 +11,7 @@ class QualityGateSettings(BaseModel):
     enabled: bool = True
     max_retries: int = 1
     use_llm_judge: bool = False
-    best_of_n: int = 1
+    best_of_n: int = Field(default=1, ge=1, le=10)
 
 
 @router.get("/settings/quality")

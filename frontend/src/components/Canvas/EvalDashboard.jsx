@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Download, Code, FileCode, Terminal, ExternalLink, Box, X } from 'lucide-react'
 
 // Unified Line-by-Line Diff Algorithm (Zero Dependency, Lookahead)
@@ -73,6 +73,14 @@ export default function EvalDashboard() {
   const [diffMode, setDiffMode] = useState(false)
   const [compareVersionLabel, setCompareVersionLabel] = useState('')
 
+  const pollRef = useRef(null)
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [])
+
   const fetchMetrics = useCallback(async () => {
     try {
       const resp = await fetch('/api/metrics')
@@ -117,12 +125,13 @@ export default function EvalDashboard() {
     setBenchRunning(true)
     try {
       await fetch('/api/benchmark/run', { method: 'POST' })
-      const poll = setInterval(async () => {
+      pollRef.current = setInterval(async () => {
         const resp = await fetch('/api/benchmark/status')
         const status = await resp.json()
         setBenchStatus(status)
         if (status.status === 'completed' || status.status === 'idle') {
-          clearInterval(poll)
+          clearInterval(pollRef.current)
+          pollRef.current = null
           setBenchRunning(false)
           fetchMetrics()
           fetchArtifacts()

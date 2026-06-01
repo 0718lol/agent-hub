@@ -1,5 +1,8 @@
 import os
+import asyncio
 from typing import AsyncGenerator
+
+_api_key_lock = asyncio.Lock()
 
 
 async def claude_code_stream(
@@ -26,9 +29,11 @@ async def claude_code_stream(
         )
         return
 
-    # Set API key via environment variable (how claude-code-sdk reads it)
+    # Set API key via environment variable with lock to prevent multi-user race
+    original_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key:
-        os.environ["ANTHROPIC_API_KEY"] = api_key
+        async with _api_key_lock:
+            os.environ["ANTHROPIC_API_KEY"] = api_key
 
     # Build prompt: use the last user message as the primary prompt
     prompt = ""
@@ -67,3 +72,7 @@ async def claude_code_stream(
                         yield block.text
     except Exception as e:
         yield f"\n[Claude Code 调用出错: {type(e).__name__}: {str(e)[:300]}]"
+    finally:
+        if api_key:
+            async with _api_key_lock:
+                os.environ["ANTHROPIC_API_KEY"] = original_key

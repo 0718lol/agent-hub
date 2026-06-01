@@ -156,19 +156,52 @@ async def stream_agent_reply(
                 # Extract [create_agent:{json}] tags
                 while True:
                     ca_match = re.search(r'\[create_agent:(.*?)\]', buffer, re.DOTALL)
-                    if not ca_match:
-                        break
-                    try:
-                        agent_config = json.loads(ca_match.group(1))
-                        await agent_registry.register_custom_agent(agent_config)
-                        await manager.broadcast(conversation_id, {
-                            "type": "agent_created",
-                            "conversation_id": conversation_id,
-                            "agent": agent_config,
-                        })
-                    except (json.JSONDecodeError, Exception):
-                        pass
-                    buffer = buffer[:ca_match.start()] + buffer[ca_match.end():]
+                    parsed_ok = False
+                    if ca_match:
+                        try:
+                            agent_config = json.loads(ca_match.group(1))
+                            await agent_registry.register_custom_agent(agent_config)
+                            await manager.broadcast(conversation_id, {
+                                "type": "agent_created",
+                                "conversation_id": conversation_id,
+                                "agent": agent_config,
+                            })
+                            parsed_ok = True
+                            buffer = buffer[:ca_match.start()] + buffer[ca_match.end():]
+                        except (json.JSONDecodeError, Exception):
+                            pass
+
+                    if not parsed_ok:
+                        # Fallback: bracket-counting parser to handle nested JSON
+                        tag_start = buffer.find('[create_agent:')
+                        if tag_start == -1:
+                            break
+                        json_start = tag_start + len('[create_agent:')
+                        bracket_depth = 0
+                        json_end = -1
+                        for idx in range(json_start, len(buffer)):
+                            ch = buffer[idx]
+                            if ch == '{':
+                                bracket_depth += 1
+                            elif ch == '}':
+                                bracket_depth -= 1
+                                if bracket_depth == 0:
+                                    json_end = idx + 1
+                                    break
+                        if json_end != -1 and json_end < len(buffer) and buffer[json_end] == ']':
+                            try:
+                                agent_config = json.loads(buffer[json_start:json_end])
+                                await agent_registry.register_custom_agent(agent_config)
+                                await manager.broadcast(conversation_id, {
+                                    "type": "agent_created",
+                                    "conversation_id": conversation_id,
+                                    "agent": agent_config,
+                                })
+                            except (json.JSONDecodeError, Exception):
+                                pass
+                            buffer = buffer[:tag_start] + buffer[json_end + 1:]
+                        else:
+                            break
 
                 # Extract [delete_agent:agent_id] tags
                 while True:

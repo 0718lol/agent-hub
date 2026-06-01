@@ -27,6 +27,8 @@ class ConnectionManager:
     def disconnect(self, websocket: WebSocket, conversation_id: str):
         if conversation_id in self.active_connections:
             self.active_connections[conversation_id].discard(websocket)
+            if not self.active_connections[conversation_id]:
+                del self.active_connections[conversation_id]
         self.locks.pop(websocket, None)
 
     async def broadcast(self, conversation_id: str, message: dict):
@@ -89,6 +91,7 @@ class ConnectionManager:
                 await asyncio.sleep(5)
                 continue
 
+            pubsub = None
             try:
                 client = redis_manager.get_client()
                 pubsub = client.pubsub()
@@ -106,11 +109,6 @@ class ConnectionManager:
                                 await self._local_broadcast(conv_id, payload)
                     except asyncio.CancelledError:
                         logger.info("Redis WebSocket Pub/Sub listener task cancelled.")
-                        try:
-                            await pubsub.unsubscribe("agenthub:ws_broadcast")
-                            await pubsub.close()
-                        except Exception:
-                            pass
                         return
                     except Exception as e:
                         if isinstance(e, (ConnectionError, TimeoutError)):
@@ -124,6 +122,13 @@ class ConnectionManager:
                 logger.warning(f"Error subscribing to Redis Pub/Sub: {e}. Retrying in 5 seconds...")
                 redis_manager._is_connected = False
                 await asyncio.sleep(5)
+            finally:
+                try:
+                    if pubsub:
+                        await pubsub.unsubscribe("agenthub:ws_broadcast")
+                        await pubsub.close()
+                except Exception:
+                    pass
 
 
 manager = ConnectionManager()

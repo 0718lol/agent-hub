@@ -105,10 +105,10 @@ def deobfuscate_key(obfuscated_key: str) -> str:
             return decrypted.decode("utf-8")
         except ImportError:
             logger.warning("cryptography package not installed, cannot decrypt API key.")
-            return obfuscated_key
+            return ""
         except Exception as e:
-            logger.error(f"Failed to decrypt API key: {e}")
-            return obfuscated_key
+            logger.error(f"Failed to decrypt API key (possible key mismatch): {e}")
+            return ""
     # Legacy format backward compat: XOR encoding
     if obfuscated_key.startswith("enc::"):
         try:
@@ -120,6 +120,7 @@ def deobfuscate_key(obfuscated_key: str) -> str:
                 deobfuscated.append(b ^ salt[i % len(salt)])
             return deobfuscated.decode("utf-8")
         except Exception:
-            return obfuscated_key
+            logger.error("Failed to decrypt legacy enc:: API key.")
+            return ""
     # Plaintext
     return obfuscated_key

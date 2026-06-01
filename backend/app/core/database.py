@@ -295,17 +295,21 @@ def get_messages(conversation_id: str, limit: int = 100):
     with Session(engine) as session:
         statement = select(Message).where(Message.conversation_id == conversation_id).order_by(Message.id.asc()).limit(limit)
         results = session.exec(statement).all()
-        return [
-            {
+        messages = []
+        for msg in results:
+            try:
+                content = json.loads(msg.content)
+            except (json.JSONDecodeError, TypeError):
+                content = {"text": msg.content}
+            messages.append({
                 'id': msg.id,
                 'conversation_id': msg.conversation_id,
                 'sender': msg.sender,
-                'content': json.loads(msg.content),
+                'content': content,
                 'streaming': bool(msg.streaming),
                 'timestamp': msg.created_at,
-            }
-            for msg in results
-        ]
+            })
+        return messages
 
 
 def get_conversations():
@@ -969,23 +973,23 @@ async def async_delete_memory_item(conversation_id, key):
 async def async_search_messages(query: str, conversation_id: str = None, limit: int = 50):
     return await asyncio.to_thread(search_messages, query, conversation_id, limit)
 
-async def async_save_event(conversation_id, event_type, data):
-    return await asyncio.to_thread(save_event, conversation_id, event_type, data)
+async def async_save_event(conversation_id, event_type, timestamp, data):
+    return await asyncio.to_thread(save_event_item, conversation_id, event_type, timestamp, data)
 
-async def async_get_events(conversation_id, event_type=None, limit=100):
-    return await asyncio.to_thread(get_events, conversation_id, event_type, limit)
+async def async_get_events(conversation_id):
+    return await asyncio.to_thread(get_event_items, conversation_id)
 
 async def async_save_pending_hil(conversation_id, current_node, next_node, state_data, question, options, original_prompt):
-    return await asyncio.to_thread(save_pending_hil, conversation_id, current_node, next_node, state_data, question, options, original_prompt)
+    return await asyncio.to_thread(save_hil_checkpoint, conversation_id, current_node, next_node, state_data, question, options, original_prompt)
 
 async def async_get_pending_hil_checkpoint(conversation_id):
     return await asyncio.to_thread(get_pending_hil_checkpoint, conversation_id)
 
 async def async_clear_pending_hil(conversation_id):
-    return await asyncio.to_thread(clear_pending_hil, conversation_id)
+    return await asyncio.to_thread(delete_hil_checkpoint, conversation_id)
 
-async def async_save_artifact(conversation_id, agent_id, name, language, code, quality_score=None, sandbox_status="untested", sandbox_output=None):
-    return await asyncio.to_thread(save_artifact, conversation_id, agent_id, name, language, code, quality_score, sandbox_status, sandbox_output)
+async def async_save_artifact(conversation_id, agent_id, language, code, name=None):
+    return await asyncio.to_thread(save_artifact, conversation_id, agent_id, language, code, name)
 
 async def async_get_artifacts(conversation_id, limit=50):
     return await asyncio.to_thread(get_artifacts, conversation_id, limit)

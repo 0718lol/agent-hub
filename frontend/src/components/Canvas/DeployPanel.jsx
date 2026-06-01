@@ -36,11 +36,10 @@ export default function DeployPanel() {
 
   const handleVisitSite = () => {
     const htmlToRender = previewHtml || PREVIEW_HTML.todo
-    const newWindow = window.open()
-    if (newWindow) {
-      newWindow.document.write(htmlToRender)
-      newWindow.document.close()
-    }
+    const blob = new Blob([htmlToRender], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank', 'noopener,noreferrer')
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
   }
 
 

@@ -34,6 +34,7 @@ export const useAgentStore = create((set, get) => ({
   loadCustomAgents: async () => {
     try {
       const resp = await fetch('/api/agents/custom')
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
       set((state) => {
         const existingIds = new Set(state.agents.map((a) => a.agent_id))

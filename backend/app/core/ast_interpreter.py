@@ -11,7 +11,17 @@ import operator
 import sys
 import io
 import asyncio
+import builtins as _builtins
 from typing import Dict, Any, Callable
+
+
+def _make_safe_builtin(fn):
+    """Wrap a builtin function so its __builtins__ dict is empty, preventing sandbox escape."""
+    def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+    wrapper.__name__ = getattr(fn, "__name__", "builtin")
+    wrapper.__builtins__ = {}
+    return wrapper
 
 class BreakException(Exception):
     """Exception raised to break out of a loop in AST interpreter."""
@@ -30,6 +40,7 @@ class SafeASTInterpreter:
         self.iteration_count = 0
         self.max_iterations = max_iterations
         self.stdout_buffer = io.StringIO()
+        self._output_buffer = None
 
         # Secure binary operations map
         self.binops = {
@@ -47,14 +58,16 @@ class SafeASTInterpreter:
             ast.BitAnd: operator.and_
         }
 
+    def _safe_print(self, *args, sep=' ', end='\n', file=None, flush=False):
+        """Thread-safe print replacement that writes to internal buffer instead of sys.stdout."""
+        if self._output_buffer is not None:
+            text = sep.join(str(a) for a in args) + end
+            self._output_buffer.write(text)
+
     async def execute(self, code_str: str) -> dict:
         """Executes code_str asynchronously and returns execution summary dictionary."""
         self.iteration_count = 0
-        self.stdout_buffer = io.StringIO()
-        
-        # Divert sys.stdout safely
-        old_stdout = sys.stdout
-        sys.stdout = self.stdout_buffer
+        self._output_buffer = io.StringIO()
         try:
             tree = ast.parse(code_str)
             result = None
@@ -62,19 +75,19 @@ class SafeASTInterpreter:
                 result = await self.visit(node)
             return {
                 "success": True,
-                "stdout": self.stdout_buffer.getvalue(),
+                "stdout": self._output_buffer.getvalue(),
                 "result": result,
                 "error": ""
             }
         except Exception as e:
             return {
                 "success": False,
-                "stdout": self.stdout_buffer.getvalue(),
+                "stdout": self._output_buffer.getvalue(),
                 "result": None,
                 "error": f"{type(e).__name__}: {str(e)}"
             }
         finally:
-            sys.stdout = old_stdout
+            self._output_buffer = None
 
     async def visit(self, node: ast.AST) -> Any:
         if node is None:
@@ -105,19 +118,19 @@ class SafeASTInterpreter:
         
         # Inject standard whitelisted built-in functions/constants
         safe_builtins = {
-            "print": print,
-            "len": len,
+            "print": self._safe_print,
+            "len": _make_safe_builtin(len),
             "range": range,
-            "abs": abs,
+            "abs": _make_safe_builtin(abs),
             "str": str,
             "int": int,
             "float": float,
             "list": list,
             "dict": dict,
             "set": set,
-            "min": min,
-            "max": max,
-            "sum": sum,
+            "min": _make_safe_builtin(min),
+            "max": _make_safe_builtin(max),
+            "sum": _make_safe_builtin(sum),
             "enumerate": enumerate,
             "zip": zip,
             "True": True,

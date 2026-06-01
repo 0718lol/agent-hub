@@ -40,7 +40,7 @@ export default function WebPreview() {
         ref={iframeRef}
         className="preview-iframe"
         srcDoc={html}
-        sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+        sandbox="allow-scripts allow-popups allow-forms"
         title="Preview"
         tabIndex={0}
         onClick={handleFocus}

@@ -111,7 +111,7 @@ app.add_middleware(
 @app.middleware("http")
 async def api_security_middleware(request: Request, call_next):
     path = request.url.path
-    if path in ("/", "/docs", "/openapi.json", "/redoc", "/api/health") or path.startswith("/api/webhook/callback/") or path.startswith("/uploads/"):
+    if path in ("/", "/docs", "/openapi.json", "/redoc", "/api/health") or path.startswith("/api/webhook/callback/"):
         return await call_next(request)
     if not path.startswith("/api"):
         return await call_next(request)
@@ -173,6 +173,7 @@ class LLMSettings(BaseModel):
     max_tokens: int = None
 
 
+# DEAD CODE: duplicated by routers/settings.py — safe to delete
 @app.get("/api/settings/llm")
 async def get_llm_settings():
     return {
@@ -186,6 +187,7 @@ async def get_llm_settings():
     }
 
 
+# DEAD CODE: duplicated by routers/settings.py — safe to delete
 @app.post("/api/settings/llm")
 async def update_llm_settings(s: LLMSettings):
     llm_client.configure(
@@ -200,6 +202,7 @@ async def update_llm_settings(s: LLMSettings):
     return {"status": "ok", "configured": llm_client.is_configured()}
 
 
+# DEAD CODE: duplicated by routers/settings.py — safe to delete
 @app.get("/api/ollama/models")
 async def list_ollama_models():
     """Fetch installed models from local Ollama instance."""
@@ -243,6 +246,9 @@ async def upload_file(file: UploadFile = File(...)):
     stored_name = f"{uuid.uuid4().hex}{ext}"
     file_path = os.path.join(UPLOAD_DIR, stored_name)
     content = await file.read()
+    MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+    if len(content) > MAX_UPLOAD_SIZE:
+        return JSONResponse(status_code=413, content={"detail": "File too large"})
     with open(file_path, "wb") as f:
         f.write(content)
     is_image = (file.content_type or "").startswith("image/")
@@ -843,6 +849,7 @@ async def remove_custom_agent(agent_id: str):
     return {"status": "deleted", "agent_id": agent_id}
 
 
+# DEAD CODE: duplicated by routers/tools.py — safe to delete
 @app.get("/api/tools")
 async def list_available_tools():
     """List prompt-addon tools (for custom agent builder UI)."""
@@ -854,6 +861,7 @@ async def list_available_tools():
 
 # ---- Runtime Tools (executable) REST API ----
 
+# DEAD CODE: duplicated by routers/tools.py — safe to delete
 @app.get("/api/runtime-tools")
 async def list_runtime_tools():
     """List all registered executable runtime tools."""
@@ -861,6 +869,7 @@ async def list_runtime_tools():
     return _list_tools()
 
 
+# DEAD CODE: duplicated by routers/tools.py — safe to delete
 @app.post("/api/runtime-tools/{tool_name}/test")
 async def test_runtime_tool(tool_name: str, body: dict = {}):
     """Manually test an executable tool with given params."""
@@ -875,6 +884,7 @@ async def test_runtime_tool(tool_name: str, body: dict = {}):
     }
 
 
+# DEAD CODE: duplicated by routers/tools.py — safe to delete
 @app.post("/api/runtime-tools/{tool_name}/toggle")
 async def toggle_runtime_tool(tool_name: str):
     """Enable/disable a runtime tool."""
@@ -888,6 +898,7 @@ async def toggle_runtime_tool(tool_name: str):
 
 # ---- Quality Gate API ----
 
+# DEAD CODE: duplicated by routers/quality.py — safe to delete
 @app.post("/api/quality/evaluate")
 async def evaluate_text(body: dict):
     """Manual quality evaluation endpoint. Body: {"text": "...", "agent_id": "..."}"""
@@ -899,6 +910,7 @@ async def evaluate_text(body: dict):
     return report.to_dict()
 
 
+# DEAD CODE: duplicated by routers/quality.py — safe to delete
 @app.get("/api/quality/standards")
 async def list_quality_standards():
     from app.core.quality_standards import STANDARDS
@@ -911,12 +923,14 @@ async def list_quality_standards():
 
 # ---- Prompt Engine API ----
 
+# DEAD CODE: duplicated by routers/prompt.py — safe to delete
 @app.get("/api/prompt/layers")
 async def list_prompt_layers():
     """List all prompt layers with their status."""
     return prompt_engine.get_layers_info()
 
 
+# DEAD CODE: duplicated by routers/prompt.py — safe to delete
 @app.post("/api/prompt/layers/{layer_id}")
 async def toggle_prompt_layer(layer_id: str, body: dict):
     """Enable/disable a prompt layer. Body: {"enabled": true/false}"""
@@ -925,6 +939,7 @@ async def toggle_prompt_layer(layer_id: str, body: dict):
     return {"status": "ok", "layer_id": layer_id, "enabled": enabled}
 
 
+# DEAD CODE: duplicated by routers/prompt.py — safe to delete
 @app.post("/api/prompt/preview")
 async def preview_prompt(body: dict):
     """Preview the assembled prompt for a given agent and context.
@@ -993,6 +1008,7 @@ class STTSettings(BaseModel):
     language: str = "zh"
 
 
+# DEAD CODE: duplicated by routers/speech.py — safe to delete
 @app.get("/api/settings/stt")
 async def get_stt_settings():
     return {
@@ -1003,6 +1019,7 @@ async def get_stt_settings():
     }
 
 
+# DEAD CODE: duplicated by routers/speech.py — safe to delete
 @app.post("/api/settings/stt")
 async def update_stt_settings(s: STTSettings):
     stt_client.configure(
@@ -1015,6 +1032,7 @@ async def update_stt_settings(s: STTSettings):
     return {"configured": stt_client.is_configured()}
 
 
+# DEAD CODE: duplicated by routers/speech.py — safe to delete
 @app.post("/api/speech/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     """

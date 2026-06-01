@@ -30,7 +30,7 @@ class AgentTool(ABC):
     name: str = ""
     description: str = ""
     icon: str = "🔧"
-    parameters: dict = {}  # JSON Schema for parameters
+    parameters: dict  # JSON Schema for parameters (must be declared by subclasses)
     enabled: bool = True
     params_model: Optional[Type[BaseModel]] = None
 
@@ -116,7 +116,7 @@ def get_tools_prompt(tool_names: list[str] | None = None) -> str:
     for name, tool in TOOL_REGISTRY.items():
         if not tool.enabled:
             continue
-        if tool_names and name not in tool_names:
+        if tool_names is not None and name not in tool_names:
             continue
         tools.append(tool)
 
