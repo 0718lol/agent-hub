@@ -117,7 +117,8 @@ class BaseAgent:
         try:
             from app.tools.registry import get_tools_prompt
             return get_tools_prompt(self.enabled_tools)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to get tools prompt: {e}")
             return ""
 
     @staticmethod

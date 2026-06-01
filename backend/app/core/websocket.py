@@ -127,8 +127,8 @@ class ConnectionManager:
                     if pubsub:
                         await pubsub.unsubscribe("agenthub:ws_broadcast")
                         await pubsub.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to close Redis pubsub during cleanup: {e}")
 
 
 manager = ConnectionManager()

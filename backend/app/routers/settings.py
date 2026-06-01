@@ -7,6 +7,8 @@ from app.core.llm_client import llm_client
 from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config
 
 router = APIRouter(tags=["settings"])
+from app.core.logging_config import get_logger
+logger = get_logger("settings")
 
 
 class LLMSettings(BaseModel):
@@ -75,6 +77,6 @@ async def list_ollama_models():
             if r.status_code == 200:
                 data = r.json()
                 return [m["name"] for m in data.get("models", [])]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to fetch Ollama models: {e}")
     return []

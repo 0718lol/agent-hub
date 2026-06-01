@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from app.core.config import settings, obfuscate_key, deobfuscate_key
 from app.core.mcp_client import SystemMCPServer
+import logging
+_logger = logging.getLogger("test_security_remediation")
 
 
 def test_obfuscation():
@@ -68,8 +70,8 @@ async def test_path_traversal_blocking():
         try:
             import shutil
             shutil.rmtree(sandbox_dir, ignore_errors=True)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.warning(f"Failed to clean up sandbox dir: {e}")
 
 
 @pytest.mark.asyncio
@@ -141,8 +143,8 @@ async def test_local_rce_execution_allowed_and_script_wrapped():
         try:
             import shutil
             shutil.rmtree(sandbox_dir, ignore_errors=True)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.warning(f"Failed to clean up sandbox dir: {e}")
 
 
 @pytest.mark.asyncio
@@ -191,8 +193,8 @@ async def test_local_rce_cpu_timeout():
         try:
             import shutil
             shutil.rmtree(sandbox_dir, ignore_errors=True)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.warning(f"Failed to clean up sandbox dir: {e}")
 
 
 @pytest.mark.asyncio
@@ -239,8 +241,8 @@ async def test_local_rce_memory_exhaustion():
         try:
             import shutil
             shutil.rmtree(sandbox_dir, ignore_errors=True)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.warning(f"Failed to clean up sandbox dir: {e}")
 
 
 @pytest.mark.asyncio
@@ -398,8 +400,8 @@ async def test_path_traversal_non_existent_blocking():
         try:
             import shutil
             shutil.rmtree(sandbox_dir, ignore_errors=True)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.warning(f"Failed to clean up sandbox dir: {e}")
 
 
 

@@ -4,6 +4,8 @@ import unittest
 import asyncio
 import json
 from unittest.mock import AsyncMock, patch
+import logging
+_logger = logging.getLogger("test_webhook_gateway")
 
 # Setup import path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -46,15 +48,15 @@ class TestWebhookGateway(unittest.IsolatedAsyncioTestCase):
         if os.path.exists(HIL_CONFIG_PATH):
             try:
                 os.remove(HIL_CONFIG_PATH)
-            except Exception:
-                pass
+            except Exception as e:
+                _logger.warning(f"Failed to remove HIL config during teardown: {e}")
 
         # Clean up test checkpoints
         from app.core.database import delete_hil_checkpoint
         try:
             delete_hil_checkpoint("webhook_conv_id")
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.warning(f"Failed to delete HIL checkpoint during teardown: {e}")
 
         # Clean up custom graph builders
         from app.main import _graph_builders

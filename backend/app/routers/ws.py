@@ -80,8 +80,8 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                     checkpoint = await async_get_pending_hil_checkpoint(conversation_id)
                     if checkpoint:
                         is_recovered_hil = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to check HIL checkpoint for recovery: {e}")
 
             if is_active_hil or is_recovered_hil:
                 reply_text = text

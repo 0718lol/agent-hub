@@ -6,6 +6,9 @@ import ctypes
 from app.core.subprocess_security import limit_windows_process, safe_terminate_process_tree
 
 
+import logging
+_logger = logging.getLogger("mcp_client")
+
 MCP_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "mcp_config.json")
 
 class MCPClient:
@@ -81,8 +84,8 @@ class MCPClient:
                 print(f"[MCP Server Log: {self.name}] {line.decode('utf-8', errors='replace').strip()}")
         except asyncio.CancelledError:
             pass
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.debug(f"MCP server {self.name} stderr reader stopped: {e}")
 
     async def send_request(self, method: str, params: dict = None) -> dict:
         if not self.is_connected or not self.process:
@@ -143,8 +146,8 @@ class MCPClient:
             try:
                 self.process.terminate()
                 await self.process.wait()
-            except Exception:
-                pass
+            except Exception as e:
+                _logger.warning(f"Failed to terminate MCP server process {self.name}: {e}")
             self.process = None
         for fut in self._request_futures.values():
             if not fut.done():
@@ -389,8 +392,8 @@ class SystemMCPServer:
                                 f.write(f"#!/bin/bash\nulimit -t {cpu_limit_secs}\nulimit -v {memory_kb}\ncd \"$(dirname \"$0\")\"\n{cmd}\n")
                             try:
                                 os.chmod(script_path, 0o755)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                _logger.debug(f"Failed to chmod script (non-critical): {e}")
                             exec_cmd = ["/bin/bash", script_path]
 
                         proc = await asyncio.create_subprocess_exec(
@@ -422,8 +425,8 @@ class SystemMCPServer:
                     if script_path and os.path.exists(script_path):
                         try:
                             os.remove(script_path)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            _logger.debug(f"Failed to remove temp script (non-critical): {e}")
 
                 out_str = stdout.decode("utf-8", errors="replace")
                 err_str = stderr.decode("utf-8", errors="replace")
@@ -465,7 +468,8 @@ class MCPManager:
                     self.config = json.load(f)
             else:
                 self.config = {"servers": {}}
-        except Exception:
+        except Exception as e:
+            _logger.warning(f"Failed to load MCP config, using defaults: {e}")
             self.config = {"servers": {}}
 
     def save_config(self):
@@ -473,8 +477,8 @@ class MCPManager:
         try:
             with open(MCP_CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.warning(f"Failed to save MCP config: {e}")
 
     async def start_all(self):
         self.load_config()
@@ -559,8 +563,8 @@ class MCPManager:
             if sname != "SystemServer":
                 try:
                     await srv.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _logger.warning(f"Failed to stop MCP server {sname}: {e}")
         self.servers = {"SystemServer": self.servers["SystemServer"]}
 
 mcp_manager = MCPManager()

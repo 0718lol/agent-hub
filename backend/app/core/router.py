@@ -3,6 +3,9 @@ import json
 import socket
 from dataclasses import dataclass
 
+import logging
+_logger = logging.getLogger("smart_router")
+
 ROUTER_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "router_config.json")
 
 @dataclass
@@ -32,8 +35,8 @@ class SmartRouter:
                     data = json.load(f)
                     self.auto_routing = data.get("auto_routing", True)
                     self.manual_routes = data.get("manual_routes", {})
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.warning(f"Failed to load router config: {e}")
 
     def save_config(self):
         os.makedirs(os.path.dirname(ROUTER_CONFIG_PATH), exist_ok=True)
@@ -43,8 +46,8 @@ class SmartRouter:
                     "auto_routing": self.auto_routing,
                     "manual_routes": self.manual_routes
                 }, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.warning(f"Failed to save router config: {e}")
 
     def get_route_for_agent(self, agent_id: str) -> ModelRoute:
         from app.core.llm_client import llm_client
@@ -87,8 +90,8 @@ class SmartRouter:
                             models = r.json().get("models", [])
                             if models:
                                 local_model = models[0]["name"]
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _logger.debug(f"Failed to fetch Ollama models for routing, using default: {e}")
                     return ModelRoute(
                         provider="ollama",
                         base_url="http://127.0.0.1:11434/v1",
@@ -106,8 +109,8 @@ class SmartRouter:
                             models = r.json().get("data", [])
                             if models:
                                 local_model = models[0]["id"]
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _logger.debug(f"Failed to fetch LM Studio models for routing, using default: {e}")
                     return ModelRoute(
                         provider="openai",
                         base_url="http://127.0.0.1:1234/v1",

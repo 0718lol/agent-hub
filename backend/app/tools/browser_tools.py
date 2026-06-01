@@ -113,20 +113,20 @@ class BrowserSessionManager:
         for page in list(self.pages.values()):
             try:
                 await page.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to close browser page: {e}")
         self.pages.clear()
         self.elements_cache.clear()
         if self.browser:
             try:
                 await self.browser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to close browser instance: {e}")
         if self.playwright:
             try:
                 await self.playwright.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to stop playwright: {e}")
         self.browser = None
         self.playwright = None
 

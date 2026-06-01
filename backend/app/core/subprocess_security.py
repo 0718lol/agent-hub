@@ -138,8 +138,8 @@ def release_job_handle(pid: int):
         _windows_job_handles.discard(h_job)
         try:
             ctypes.windll.kernel32.CloseHandle(h_job)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to close Windows job handle for pid {pid}: {e}")
 
 
 async def safe_terminate_process_tree(proc: asyncio.subprocess.Process):
@@ -157,8 +157,8 @@ async def safe_terminate_process_tree(proc: asyncio.subprocess.Process):
             )
             try:
                 await asyncio.wait_for(kill_proc.communicate(), timeout=2.0)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"taskkill wait failed (non-critical): {e}")
         else:
             # Unix: kill single process
             proc.kill()
@@ -168,5 +168,5 @@ async def safe_terminate_process_tree(proc: asyncio.subprocess.Process):
         try:
             proc.kill()
             await proc.wait()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Fallback process kill failed for pid {proc.pid}: {e}")

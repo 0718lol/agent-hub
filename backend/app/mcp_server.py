@@ -9,6 +9,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.core.llm_client import llm_client
 from app.tools.judge_tools import QualityJudgeTool, ComplexityJudgeTool, AlignmentJudgeTool
+from app.core.logging_config import get_logger
+logger = get_logger("mcp_server")
 
 async def handle_request(req: dict) -> dict:
     method = req.get("method")
@@ -95,8 +97,8 @@ async def handle_request(req: dict) -> dict:
                             temperature=cfg.get("temperature", 0.5),
                             max_tokens=cfg.get("max_tokens", 8192)
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to load LLM config in MCP server: {e}")
 
         try:
             if tool_name == "agenthub_quality_judge":

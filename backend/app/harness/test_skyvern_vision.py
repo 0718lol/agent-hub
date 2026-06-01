@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from app.tools.browser_tools import browser_session_manager, BrowserActionTool
 from app.tools.registry import execute_tool_call
 from app.core.llm_client import llm_client
+import logging
+_logger = logging.getLogger("test_skyvern_vision")
 
 class MockWebSocketManager:
     def __init__(self):
@@ -75,8 +77,8 @@ class TestSkyvernVisionLocator(unittest.IsolatedAsyncioTestCase):
         if os.path.exists(self.sandbox_dir):
             try:
                 shutil.rmtree(self.sandbox_dir)
-            except Exception:
-                pass
+            except Exception as e:
+                _logger.warning(f"Failed to clean up sandbox dir: {e}")
 
     async def asyncTearDown(self):
         # Clean up browser session

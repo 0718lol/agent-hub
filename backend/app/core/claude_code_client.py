@@ -1,6 +1,10 @@
 import os
+import time
 import asyncio
+import logging
 from typing import AsyncGenerator
+
+logger = logging.getLogger("claude_code_client")
 
 _api_key_lock = asyncio.Lock()
 
@@ -51,7 +55,17 @@ async def claude_code_stream(
     # Trade-off: concurrent requests with different API keys are serialized.
     # Python 3.9+: CancelledError inherits BaseException, so finally always runs.
     if api_key:
-        async with _api_key_lock:
+        lock_start = time.monotonic()
+        try:
+            await asyncio.wait_for(_api_key_lock.acquire(), timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.error("claude_code_client: API key lock timeout (30s), possible deadlock")
+            yield "\n[错误: API Key 锁超时，可能存在死锁]"
+            return
+        try:
+            lock_elapsed = time.monotonic() - lock_start
+            if lock_elapsed > 1.0:
+                logger.warning(f"claude_code_client: lock wait took {lock_elapsed:.2f}s")
             original_key = os.environ.get("ANTHROPIC_API_KEY", "")
             os.environ["ANTHROPIC_API_KEY"] = api_key
             try:
@@ -75,6 +89,8 @@ async def claude_code_stream(
                 yield f"\n[Claude Code 调用出错: {type(e).__name__}: {str(e)[:300]}]"
             finally:
                 os.environ["ANTHROPIC_API_KEY"] = original_key
+        finally:
+            _api_key_lock.release()
     else:
         try:
             async for message in query(prompt=prompt, options=options):

@@ -28,11 +28,75 @@ logger = logging.getLogger("agent_orchestrator")
 # Shared state: stop events per conversation
 _stop_events: dict[str, asyncio.Event] = {}
 
+def parse_create_agent_tag(buffer: str) -> tuple[dict | None, str]:
+    """Parse a [create_agent:{json}] tag from the buffer.
+
+    Returns:
+        (agent_config, remaining_buffer) if a valid tag is found and JSON parses.
+        (None, original_buffer) if no complete valid tag is found.
+
+    Handles:
+        - Normal JSON payloads
+        - JSON with ``}`` characters inside string values
+        - JSON with escaped quotes ``\"``
+        - Incomplete tags (returns None, original buffer)
+        - Nested JSON objects
+        - Empty JSON ``{}``
+    """
+    # 1. Try regex first (simple cases)
+    ca_match = re.search(r'\[create_agent:(.*?)\]', buffer, re.DOTALL)
+    if ca_match:
+        try:
+            agent_config = json.loads(ca_match.group(1))
+            remaining = buffer[:ca_match.start()] + buffer[ca_match.end():]
+            return agent_config, remaining
+        except (json.JSONDecodeError, Exception):
+            pass
+
+    # 2. String-aware bracket-counting parser (handles nested JSON)
+    tag_start = buffer.find('[create_agent:')
+    if tag_start == -1:
+        return None, buffer
+    json_start = tag_start + len('[create_agent:')
+    bracket_depth = 0
+    json_end = -1
+    in_string = False
+    escape_next = False
+    for idx in range(json_start, len(buffer)):
+        ch = buffer[idx]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == '\\':
+            if in_string:
+                escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            bracket_depth += 1
+        elif ch == '}':
+            bracket_depth -= 1
+            if bracket_depth == 0:
+                json_end = idx + 1
+                break
+    if json_end != -1 and json_end < len(buffer) and buffer[json_end] == ']':
+        try:
+            agent_config = json.loads(buffer[json_start:json_end])
+            remaining = buffer[:tag_start] + buffer[json_end + 1:]
+            return agent_config, remaining
+        except (json.JSONDecodeError, Exception):
+            pass
+
+    return None, buffer
+
+
 def get_agents() -> dict:
     """Return the current agent registry dict."""
     return agent_registry.get_agent_dict()
-
-
 # ============================================================
 # Custom Agent helpers
 # ============================================================
@@ -186,7 +250,7 @@ async def stream_agent_reply(
                             if escape_next:
                                 escape_next = False
                                 continue
-                            if ch == '\':
+                            if ch == '\\':
                                 if in_string:
                                     escape_next = True
                                 continue
@@ -769,3 +833,4 @@ async def run_user_message_flow(conversation_id: str, text: str, target_agent: s
             "conversation_id": conversation_id,
             "is_generating": False,
         })
+

@@ -10,6 +10,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from app.core.repo_map import codebase_map_scanner
 from app.tools.registry import execute_tool_call
 from app.core.git_sandbox import git_init
+import logging
+
+_logger = logging.getLogger("test_aider_maps")
 
 class TestAiderMapsAndBlockEditor(unittest.IsolatedAsyncioTestCase):
 
@@ -60,8 +63,8 @@ class TestAiderMapsAndBlockEditor(unittest.IsolatedAsyncioTestCase):
         if os.path.exists(self.sandbox_dir):
             try:
                 shutil.rmtree(self.sandbox_dir)
-            except Exception:
-                pass
+            except Exception as e:
+                _logger.warning(f"Failed to clean up sandbox dir: {e}")
 
     def test_repo_map_scanner(self):
         """1. Verify AST & Regex symbol map constructs correct markdown hierarchy of classes and functions for PY and JS/TS."""

@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+from sqlalchemy import text
 
 from app.core.database import init_db
 from app.core.config import settings
@@ -70,15 +71,15 @@ async def lifespan(app: FastAPI):
     try:
         from app.services.daemon_scheduler import daemon_scheduler
         await daemon_scheduler.stop()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to stop daemon scheduler during shutdown: {e}")
     try:
         from app.tools.browser_tools import browser_session_manager
         from app.core.terminal import stateful_terminal_manager
         await browser_session_manager.close_all()
         await stateful_terminal_manager.close_all()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to close browser/terminal sessions during shutdown: {e}")
 
 
 app = FastAPI(title="AgentHub API", lifespan=lifespan)
@@ -166,7 +167,39 @@ async def root():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "agents": list(AGENTS.keys())}
+    checks = {}
+
+    # Database check
+    try:
+        from app.core.database import engine
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {str(e)[:100]}"
+
+    # Redis check
+    try:
+        from app.core.redis import redis_manager
+        client = redis_manager.get_client()
+        if client:
+            await client.ping()
+            checks["redis"] = "ok"
+        else:
+            checks["redis"] = "not_configured"
+    except Exception as e:
+        checks["redis"] = f"error: {str(e)[:100]}"
+
+    # LLM check
+    from app.core.llm_client import llm_client
+    checks["llm"] = "configured" if llm_client.is_configured() else "not_configured"
+
+    all_ok = all(v == "ok" or v == "configured" or v == "not_configured" for v in checks.values())
+    return {
+        "status": "ok" if all_ok else "degraded",
+        "checks": checks,
+        "agents": list(AGENTS.keys()),
+    }
 
 
 # ---- Deploy simulation endpoint ----

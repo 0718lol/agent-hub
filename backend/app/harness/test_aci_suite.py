@@ -11,6 +11,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 import app.tools  # noqa: F401
 from app.tools.registry import execute_tool_call
 from app.core.terminal import stateful_terminal_manager
+import logging
+
+_logger = logging.getLogger("test_aci_suite")
 
 class TestACISuite(unittest.IsolatedAsyncioTestCase):
 
@@ -41,8 +44,8 @@ class TestACISuite(unittest.IsolatedAsyncioTestCase):
         if os.path.exists(self.sandbox_dir):
             try:
                 shutil.rmtree(self.sandbox_dir)
-            except Exception:
-                pass
+            except Exception as e:
+                _logger.warning(f"Failed to clean up sandbox dir: {e}")
 
     async def asyncTearDown(self):
         # Clean up any stateful terminal processes

@@ -8,6 +8,8 @@ import shlex
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 from app.core.config import settings
+
+_logger = logging.getLogger("sandbox_manager")
 from app.core.subprocess_security import limit_windows_process, safe_terminate_process_tree
 
 logger = logging.getLogger("sandbox_manager")
@@ -273,8 +275,8 @@ class DockerSandbox(BaseSandbox):
                 try:
                     proc.kill()
                     await proc.wait()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _logger.warning(f"Failed to kill timed-out sandbox process: {e}")
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 return {
                     "language": language,
@@ -364,8 +366,8 @@ class E2BSandbox(BaseSandbox):
                 # 3. Terminate microVM to clean up cloud resources
                 try:
                     await client.delete(f"{self.base_url}/instances/{instance_id}", headers=headers, timeout=5.0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _logger.debug(f"Failed to delete E2B microVM instance (non-critical): {e}")
 
                 if run_resp.status_code != 200:
                     return {

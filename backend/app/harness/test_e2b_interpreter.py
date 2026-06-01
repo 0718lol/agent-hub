@@ -7,6 +7,9 @@ import shutil
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from app.tools.registry import execute_tool_call
+import logging
+
+_logger = logging.getLogger("test_e2b_interpreter")
 
 class TestE2BPythonInterpreter(unittest.IsolatedAsyncioTestCase):
 
@@ -20,8 +23,8 @@ class TestE2BPythonInterpreter(unittest.IsolatedAsyncioTestCase):
         if os.path.exists(self.sandbox_dir):
             try:
                 shutil.rmtree(self.sandbox_dir)
-            except Exception:
-                pass
+            except Exception as e:
+                _logger.warning(f"Failed to clean up sandbox dir: {e}")
 
     async def test_standard_output(self):
         """1. Verify standard calculation and clean stdout capture."""

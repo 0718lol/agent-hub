@@ -28,9 +28,8 @@ async def run_git_sandbox_testing():
         try:
             # Git folders can have read-only permissions on files
             shutil.rmtree(sandbox_dir)
-        except Exception:
-            # fallback clean
-            pass
+        except Exception as e:
+            _logger.warning(f"Failed to clean up sandbox dir (retrying): {e}")
             
     os.makedirs(sandbox_dir, exist_ok=True)
 
@@ -113,8 +112,8 @@ async def run_git_sandbox_testing():
     # Cleanup sandbox files
     try:
         shutil.rmtree(sandbox_dir)
-    except Exception:
-        pass
+    except Exception as e:
+        _logger.warning(f"Failed to clean up sandbox: {e}")
 
     print("\n====================================================")
     print("🎉 SUCCESS: Plan E Sandbox Git versioning & self-healing regression suite passed with 100% PASS!")

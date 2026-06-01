@@ -5,6 +5,8 @@ from pydantic import BaseModel
 from app.core.benchmark import run_benchmark, get_current_run, BENCHMARK_CASES
 
 router = APIRouter(tags=["benchmark"])
+from app.core.logging_config import get_logger
+logger = get_logger("benchmark")
 
 # Module-level reference to prevent GC of background benchmark task.
 # KNOWN LIMITATION: With uvicorn --workers > 1, each worker has its own
@@ -43,8 +45,8 @@ def _on_benchmark_done(task: asyncio.Task):
     _active_benchmark_task = None
     try:
         task.result()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Benchmark task failed: {e}")
 
 
 @router.get("/benchmark/status")

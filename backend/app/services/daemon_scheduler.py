@@ -70,8 +70,8 @@ class DaemonScheduler:
             if self._manager:
                 try:
                     self._manager.shutdown()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to shutdown multiprocessing Manager: {e}")
             logger.info("Always-on Offline Daemon Scheduler stopped.")
 
     async def _loop(self):

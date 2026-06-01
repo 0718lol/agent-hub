@@ -9,6 +9,8 @@ import shutil
 from typing import Dict, Any
 from .registry import AgentTool, ToolResult, register_tool
 
+_logger = logging.getLogger("code_interpreter_tools")
+
 logger = logging.getLogger("tool_code_interpreter_tools")
 
 # Regular expression to extract base64-encoded visual plots
@@ -160,8 +162,8 @@ class E2BPythonInterpreterTool(AgentTool):
             if os.path.exists(script_path):
                 try:
                     os.remove(script_path)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _logger.debug(f"Failed to remove temp script file (non-critical): {e}")
 
         # 5. Extract images and sanitize stdout
         stdout_raw = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""

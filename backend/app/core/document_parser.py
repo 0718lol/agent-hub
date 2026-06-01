@@ -2,7 +2,10 @@
 文档解析器 — 支持 txt / md / docx / pdf 纯文本提取
 """
 import os
+import logging
 from typing import Optional
+
+_logger = logging.getLogger("document_parser")
 
 
 class DocumentParser:
@@ -40,9 +43,11 @@ class DocumentParser:
             try:
                 with open(file_path, "r", encoding="gbk") as f:
                     return f.read()
-            except Exception:
+            except Exception as e:
+                _logger.warning(f"Failed to read file with utf-8 and gbk encoding: {e}")
                 return None
-        except Exception:
+        except Exception as e:
+            _logger.warning(f"Failed to read text file: {e}")
             return None
 
     @classmethod
@@ -53,7 +58,8 @@ class DocumentParser:
             doc = docx.Document(file_path)
             paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
             return "\n".join(paragraphs)
-        except Exception:
+        except Exception as e:
+            _logger.warning(f"Failed to parse docx file: {e}")
             return None
 
     @classmethod
@@ -68,7 +74,8 @@ class DocumentParser:
                 if text:
                     pages.append(text.strip())
             return "\n\n".join(pages) if pages else None
-        except Exception:
+        except Exception as e:
+            _logger.warning(f"Failed to parse pdf file: {e}")
             return None
 
     @classmethod

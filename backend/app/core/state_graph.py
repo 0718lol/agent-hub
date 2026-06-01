@@ -261,9 +261,9 @@ class StateGraph:
                     if os.path.exists(hil_config_path):
                         with open(hil_config_path, "r", encoding="utf-8") as f:
                             hil_settings = json.load(f)
-                except Exception:
-                    pass
-                    
+                except Exception as e:
+                    logger.warning(f"Failed to load HIL config, using defaults: {e}")
+
                 human_input_mode = hil_settings.get("human_input_mode", "NEVER")
                 cooldown_steps = hil_settings.get("cooldown_steps", 2)
                 

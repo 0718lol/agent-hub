@@ -5,6 +5,9 @@ import os
 import json
 import httpx
 from app.core.subprocess_security import safe_terminate_process_tree
+import logging
+
+_logger = logging.getLogger("detector")
 from typing import List, Dict
 
 # Path to register prompt layers
@@ -17,7 +20,8 @@ async def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
         writer.close()
         await writer.wait_closed()
         return True
-    except Exception:
+    except Exception as e:
+        _logger.debug(f"Port check failed: {e}")
         return False
 
 async def get_running_processes() -> List[str]:
@@ -37,8 +41,8 @@ async def get_running_processes() -> List[str]:
         if proc.returncode == 0:
             lines = stdout.decode("utf-8", errors="replace").splitlines()
             return [line.strip().lower() for line in lines if line.strip()]
-    except Exception:
-        pass
+    except Exception as e:
+        _logger.debug(f"PowerShell process detection failed, falling back to tasklist: {e}")
 
     # Fallback to tasklist
     try:
@@ -64,8 +68,8 @@ async def get_running_processes() -> List[str]:
                         name = name[:-4]
                     processes.append(name)
             return processes
-    except Exception:
-        pass
+    except Exception as e:
+        _logger.debug(f"Tasklist process detection failed: {e}")
     return []
 
 async def detect_local_ai_tools() -> List[Dict]:
@@ -83,8 +87,8 @@ async def detect_local_ai_tools() -> List[Dict]:
                 if r.status_code == 200:
                     data = r.json()
                     ollama_models = [m["name"] for m in data.get("models", [])]
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.debug(f"Failed to fetch Ollama models: {e}")
 
     detected.append({
         "id": "ollama",
@@ -153,8 +157,8 @@ async def detect_local_ai_tools() -> List[Dict]:
                 if r.status_code == 200:
                     data = r.json()
                     lm_models = [m["id"] for m in data.get("data", [])]
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.debug(f"Failed to fetch LM Studio models: {e}")
 
     detected.append({
         "id": "lm_studio",

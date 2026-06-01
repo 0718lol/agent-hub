@@ -114,8 +114,8 @@ class StatefulTerminalManager:
         for conversation_id, terminal in list(self.sessions.items()):
             try:
                 await terminal.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to stop terminal session during cleanup: {e}")
         self.sessions.clear()
 
 

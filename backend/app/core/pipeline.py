@@ -1,9 +1,11 @@
+import logging
 import json
 import re
 import asyncio
 from typing import Dict, Any, List, Optional
 from app.core.websocket import manager
 
+_logger = logging.getLogger("pipeline")
 class StreamContext:
     """
     Context carrier for a single LLM response stream session.
@@ -156,8 +158,8 @@ class UnifiedTagMiddleware(StreamMiddleware):
                             "conversation_id": context.conversation_id,
                             "agent": agent_config,
                         })
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _logger.debug(f"Failed to process pipeline buffer segment: {e}")
                     output_parts.append(self.buffer[:ca_match.start()])
                     self.buffer = self.buffer[ca_match.end():]
                     continue

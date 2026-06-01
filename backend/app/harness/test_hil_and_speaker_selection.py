@@ -10,6 +10,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from app.core.state_graph import StateGraph
 from app.core.llm_client import llm_client
 from app.tools.judge_tools import UserInteractionJudgeTool, JudgeResult
+import logging
+
+_logger = logging.getLogger("test_hil_and_speaker_selection")
 
 class MockWebSocketManager:
     def __init__(self):
@@ -40,8 +43,8 @@ class TestHILAndSpeakerSelection(unittest.IsolatedAsyncioTestCase):
         if os.path.exists(HIL_CONFIG_PATH):
             try:
                 os.remove(HIL_CONFIG_PATH)
-            except Exception:
-                pass
+            except Exception as e:
+                _logger.warning(f"Failed to remove HIL config during teardown: {e}")
 
     @patch("app.core.llm_client.llm_client.chat_stream")
     async def test_select_next_speaker_routing(self, mock_chat_stream):

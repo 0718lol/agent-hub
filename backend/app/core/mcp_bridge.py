@@ -82,8 +82,8 @@ class MCPServerProcess:
                 logger.warning(f"MCP Server [{self.name}] did not terminate gracefully. Killing it...")
                 try:
                     self.process.kill()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to kill MCP server process [{self.name}]: {e}")
             except Exception as e:
                 logger.debug(f"Exception during terminating MCP Server process [{self.name}]: {e}")
         
