@@ -2,7 +2,7 @@ import json
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Dict, Any
-from app.core.database import get_project_memory, save_memory_item, delete_memory_item
+from app.core.database import async_get_project_memory, async_save_memory_item, async_delete_memory_item
 from app.core.websocket import manager
 
 router = APIRouter(tags=["workflows"])
@@ -50,15 +50,15 @@ async def rollback_sandbox(conversation_id: str, body: dict):
 
 @router.get("/memory/{conversation_id}")
 async def get_memory_api(conversation_id: str):
-    return get_project_memory(conversation_id)
+    return await async_get_project_memory(conversation_id)
 
 
 @router.post("/memory/{conversation_id}")
 async def save_memory_api(conversation_id: str, body: MemoryUpdate):
-    save_memory_item(conversation_id, body.key, body.value, source="user")
+    await async_save_memory_item(conversation_id, body.key, body.value, source="user")
     
     # Broadcast refreshed memory to the client UI immediately
-    fresh_memory = get_project_memory(conversation_id)
+    fresh_memory = await async_get_project_memory(conversation_id)
     await manager.broadcast(conversation_id, {
         "type": "memory_reflected",
         "conversation_id": conversation_id,
@@ -69,10 +69,10 @@ async def save_memory_api(conversation_id: str, body: MemoryUpdate):
 
 @router.delete("/memory/{conversation_id}/{key}")
 async def delete_memory_api(conversation_id: str, key: str):
-    delete_memory_item(conversation_id, key)
+    await async_delete_memory_item(conversation_id, key)
     
     # Broadcast deletion update to client UI
-    fresh_memory = get_project_memory(conversation_id)
+    fresh_memory = await async_get_project_memory(conversation_id)
     await manager.broadcast(conversation_id, {
         "type": "memory_reflected",
         "conversation_id": conversation_id,

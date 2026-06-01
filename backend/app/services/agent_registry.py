@@ -3,7 +3,10 @@ import json
 import logging
 from typing import Dict, Any, List
 from app.agents.base import BaseAgent
-from app.core.database import get_custom_agents, save_custom_agent, delete_custom_agent, create_conversation
+from app.core.database import (
+    get_custom_agents, save_custom_agent, delete_custom_agent, create_conversation,
+    async_save_custom_agent, async_delete_custom_agent, async_create_conversation
+)
 from app.agents.pm import PMAgent
 from app.agents.frontend import FrontendAgent
 from app.agents.backend_agent import BackendAgent
@@ -83,7 +86,7 @@ class AgentRegistry:
             system_prompt = config.get("system_prompt") or f"你是{name}，{role}。请基于这个角色为用户提供专业、有帮助的回答。"
             tools = config.get("tools", [])
 
-            save_custom_agent(aid, name, avatar, role, style, system_prompt, tools)
+            await async_save_custom_agent(aid, name, avatar, role, style, system_prompt, tools)
 
             self._agents[aid] = CustomAgent(
                 agent_id=aid, name=name, avatar=avatar,
@@ -92,11 +95,11 @@ class AgentRegistry:
             self._agents[aid].description = f"自定义角色: {role}"
 
             conv_id = f"conv_{aid}"
-            create_conversation(conv_id, "single", name, avatar, agent_id=aid, preview=role)
+            await async_create_conversation(conv_id, "single", name, avatar, agent_id=aid, preview=role)
 
     async def unregister_custom_agent(self, agent_id: str):
         async with self._lock:
             self._agents.pop(agent_id, None)
-            delete_custom_agent(agent_id)
+            await async_delete_custom_agent(agent_id)
 
 agent_registry = AgentRegistry()

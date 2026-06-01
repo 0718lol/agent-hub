@@ -16,7 +16,7 @@ class RedisManager:
         self._client = None
         self._is_connected = None  # None: untried, True: connected, False: offline
         self._last_probe_time = 0.0
-        self._probe_ttl = 10.0  # Cache connection status for 10 seconds to avoid network latency penalty
+        self._probe_ttl = 5.0  # Cache connection status for 5 seconds to avoid network latency penalty
 
     def get_client(self):
         """Lazy initialization of the aioredis client with timeout protection."""

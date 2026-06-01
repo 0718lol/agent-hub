@@ -178,7 +178,7 @@ export const useChatStore = create((set, get) => ({
   removeConversation: (convId) =>
     set((state) => ({
       conversations: state.conversations.filter((c) => c.id !== convId),
-      activeConversationId: state.activeConversationId === convId ? 'conv_pm' : state.activeConversationId,
+      activeConversationId: state.activeConversationId === convId ? (state.conversations[0]?.id || 'conv_pm') : state.activeConversationId,
     })),
 
   getActiveConversation: () => {

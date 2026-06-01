@@ -957,14 +957,17 @@ async def async_update_cron_task_status(task_id, status):
 async def async_delete_cron_task(task_id):
     return await asyncio.to_thread(delete_cron_task, task_id)
 
-async def async_save_memory(conversation_id, key, value, source="system"):
-    return await asyncio.to_thread(save_memory, conversation_id, key, value, source)
+async def async_save_memory_item(conversation_id, key, value, source="system"):
+    return await asyncio.to_thread(save_memory_item, conversation_id, key, value, source)
 
-async def async_get_memory(conversation_id, key):
-    return await asyncio.to_thread(get_memory, conversation_id, key)
+async def async_get_project_memory(conversation_id):
+    return await asyncio.to_thread(get_project_memory, conversation_id)
 
-async def async_get_all_memory(conversation_id):
-    return await asyncio.to_thread(get_all_memory, conversation_id)
+async def async_delete_memory_item(conversation_id, key):
+    return await asyncio.to_thread(delete_memory_item, conversation_id, key)
+
+async def async_search_messages(query: str, conversation_id: str = None, limit: int = 50):
+    return await asyncio.to_thread(search_messages, query, conversation_id, limit)
 
 async def async_save_event(conversation_id, event_type, data):
     return await asyncio.to_thread(save_event, conversation_id, event_type, data)

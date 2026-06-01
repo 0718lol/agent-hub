@@ -5,7 +5,6 @@ class WSClient {
     this.reconnectTimer = null
     this.pendingMessages = []
     this.currentConvId = null
-    this.intentionalClose = false
     this.reconnectAttempts = 0
     this.maxReconnectDelay = 30000 // Maximum 30 seconds
     this.baseReconnectDelay = 1000 // Start at 1 second
@@ -13,12 +12,12 @@ class WSClient {
 
   connect(conversationId) {
     this.currentConvId = conversationId
-    this.intentionalClose = false
     clearTimeout(this.reconnectTimer)
 
     if (this.ws) {
-      this.intentionalClose = true
-      this.ws.close()
+      const oldWs = this.ws
+      oldWs.onclose = null // Prevents the old socket close from triggering a stale reconnection
+      oldWs.close()
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -30,19 +29,20 @@ class WSClient {
       url += `?token=${encodeURIComponent(token)}`
     }
     
-    this.ws = new WebSocket(url)
+    const ws = new WebSocket(url)
+    this.ws = ws
 
-    this.ws.onopen = () => {
-      // Reset reconnect attempts on successful connection
+    ws.onopen = () => {
+      if (this.ws !== ws) return // Safe guard against stale connections
       this.reconnectAttempts = 0
-      // Flush any messages queued while connecting
       while (this.pendingMessages.length > 0) {
         const msg = this.pendingMessages.shift()
-        this.ws.send(msg)
+        ws.send(msg)
       }
     }
 
-    this.ws.onmessage = (event) => {
+    ws.onmessage = (event) => {
+      if (this.ws !== ws) return // Safe guard against stale connections
       try {
         const data = JSON.parse(event.data)
         this.handlers.forEach((fn) => fn(data))
@@ -51,15 +51,15 @@ class WSClient {
       }
     }
 
-    this.ws.onclose = () => {
-      if (!this.intentionalClose && this.currentConvId === conversationId) {
-        const delay = this._calculateReconnectDelay()
-        this.reconnectAttempts++
-        this.reconnectTimer = setTimeout(() => this.connect(conversationId), delay)
-      }
+    ws.onclose = () => {
+      if (this.ws !== ws) return // Safe guard against stale connections
+      const delay = this._calculateReconnectDelay()
+      this.reconnectAttempts++
+      this.reconnectTimer = setTimeout(() => this.connect(conversationId), delay)
     }
 
-    this.ws.onerror = (err) => {
+    ws.onerror = (err) => {
+      if (this.ws !== ws) return // Safe guard against stale connections
       console.error('WS error:', err)
     }
   }
@@ -93,11 +93,12 @@ class WSClient {
 
   disconnect() {
     clearTimeout(this.reconnectTimer)
-    this.intentionalClose = true
     this.reconnectAttempts = 0
     this.pendingMessages = []
     if (this.ws) {
-      this.ws.close()
+      const oldWs = this.ws
+      oldWs.onclose = null
+      oldWs.close()
       this.ws = null
     }
   }

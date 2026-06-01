@@ -35,7 +35,6 @@ from app.core.database import init_db
 from app.core.config import settings
 from app.core.config_persistence import save_llm_config, load_llm_config
 from app.core.llm_client import llm_client
-import app.tools  # noqa: F401 — trigger auto-registration
 from app.routers import (
     ws as ws_router,
     agents as agents_router,
@@ -62,6 +61,9 @@ from app.services.agent_orchestrator import (
     _stop_events,
 )
 logger = get_logger("main")
+
+# Trigger runtime tool auto-registration
+import app.tools  # noqa: F401
 
 
 # ---- App lifespan ----

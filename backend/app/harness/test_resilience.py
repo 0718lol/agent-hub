@@ -199,6 +199,56 @@ class TestResilienceManager(unittest.IsolatedAsyncioTestCase):
         finally:
             lc.asyncio.sleep = original_sleep
 
+    async def test_multi_tier_failover_chaining(self):
+        """Test multi-tier failover chain: Primary -> Backup Cloud -> Ollama."""
+        from unittest.mock import patch
+        import os
+        from app.core.llm_client import get_backup_provider_config
+        
+        manager = ResilienceManager()
+        client = LLMClient()
+        client.provider = "openai" # Primary
+        
+        # Mock environment variables to have Anthropic fallback configured
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "mock-anthropic-key"}):
+            # Configure backup cloud endpoint mock stream
+            backup_cfg = get_backup_provider_config(client.provider)
+            self.assertIsNotNone(backup_cfg)
+            self.assertEqual(backup_cfg["provider"], "anthropic")
+            self.assertEqual(backup_cfg["api_key"], "mock-anthropic-key")
+
+            # 1. Mock primary stream to throw error (always fails to trigger failover)
+            async def mock_primary_stream(messages, system):
+                if False:
+                    yield None
+                raise LLMAPIError(500, "Primary cloud failed")
+
+            # 2. Mock backup stream to succeed
+            async def mock_backup_stream(backup_config, messages, system, enabled_tools=None):
+                yield "Backup cloud stream content"
+
+            client._stream_fallback_provider = mock_backup_stream
+            manager.breakers["openai"] = CircuitBreaker("openai", threshold=1)
+
+            import app.core.llm_client as lc
+            original_sleep = lc.asyncio.sleep
+            lc.asyncio.sleep = lambda s: original_sleep(0.01)
+
+            try:
+                chunks = []
+                async for chunk in manager.execute_with_retry(client, mock_primary_stream, [], ""):
+                    chunks.append(chunk)
+
+                # Verify that it tripped primary breaker, warned, and completed with backup cloud stream
+                self.assertTrue(any("故障已触发熔断保护" in c for c in chunks))
+                self.assertTrue(any("降级 Failover 路由至备份云服务 anthropic" in c for c in chunks))
+                self.assertTrue(any("Backup cloud stream content" in c for c in chunks))
+                self.assertEqual(manager.get_breaker("openai").state, "OPEN")
+                self.assertEqual(manager.get_breaker("anthropic").state, "CLOSED")
+
+            finally:
+                lc.asyncio.sleep = original_sleep
+
 
 if __name__ == "__main__":
     unittest.main()

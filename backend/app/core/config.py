@@ -21,7 +21,16 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:80",
+        "http://localhost",
+        "http://127.0.0.1",
     ]
+
+    def __init__(self, **values):
+        super().__init__(**values)
+        env_origins = os.environ.get("AGENTHUB_ALLOWED_ORIGINS", "")
+        if env_origins:
+            self.allowed_origins = [o.strip() for o in env_origins.split(",") if o.strip()]
 
     # LLM config
     llm_provider: str = "openai"   # openai | anthropic

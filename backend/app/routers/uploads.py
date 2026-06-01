@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 
 from app.core.file_storage import FileStorageManager, UPLOAD_DIR
 
-router = APIRouter(tags=["uploads"])
+router = APIRouter(prefix="/api", tags=["uploads"])
 
 
 @router.get("/uploads/{file_id}")
@@ -18,7 +18,7 @@ async def get_uploaded_file(file_id: str):
     return FileResponse(path)
 
 
-@router.get("/uploads")
+@router.get("/uploads/list")
 async def list_uploads():
     """列出所有已上传文件（调试用）"""
     try:
@@ -43,13 +43,14 @@ async def list_uploads():
 async def upload_file(file: UploadFile = File(...)):
     """Upload a file to the server."""
     import uuid as _uuid
-    _os_path = os.path.dirname(__file__)
-    _UPLOAD_DIR = os.path.join(_os_path, "..", "..", "data", "uploads")
-    os.makedirs(_UPLOAD_DIR, exist_ok=True)
-    ext = _os.path.splitext(file.filename or "")[1]
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    ext = os.path.splitext(file.filename or "")[1]
     stored_name = f"{_uuid.uuid4().hex}{ext}"
-    file_path = _os.path.join(UPLOAD_DIR, stored_name)
+    file_path = os.path.join(UPLOAD_DIR, stored_name)
     content = await file.read()
+    MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB limit
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail=f"File too large: {len(content)} bytes (max {MAX_UPLOAD_SIZE})")
     with open(file_path, "wb") as f:
         f.write(content)
     is_image = (file.content_type or "").startswith("image/")

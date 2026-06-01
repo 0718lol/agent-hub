@@ -403,7 +403,7 @@ class SystemMCPServer:
                         
                         # 🪟 Windows OS 底层作业对象 (Job Objects) 内存隔离限制挂载
                         if sys.platform == "win32":
-                            limit_windows_process(proc.pid, settings.shell_memory_limit_mb * 1024 * 1024)
+                            limit_windows_process(proc.pid, settings.shell_memory_limit_mb * 1024 * 1024, cpu_limit_secs=int(settings.shell_timeout) + 2)
                     
                     # ⏱️ 跨平台 CPU 挂载硬超时包络拦截
                     from app.core.config import settings

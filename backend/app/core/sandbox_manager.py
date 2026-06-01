@@ -150,11 +150,15 @@ class SubprocessSandbox(BaseSandbox):
             }
 
         finally:
-            try:
-                os.unlink(tmp_file)
-                os.rmdir(tmp_dir)
-            except OSError:
-                pass
+            for _ in range(5):
+                try:
+                    if os.path.exists(tmp_file):
+                        os.unlink(tmp_file)
+                    if os.path.exists(tmp_dir):
+                        os.rmdir(tmp_dir)
+                    break
+                except OSError:
+                    await asyncio.sleep(0.1)
 
 
 class DockerSandbox(BaseSandbox):
@@ -437,10 +441,11 @@ class SandboxManager:
         return await self.subprocess_sandbox.execute(code, language, timeout, stdin_data)
 
 
-# Helper async context to handle httpx client cleanly
-def httpx_client_context():
+# Helper async context manager for httpx client lifecycle
+async def httpx_client_context():
     import httpx
-    return httpx.AsyncClient()
+    async with httpx.AsyncClient() as client:
+        yield client
 
 
 # Global Singleton Manager instance

@@ -30,7 +30,7 @@ _stop_events: dict[str, asyncio.Event] = {}
 
 def get_agents() -> dict:
     """Return the current agent registry dict."""
-    return agent_registry._agents
+    return agent_registry.get_agent_dict()
 
 
 # ============================================================

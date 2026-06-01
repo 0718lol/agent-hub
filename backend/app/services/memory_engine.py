@@ -9,6 +9,7 @@ from app.core.websocket import manager
 logger = logging.getLogger("memory_engine")
 
 _reflection_locks: dict[str, bool] = {}
+_last_reflected_hashes: dict[str, str] = {}
 
 
 async def trigger_background_reflection(conversation_id: str):
@@ -24,13 +25,26 @@ async def trigger_background_reflection(conversation_id: str):
         logger.info("LLM Client is not configured. Skipping background memory reflection.")
         return
 
+    # 1. Fetch conversation messages
+    messages = get_messages(conversation_id, limit=40)
+    if len(messages) < 2:
+        return  # Not enough conversation turns to reflect upon
+
+    # Calculate a unique semantic fingerprint of the conversation history to avoid redundant reflection
+    import hashlib
+    history_fingerprint = hashlib.sha256(
+        "".join(
+            f"{m.get('id', '')}:{m.get('sender', '')}:{m.get('content', {}).get('text', '') if isinstance(m.get('content'), dict) else ''}"
+            for m in messages
+        ).encode("utf-8")
+    ).hexdigest()
+
+    if _last_reflected_hashes.get(conversation_id) == history_fingerprint:
+        logger.info(f"Conversation {conversation_id} history has not changed since last reflection. Skipping redundant execution.")
+        return
+
     _reflection_locks[conversation_id] = True
     try:
-        # 1. Fetch conversation messages
-        messages = get_messages(conversation_id, limit=40)
-        if len(messages) < 2:
-            return  # Not enough conversation turns to reflect upon
-
         history_str = ""
         for msg in messages:
             sender = msg.get("sender", "user")
@@ -103,6 +117,9 @@ async def trigger_background_reflection(conversation_id: str):
             if key in updated_data and updated_data[key]:
                 save_memory_item(conversation_id, key, str(updated_data[key]), source="system")
                 keys_saved.append(key)
+
+        # Successfully saved the memory, register the history fingerprint to prevent redundant reflections
+        _last_reflected_hashes[conversation_id] = history_fingerprint
 
         # 7. Broadcast reflected memory update
         fresh_memory = get_project_memory(conversation_id)

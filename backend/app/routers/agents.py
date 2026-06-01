@@ -1,7 +1,7 @@
 import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.core.database import get_custom_agents
+from app.core.database import async_get_custom_agents
 from app.services.agent_registry import agent_registry
 
 router = APIRouter(tags=["agents"])
@@ -29,7 +29,7 @@ class CustomAgentCreate(BaseModel):
 @router.get("/agents")
 async def list_agents():
     all_agents = list(AGENTS_META)
-    for ca in get_custom_agents():
+    for ca in await async_get_custom_agents():
         # Safeguard tools parsing if returned as JSON string
         ca_tools = ca.get("tools", [])
         import json
@@ -56,7 +56,7 @@ async def get_agent(agent_id: str):
     for agent in AGENTS_META:
         if agent["agent_id"] == agent_id:
             return agent
-    for ca in get_custom_agents():
+    for ca in await async_get_custom_agents():
         if ca["agent_id"] == agent_id:
             ca_tools = ca.get("tools", [])
             import json
@@ -72,7 +72,7 @@ async def get_agent(agent_id: str):
 
 @router.get("/agents/custom")
 async def list_custom_agents():
-    return get_custom_agents()
+    return await async_get_custom_agents()
 
 
 @router.post("/agents/custom")

@@ -27,6 +27,9 @@ from contextvars import ContextVar
 # Context variable to store request_id per async task
 _request_id_ctx: ContextVar[str] = ContextVar("request_id", default="-")
 
+# Cache structlog availability at module level (avoid per-request try/import)
+_STRUCTLOG_AVAILABLE: bool | None = None
+
 
 def get_request_id() -> str:
     """Get the current request ID from context."""
@@ -41,12 +44,16 @@ def set_request_id(request_id: str = None) -> str:
 
 
 def _is_structlog_available() -> bool:
-    """Check if structlog is installed."""
+    """Check if structlog is installed (cached result)."""
+    global _STRUCTLOG_AVAILABLE
+    if _STRUCTLOG_AVAILABLE is not None:
+        return _STRUCTLOG_AVAILABLE
     try:
         import structlog  # noqa: F401
-        return True
+        _STRUCTLOG_AVAILABLE = True
     except ImportError:
-        return False
+        _STRUCTLOG_AVAILABLE = False
+    return _STRUCTLOG_AVAILABLE
 
 
 def setup_logging():

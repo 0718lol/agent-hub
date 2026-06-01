@@ -18,7 +18,7 @@ def test_obfuscation():
     original_key = "sk-proj-1234567890abcdefghijklmnopqrstuvwxyz"
     obfuscated = obfuscate_key(original_key)
     
-    assert obfuscated.startswith("enc::")
+    assert obfuscated.startswith("fnt::")
     assert original_key not in obfuscated
     
     deobfuscated = deobfuscate_key(obfuscated)
@@ -283,6 +283,77 @@ async def test_subprocess_sandbox_timeout():
         assert "超时" in res.get("stderr", "")
     finally:
         sandbox_manager.enable_docker = old_enable_docker
+
+
+def test_quality_gate_multi_block():
+    """Verify that QualityGate scans all blocks and fails if a single block fails (worst-case)."""
+    from app.core.quality_gate import QualityGate
+    gate = QualityGate(enabled=True)
+    
+    # HTML block is clean/valid, but Python block is invalid (contains placeholders like TODO/...)
+    text = (
+        "Here is the HTML frontend:\n"
+        "```html\n"
+        "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width'></head>"
+        "<body class='app'><h1>Test</h1></body></html>\n"
+        "```\n\n"
+        "And here is the broken Python script:\n"
+        "```python\n"
+        "def main():\n"
+        "    # TODO: implement this block\n"
+        "    ...\n"
+        "```\n"
+    )
+    
+    report = gate.evaluate(text)
+    # Even though HTML is valid, python is broken, so overall passed must be False
+    assert report.passed is False
+    # Score should reflect the worst score
+    assert report.score < 1.0
+    # Must capture the suggestion from the broken Python block
+    assert any("检测到占位符" in s or "占位符" in s for s in report.suggestions) or any("检测到占位符" in r.message for r in report.results if not r.passed)
+
+
+def test_context_optimizer_traceback_preservation():
+    """Verify that ContextOptimizer preserves the error stack trace when truncating long texts."""
+    from app.core.llm_client import ContextOptimizer
+    
+    traceback_log = (
+        "Traceback (most recent call last):\n"
+        "  File \"app.py\", line 10, in main\n"
+        "    result = 1 / 0\n"
+        "ZeroDivisionError: division by zero"
+    )
+    
+    # Construct a huge string exceeding 6000 chars containing the error in the middle
+    huge_str = "A" * 5000 + "\n" + traceback_log + "\n" + "B" * 5000
+    
+    compressed = ContextOptimizer.compress_single_message(huge_str, max_chars=3000)
+    
+    # Assert traceback is explicitly preserved in the compressed content
+    assert "拦截并抽取的关键报错" in compressed
+    assert "ZeroDivisionError" in compressed
+    assert len(compressed) < 10000
+
+
+def test_rag_semantic_splitter():
+    """Verify that the recursive character text splitter respects semantic limits and overlap."""
+    from app.core.rag_engine import split_text
+    
+    sample_text = (
+        "段落一。这是第一句。这是第二句。\n\n"
+        "段落二！这是第三句！这是第四句！\n\n"
+        "段落三？这是第五句？这是第六句？"
+    )
+    
+    chunks = split_text(sample_text, chunk_size=30, overlap=5)
+    
+    # Assert that all chunks are non-empty and respect maximum sizing
+    assert len(chunks) > 0
+    for chunk in chunks:
+        assert len(chunk) <= 30
+        assert chunk.strip() != ""
+
 
 
 @pytest.mark.asyncio

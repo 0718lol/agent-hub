@@ -1,23 +1,25 @@
 """Conversation and message CRUD endpoints."""
 from fastapi import APIRouter, Query
-from app.core.database import get_messages, get_conversations, clear_messages, search_messages
+from app.core.database import (
+    async_get_messages, async_get_conversations, async_clear_messages, async_search_messages
+)
 
 router = APIRouter(tags=["conversations"])
 
 
 @router.get("/conversations")
 async def list_conversations():
-    return get_conversations()
+    return await async_get_conversations()
 
 
 @router.get("/conversations/{conversation_id}/messages")
 async def list_messages(conversation_id: str, limit: int = 100):
-    return get_messages(conversation_id, limit)
+    return await async_get_messages(conversation_id, limit)
 
 
 @router.delete("/conversations/{conversation_id}/messages")
 async def delete_messages(conversation_id: str):
-    clear_messages(conversation_id)
+    await async_clear_messages(conversation_id)
     return {"status": "cleared"}
 
 
@@ -28,4 +30,4 @@ async def search(
     limit: int = Query(50, ge=1, le=200, description="Maximum results"),
 ):
     """Full-text search across message content using SQLite FTS5."""
-    return search_messages(q, conversation_id=conversation_id, limit=limit)
+    return await async_search_messages(q, conversation_id=conversation_id, limit=limit)

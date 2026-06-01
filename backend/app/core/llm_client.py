@@ -77,20 +77,42 @@ class ContextOptimizer:
                 folded_code = "\n".join(folded_lines)
                 content = content.replace(code, folded_code)
 
-        # Step 3: Default Head/Tail truncation if the total characters still exceed max_chars
+        # Step 3: Default Head/Tail truncation preserving critical tracebacks/exceptions/errors
         if len(content) <= max_chars:
             return content
 
-        keep = max_chars // 4
+        # Search for Traceback or Error block
+        error_pattern = r'(Traceback\s*\(most\s+recent\s+call\s+last\):.*|Exception:.*|Error:.*|RuntimeError:.*|TypeError:.*|ValueError:.*|SyntaxError:.*|NameError:.*|KeyError:.*|AttributeError:.*)'
+        error_match = re.search(error_pattern, content, re.IGNORECASE | re.DOTALL)
+        error_block = ""
+        if error_match:
+            # Extract up to 1200 characters from the error start
+            error_block = error_match.group(0)[:1200]
+
+        keep = max_chars // 6
         head = content[:keep * 2]
         tail = content[-keep * 2:]
-        num_pruned = len(content) - 4 * keep
 
-        return (
-            f"{head}\n\n"
-            f"[... ⚠️ 此处已自动压缩中段 {num_pruned} 字符以节省 Token，防止上下文溢出 ...]\n\n"
-            f"{tail}"
-        )
+        if error_block:
+            # We construct a message structure with the error block injected
+            num_pruned = len(content) - len(head) - len(tail) - len(error_block)
+            return (
+                f"{head}\n\n"
+                f"[... ⚠️ 此处已自动压缩中段 {num_pruned} 字符以节省 Token ...]\n\n"
+                f"【拦截并抽取的关键报错/堆栈片段】:\n{error_block}\n\n"
+                f"{tail}"
+            )
+        else:
+            # Fallback to standard head/tail truncation
+            keep_standard = max_chars // 4
+            head_std = content[:keep_standard * 2]
+            tail_std = content[-keep_standard * 2:]
+            num_pruned = len(content) - 4 * keep_standard
+            return (
+                f"{head_std}\n\n"
+                f"[... ⚠️ 此处已自动压缩中段 {num_pruned} 字符以节省 Token，防止上下文溢出 ...]\n\n"
+                f"{tail_std}"
+            )
 
     @classmethod
     def optimize_messages(cls, messages: list[dict], max_total_chars: int = 30000) -> list[dict]:
@@ -231,6 +253,37 @@ class CircuitBreaker:
 
 
 
+def get_backup_provider_config(primary_provider: str) -> dict | None:
+    """Scans settings or environment variables for fallback cloud credentials."""
+    import os
+    from app.core.config import settings
+    
+    # Define potential backups
+    if primary_provider in ("openai", "opencode"):
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if anthropic_key:
+            return {
+                "provider": "anthropic",
+                "api_key": anthropic_key,
+                "base_url": "https://api.anthropic.com/v1",
+                "model": "claude-3-haiku-20240307"
+            }
+    elif primary_provider in ("anthropic", "claude_code"):
+        openai_key = os.environ.get("OPENAI_API_KEY", "")
+        if not openai_key and settings.llm_provider == "openai" and settings.llm_api_key:
+            from app.core.config import deobfuscate_key
+            openai_key = deobfuscate_key(settings.llm_api_key)
+            
+        if openai_key:
+            return {
+                "provider": "openai",
+                "api_key": openai_key,
+                "base_url": settings.llm_base_url or "https://api.openai.com/v1",
+                "model": "gpt-4o-mini"
+            }
+    return None
+
+
 class ResilienceManager:
     """Handles automatic retries, backoff, and circuit breaking/failover for LLM calls."""
 
@@ -241,6 +294,53 @@ class ResilienceManager:
         if provider not in self.breakers:
             self.breakers[provider] = CircuitBreaker(provider)
         return self.breakers[provider]
+
+    async def execute_failover(self, client_instance, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+        provider = client_instance.provider
+        backup_cfg = get_backup_provider_config(provider)
+        
+        # Tier 2: Backup Cloud Model (e.g. OpenAI GPT-4o-mini if Claude fails)
+        if backup_cfg:
+            backup_provider = backup_cfg["provider"]
+            backup_breaker = self.get_breaker(backup_provider)
+            if await backup_breaker.allow_request():
+                failover_notice = f"⚠️ [主模型服务连接已熔断，已自动降级 Failover 路由至备份云服务 {backup_provider} ({backup_cfg['model']})]\n\n"
+                yield failover_notice
+                
+                backup_success = False
+                try:
+                    output_chunks = []
+                    async for chunk in client_instance._stream_fallback_provider(backup_cfg, messages, system, enabled_tools):
+                        if not chunk.startswith("\n[云端备份提供商"):
+                            backup_success = True
+                        output_chunks.append(chunk)
+                        yield chunk
+                    
+                    if backup_success:
+                        await backup_breaker.record_success()
+                    else:
+                        await backup_breaker.record_failure()
+                except Exception as e:
+                    await backup_breaker.record_failure()
+                    yield f"\n[云端备份提供商 {backup_provider} 降级执行异常: {type(e).__name__}: {str(e)[:150]}]"
+                
+                if backup_success:
+                    return
+        
+        # Tier 3: Local Ollama Model
+        if provider != "ollama" and client_instance.is_ollama_active():
+            failover_notice = "⚠️ [主模型与备份云服务均已熔断/未配置，已自动降级至本地 Ollama 运行...]\n\n"
+            yield failover_notice
+            
+            try:
+                ollama_gen = client_instance._openai_stream_fallback_ollama(messages, system, enabled_tools)
+            except TypeError:
+                ollama_gen = client_instance._openai_stream_fallback_ollama(messages, system)
+            
+            async for chunk in ollama_gen:
+                yield chunk
+        else:
+            yield "❌ [所有 LLM 服务（主模型、备份云服务、本地 Ollama）均不可用或已被熔断。请在冷却期过后重试。]"
 
     async def execute_with_retry(self, client_instance, stream_func, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
         provider = client_instance.provider
@@ -262,34 +362,18 @@ class ResilienceManager:
 
         # 1. Check Circuit Breaker
         if not await breaker.allow_request():
-            if provider != "ollama" and client_instance.is_ollama_active():
-                failover_notice = "⚠️ [主模型服务连接已熔断，已自动降级 Failover 路由至本地 Ollama，当前状态: OPEN]\n\n"
-                output_chunks.append(failover_notice)
-                yield failover_notice
-                
-                try:
-                    ollama_gen = client_instance._openai_stream_fallback_ollama(messages, system, enabled_tools)
-                except TypeError:
-                    ollama_gen = client_instance._openai_stream_fallback_ollama(messages, system)
-                
-                async for chunk in ollama_gen:
-                    output_chunks.append(chunk)
-                    yield chunk
-                
-                if span:
-                    generated_text = "".join(output_chunks)
-                    span.finish(
-                        output_data=generated_text,
-                        status="success",
-                        metadata={"model": "qwen2.5-coder", "provider": "ollama", "failover": True, "tokens_approx": len(generated_text) // 3}
-                    )
-                return
-            else:
-                err_notice = f"❌ [LLM 服务已熔断 (OPEN)。请在 30 秒冷却期后再试，或切换本地 Ollama 模型。]"
-                yield err_notice
-                if span:
-                    span.finish(output_data=err_notice, status="error", metadata={"error": "CircuitBreakerOpenException"})
-                return
+            async for chunk in self.execute_failover(client_instance, messages, system, enabled_tools):
+                output_chunks.append(chunk)
+                yield chunk
+            
+            if span:
+                generated_text = "".join(output_chunks)
+                span.finish(
+                    output_data=generated_text,
+                    status="success",
+                    metadata={"failover": True, "tokens_approx": len(generated_text) // 3}
+                )
+            return
 
         # 2. Execute call with Exponential Backoff
         max_retries = 3
@@ -359,20 +443,10 @@ class ResilienceManager:
                     output_chunks.append(err_msg)
                     yield err_msg
 
-                    if provider != "ollama" and client_instance.is_ollama_active():
-                        failover_msg = "\n\n⚠️ [主模型重试失败已触发熔断，自动降级至本地 Ollama 运行...]\n\n"
-                        output_chunks.append(failover_msg)
-                        yield failover_msg
-                        
-                        try:
-                            ollama_gen = client_instance._openai_stream_fallback_ollama(messages, system, enabled_tools)
-                        except TypeError:
-                            ollama_gen = client_instance._openai_stream_fallback_ollama(messages, system)
-                        
-                        async for chunk in ollama_gen:
-                            output_chunks.append(chunk)
-                            yield chunk
-                    
+                    async for chunk in self.execute_failover(client_instance, messages, system, enabled_tools):
+                        output_chunks.append(chunk)
+                        yield chunk
+
                     if span:
                         generated_text = "".join(output_chunks)
                         span.finish(
@@ -447,6 +521,37 @@ class LLMClient:
             self.base_url = original_base_url
             self.model = original_model
             self.api_key = original_api_key
+
+    async def _stream_fallback_provider(self, backup_config: dict, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+        original_provider = self.provider
+        original_base_url = self.base_url
+        original_model = self.model
+        original_api_key = self.api_key
+        original_temp = self.temperature
+        original_tokens = self.max_tokens
+
+        self.provider = backup_config["provider"]
+        self.base_url = backup_config["base_url"]
+        self.model = backup_config["model"]
+        self.api_key = backup_config["api_key"]
+
+        try:
+            # Dynamically route stream based on fallback provider
+            if self.provider == "anthropic":
+                async for chunk in self._anthropic_stream(messages, system, enabled_tools):
+                    yield chunk
+            else:
+                async for chunk in self._openai_stream(messages, system, enabled_tools):
+                    yield chunk
+        except Exception as e:
+            yield f"\n[云端备份提供商 {self.provider} 降级调用失败: {type(e).__name__}: {str(e)[:150]}]"
+        finally:
+            self.provider = original_provider
+            self.base_url = original_base_url
+            self.model = original_model
+            self.api_key = original_api_key
+            self.temperature = original_temp
+            self.max_tokens = original_tokens
 
     async def chat_stream(self, messages: list[dict], system: str = "", enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
         optimized_messages = ContextOptimizer.optimize_messages(messages)

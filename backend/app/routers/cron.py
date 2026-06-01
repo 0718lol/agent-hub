@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
 from app.core.database import (
-    get_cron_tasks, save_cron_task, update_cron_task_status, delete_cron_task
+    async_get_cron_tasks, async_save_cron_task, async_update_cron_task_status, async_delete_cron_task
 )
 
 router = APIRouter(tags=["cron"])
@@ -19,13 +19,13 @@ class CronTaskCreate(BaseModel):
 
 @router.get("/cron")
 async def list_cron_tasks(conversation_id: Optional[str] = None):
-    return get_cron_tasks(conversation_id)
+    return await async_get_cron_tasks(conversation_id)
 
 
 @router.post("/cron")
 async def create_cron_task_endpoint(body: CronTaskCreate):
     task_id = f"cron_{uuid.uuid4().hex[:8]}"
-    save_cron_task(
+    await async_save_cron_task(
         task_id=task_id,
         conversation_id=body.conversation_id,
         agent_id=body.agent_id,
@@ -40,19 +40,19 @@ async def create_cron_task_endpoint(body: CronTaskCreate):
 async def toggle_cron_task(task_id: str, status: str):
     if status not in ("active", "paused"):
         return {"status": "error", "message": "无效的任务状态"}
-    update_cron_task_status(task_id, status)
+    await async_update_cron_task_status(task_id, status)
     return {"status": "ok", "message": f"任务状态已更新为 {status}"}
 
 
 @router.post("/cron/{task_id}/run")
 async def run_cron_task_now(task_id: str):
-    tasks = get_cron_tasks()
+    tasks = await async_get_cron_tasks()
     task = next((t for t in tasks if t["id"] == task_id), None)
     if not task:
         return {"status": "error", "message": "自治任务未找到"}
 
     from app.services.daemon_scheduler import daemon_scheduler
-    from app.main import create_tracked_task
+    from app.routers.ws import create_tracked_task
     
     # 采用 Wac 强引用控制器进行 Task 运行，消除 GC 夭折隐患
     create_tracked_task(
@@ -64,5 +64,5 @@ async def run_cron_task_now(task_id: str):
 
 @router.delete("/cron/{task_id}")
 async def delete_cron_task_endpoint(task_id: str):
-    delete_cron_task(task_id)
+    await async_delete_cron_task(task_id)
     return {"status": "ok", "message": "离线自治任务已成功删除！"}

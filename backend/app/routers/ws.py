@@ -3,7 +3,8 @@ import json
 import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.websocket import manager
-from app.core.database import save_message, get_messages
+from app.core.database import async_save_message, async_get_pending_hil_checkpoint
+from app.tools.judge_tools import _pending_interactions
 from app.core.config import settings
 from app.core.logging_config import get_logger
 from app.routers.harness_handler import handle_verdict
@@ -62,15 +63,13 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             target_agent = content.get("target_agent")
 
             # Intercept user interaction response if there's a pending interactive judge wait
-            from app.tools.judge_tools import _pending_interactions
             is_active_hil = conversation_id in _pending_interactions
             
             # Recovery path check
             is_recovered_hil = False
             if not is_active_hil:
-                from app.core.database import get_pending_hil_checkpoint
                 try:
-                    checkpoint = get_pending_hil_checkpoint(conversation_id)
+                    checkpoint = await async_get_pending_hil_checkpoint(conversation_id)
                     if checkpoint:
                         is_recovered_hil = True
                 except Exception:
@@ -90,7 +89,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                     create_tracked_task(resume_graph_from_checkpoint(conversation_id, reply_text), name=f"resume_graph_{conversation_id}")
                     
                 # We still want to save and broadcast this message to display it in the Chat UI as a user reply
-                save_message(conversation_id, sender, content, streaming=False)
+                await async_save_message(conversation_id, sender, content, streaming=False)
                 await manager.broadcast(conversation_id, {
                     "type": "message",
                     "conversation_id": conversation_id,
@@ -124,7 +123,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 await handle_verdict(conversation_id, msg, manager)
                 continue
 
-            save_message(conversation_id, sender, content, streaming=False)
+            await async_save_message(conversation_id, sender, content, streaming=False)
 
             await manager.broadcast(conversation_id, {
                 "type": "message",
@@ -140,9 +139,10 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             if prev_event and not prev_event.is_set():
                 prev_event.set()
 
-            if target_agent and target_agent in get_agents():
+            current_agents = get_agents()
+            if target_agent and target_agent in current_agents:
                 task = asyncio.create_task(
-                    run_target_agent_flow(conversation_id, get_agents()[target_agent], text)
+                    run_target_agent_flow(conversation_id, current_agents[target_agent], text)
                 )
                 bg_tasks.add(task)
                 task.add_done_callback(bg_tasks.discard)

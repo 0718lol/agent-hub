@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.core.database import get_due_cron_tasks, update_cron_task_run_time, update_cron_task_status
 
 logger = logging.getLogger("daemon_scheduler")
@@ -77,7 +77,7 @@ class DaemonScheduler:
     async def _loop(self):
         while self._running:
             try:
-                now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
                 due_tasks = get_due_cron_tasks(now_str)
 
                 for task in due_tasks:
@@ -199,7 +199,7 @@ class DaemonScheduler:
             logger.error(f"Error running background cron job {task_id}: {e}")
 
         # 【特性：自愈型指数退避重试调度机】
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         last_run_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
         if execution_success:

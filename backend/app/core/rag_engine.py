@@ -42,47 +42,75 @@ def _get_or_create_collection(collection_name: str = "knowledge_base"):
 
 def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
     """
-    将长文本切分为固定大小的块，相邻块有重叠。
-    按段落边界优先切分，段落内按句号/换行切分。
+    语义感知型递归文本分块策略：按段落、行、中英文标点、词句边界逐级递归切分，
+    保证每个分块的内容最大程度保留语义连贯性，并且其大小不超过 chunk_size 字符。
     """
     if not text or not text.strip():
         return []
 
-    # 先按段落分割
-    paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
+    # 递归分割符列表，从最高优先级（段落）到最低优先级（字符）
+    separators = ["\n\n", "\n", "。", "！", "？", ".", "!", "?", "；", ";", "，", ",", " ", ""]
 
-    chunks = []
-    current_chunk = ""
-
-    for para in paragraphs:
-        # 如果当前段落本身就超过 chunk_size，需要进一步切分
-        if len(para) > chunk_size:
-            # 先把已积累的 chunk 保存
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-                current_chunk = ""
-            # 对长段落做滑窗切分
+    def _recursive_split(content: str, seps: list[str]) -> list[str]:
+        if len(content) <= chunk_size:
+            return [content]
+        if not seps:
+            # 已经没有分割符可用，强行硬截断
+            chunks = []
             start = 0
-            while start < len(para):
-                end = min(start + chunk_size, len(para))
-                chunks.append(para[start:end].strip())
+            while start < len(content):
+                end = min(start + chunk_size, len(content))
+                chunks.append(content[start:end])
                 start += chunk_size - overlap
-        elif len(current_chunk) + len(para) + 1 > chunk_size:
-            # 当前积累的内容加上新段落会超出限制，先保存
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-            # 用重叠部分开始新块
-            if overlap > 0 and current_chunk:
-                current_chunk = current_chunk[-overlap:] + "\n" + para
-            else:
-                current_chunk = para
+                if start >= len(content) or chunk_size <= overlap:
+                    break
+            return chunks
+
+        sep = seps[0]
+        # 使用当前分割符将文本拆分成片段
+        if sep == "":
+            splits = list(content)
         else:
-            current_chunk = (current_chunk + "\n" + para) if current_chunk else para
+            splits = content.split(sep)
 
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
+        # 重组片段，使其尽量接近 chunk_size，同时保证相邻块有 overlap
+        chunks = []
+        current_part = ""
+        
+        for part in splits:
+            if not part:
+                continue
+            
+            # 如果加上这个片段和分隔符仍然不超过 chunk_size，则累加
+            potential = current_part + (sep if current_part else "") + part
+            if len(potential) <= chunk_size:
+                current_part = potential
+            else:
+                # 先把当前已有的累加块存入结果
+                if current_part:
+                    chunks.append(current_part.strip())
+                
+                # 如果这个新片段本身就超过 chunk_size，递归下级分割符进行子分块
+                if len(part) > chunk_size:
+                    sub_chunks = _recursive_split(part, seps[1:])
+                    # 子分块重组
+                    for sc in sub_chunks:
+                        chunks.append(sc.strip())
+                    current_part = ""
+                else:
+                    # 用重叠部分开始新块
+                    if overlap > 0 and current_part:
+                        overlap_prefix = current_part[-overlap:]
+                        current_part = overlap_prefix + (sep if overlap_prefix else "") + part
+                    else:
+                        current_part = part
+                        
+        if current_part.strip():
+            chunks.append(current_part.strip())
+            
+        return [c for c in chunks if c]
 
-    return [c for c in chunks if c]
+    return _recursive_split(text, separators)
 
 
 class RAGEngine:
