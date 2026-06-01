@@ -1,4 +1,4 @@
-"""Benchmark execution and status endpoints."""
+﻿"""Benchmark execution and status endpoints."""
 import asyncio
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -26,6 +26,8 @@ async def list_benchmark_cases():
 async def start_benchmark(req: BenchmarkRequest):
     import asyncio
     global _active_benchmark_task
+    if _active_benchmark_task and not _active_benchmark_task.done():
+        return {"status": "error", "message": "A benchmark is already running."}
     case_ids = req.case_ids or [c["id"] for c in BENCHMARK_CASES]
     _active_benchmark_task = asyncio.create_task(run_benchmark(case_ids))
     _active_benchmark_task.add_done_callback(_on_benchmark_done)

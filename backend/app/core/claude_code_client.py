@@ -1,4 +1,4 @@
-import os
+﻿import os
 import asyncio
 from typing import AsyncGenerator
 
@@ -30,9 +30,10 @@ async def claude_code_stream(
         return
 
     # Set API key via environment variable with lock to prevent multi-user race
-    original_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    original_key = ""
     if api_key:
         async with _api_key_lock:
+            original_key = os.environ.get("ANTHROPIC_API_KEY", "")
             os.environ["ANTHROPIC_API_KEY"] = api_key
 
     # Build prompt: use the last user message as the primary prompt

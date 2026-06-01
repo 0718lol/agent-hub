@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import logging
 import os
@@ -243,6 +243,8 @@ class BuiltinMCPServer:
             # Pick workspace sandbox directory safely
             workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
             if conversation_id:
+                if ".." in conversation_id or "/" in conversation_id or "\\" in conversation_id:
+                    raise ValueError("Invalid conversation_id")
                 sandbox_dir = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")), "agenthub_export", conversation_id)
                 if os.path.exists(sandbox_dir):
                     workspace_dir = sandbox_dir

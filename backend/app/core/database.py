@@ -1,4 +1,4 @@
-import sqlite3
+﻿import sqlite3
 import json
 import os
 import threading
@@ -6,6 +6,13 @@ import functools
 from datetime import datetime, timezone
 from typing import Optional, List, Any
 from sqlmodel import SQLModel, Field, Session, select, create_engine, UniqueConstraint
+
+def _safe_json_loads(s):
+    try:
+        return json.loads(s)
+    except (json.JSONDecodeError, TypeError):
+        return {"text": s}
+
 
 # Global reentrant write lock to serialize all SQLite database writes
 _db_write_lock = threading.RLock()
@@ -361,7 +368,7 @@ def search_messages(query: str, conversation_id: str = None, limit: int = 50) ->
                     "id": row[0],
                     "conversation_id": row[1],
                     "sender": row[2],
-                    "content": json.loads(row[3]),
+                    "content": _safe_json_loads(row[3]),
                     "streaming": bool(row[4]),
                     "timestamp": row[5],
                     "rank": row[6],
@@ -383,7 +390,7 @@ def search_messages(query: str, conversation_id: str = None, limit: int = 50) ->
                     "id": msg.id,
                     "conversation_id": msg.conversation_id,
                     "sender": msg.sender,
-                    "content": json.loads(msg.content),
+                    "content": _safe_json_loads(msg.content),
                     "streaming": bool(msg.streaming),
                     "timestamp": msg.created_at,
                 }

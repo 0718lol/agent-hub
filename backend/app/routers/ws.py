@@ -1,4 +1,4 @@
-"""WebSocket endpoint for real-time agent communication."""
+﻿"""WebSocket endpoint for real-time agent communication."""
 import json
 import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -89,8 +89,10 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                     reply_text = reply_text.replace("[ask_user_reply]", "").strip()
                 
                 if is_active_hil:
-                    fut = _pending_interactions[conversation_id]
-                    if not fut.done():
+                    fut = _pending_interactions.get(conversation_id)
+                    if fut is None:
+                        pass  # Entry removed during await, fall through
+                    elif not fut.done():
                         try:
                             fut.set_result(reply_text)
                         except asyncio.InvalidStateError:

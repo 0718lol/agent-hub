@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import shutil
 import socket
 import os
@@ -28,7 +28,12 @@ async def get_running_processes() -> List[str]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, _ = await proc.communicate()
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            raise
         if proc.returncode == 0:
             lines = stdout.decode("utf-8", errors="replace").splitlines()
             return [line.strip().lower() for line in lines if line.strip()]
@@ -42,7 +47,12 @@ async def get_running_processes() -> List[str]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, _ = await proc.communicate()
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            raise
         if proc.returncode == 0:
             lines = stdout.decode("utf-8", errors="replace").splitlines()
             for line in lines:

@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from app.core.database import get_due_cron_tasks, update_cron_task_run_time, update_cron_task_status
@@ -84,17 +84,21 @@ class DaemonScheduler:
                 for task in due_tasks:
                     # Guard against double firing by setting running status before process spawn
                     await loop.run_in_executor(None, update_cron_task_status, task["id"], "running")
-                    
-                    import multiprocessing
-                    p = multiprocessing.Process(
-                        target=_run_task_process_entry,
-                        args=(task, self._retry_counts)
-                    )
-                    p.start()
-                    # Track child process for reaping to prevent zombie processes
-                    if not hasattr(self, '_child_processes'):
-                        self._child_processes = []
-                    self._child_processes.append(p)
+
+                    if self._manager is None:
+                        # Fallback: run in-thread when multiprocessing Manager failed
+                        asyncio.create_task(self._run_task(task))
+                    else:
+                        import multiprocessing
+                        p = multiprocessing.Process(
+                            target=_run_task_process_entry,
+                            args=(task, self._retry_counts)
+                        )
+                        p.start()
+                        # Track child process for reaping to prevent zombie processes
+                        if not hasattr(self, "_child_processes"):
+                            self._child_processes = []
+                        self._child_processes.append(p)
 
                 # Reap any finished child processes to prevent zombie accumulation
                 if hasattr(self, '_child_processes'):

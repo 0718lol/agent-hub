@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react'
+﻿import React, { useState, useEffect, useRef } from 'react'
 import { Sun, Moon, Trash2 } from 'lucide-react'
 import { useThemeStore } from '../../stores/themeStore'
 import { useChatStore } from '../../stores/chatStore'
 
 export default function SettingsPanel({ onClose }) {
   const theme = useThemeStore((s) => s.theme)
+  const isDark = theme === 'dark'
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
   const activeId = useChatStore((s) => s.activeConversationId)
   const clearMessages = useChatStore((s) => s.clearMessages)
@@ -84,6 +85,7 @@ export default function SettingsPanel({ onClose }) {
     setCronLoading(true)
     try {
       const resp = await fetch('/api/cron')
+      if (!resp.ok) throw new Error('HTTP ' + resp.status)
       const d = await resp.json()
       if (d.status === 'ok') setCronTasks(d.tasks || [])
     } catch (e) {
@@ -173,6 +175,7 @@ export default function SettingsPanel({ onClose }) {
     setKbLoading(true)
     try {
       const resp = await fetch('/api/knowledge')
+      if (!resp.ok) throw new Error('HTTP ' + resp.status)
       const d = await resp.json()
       if (d.status === 'ok') {
         setKbDocs(d.docs || [])
@@ -336,6 +339,7 @@ export default function SettingsPanel({ onClose }) {
     setRtLoading(true)
     try {
       const resp = await fetch('/api/runtime-tools')
+      if (!resp.ok) throw new Error('HTTP ' + resp.status)
       const d = await resp.json()
       setRtTools(d || [])
     } catch (e) {
@@ -532,7 +536,7 @@ export default function SettingsPanel({ onClose }) {
               onClick={handleClearHistory}
               style={{
                 padding: '6px 14px', borderRadius: 8, fontSize: 12,
-                background: '#fef2f2', border: '1px solid #fecaca',
+                background: isDark ? 'rgba(239,68,68,0.12)' : '#fef2f2', border: 1px solid ${isDark ? 'rgba(239,68,68,0.25)' : '#fecaca'},
                 color: 'var(--danger, #ef4444)', cursor: 'pointer', fontWeight: 500,
               }}
             >
@@ -559,9 +563,9 @@ export default function SettingsPanel({ onClose }) {
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: configured ? '#ecfdf5' : '#fffbeb',
-              border: `1px solid ${configured ? '#a7f3d0' : '#fde68a'}`,
-              fontSize: 13, color: configured ? 'var(--text-primary)' : '#d97706',
+              background: configured ? (isDark ? 'rgba(34,197,94,0.12)' : '#ecfdf5') : (isDark ? 'rgba(245,158,11,0.12)' : '#fffbeb'),
+              border: `1px solid ${configured ? (isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0') : (isDark ? 'rgba(245,158,11,0.25)' : '#fde68a')}`,
+              fontSize: 13, color: configured ? 'var(--text-primary)' : (isDark ? '#fbbf24' : '#d97706'),
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
             }}>
               <span style={{ flex: 1, minWidth: 0 }}>
@@ -573,7 +577,7 @@ export default function SettingsPanel({ onClose }) {
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                   <button onClick={handleDisconnect} disabled={saving} style={{
                     padding: '4px 10px', borderRadius: 6, fontSize: 11,
-                    background: 'var(--bg-secondary)', border: '1px solid #a7f3d0',
+                    background: 'var(--bg-secondary)', border: `1px solid ${isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0'}`,
                     color: '#059669', cursor: 'pointer', fontWeight: 500,
                     whiteSpace: 'nowrap',
                   }}>断开接入</button>
@@ -595,8 +599,8 @@ export default function SettingsPanel({ onClose }) {
             <div ref={presetsRef} style={{
               marginBottom: 20, padding: highlightPresets ? '8px' : 0,
               borderRadius: 8,
-              background: highlightPresets ? '#ecfdf5' : 'transparent',
-              border: highlightPresets ? '1px solid #a7f3d0' : '1px solid transparent',
+              background: highlightPresets ? (isDark ? 'rgba(34,197,94,0.12)' : '#ecfdf5') : 'transparent',
+              border: highlightPresets ? `1px solid ${isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0'}` : '1px solid transparent',
               transition: 'all 0.3s',
             }}>
               <label style={labelStyle}>快速选择</label>
@@ -604,7 +608,7 @@ export default function SettingsPanel({ onClose }) {
                 {presets.map((p) => (
                   <button key={p.label} onClick={() => applyPreset(p)} style={{
                     padding: '6px 12px', borderRadius: 6, fontSize: 12,
-                    background: '#eef2ff', border: '1px solid #c7d2fe',
+                    background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff', border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`,
                     color: '#4f46e5', cursor: 'pointer',
                   }}>{p.label}</button>
                 ))}
@@ -668,8 +672,8 @@ export default function SettingsPanel({ onClose }) {
                     disabled={ollamaLoading}
                     style={{
                       padding: '10px 14px',
-                      background: '#eef2ff',
-                      border: '1px solid #c7d2fe',
+                      background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff',
+                      border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`,
                       color: '#4f46e5',
                       borderRadius: 8,
                       cursor: 'pointer',
@@ -728,7 +732,7 @@ export default function SettingsPanel({ onClose }) {
         {/* ====== TAB: Quality Gate ====== */}
         {tab === 'quality' && (
           <>
-            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: '#eef2ff', border: '1px solid #c7d2fe', fontSize: 12, color: '#4f46e5' }}>
+            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff', border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`, fontSize: 12, color: '#4f46e5' }}>
               质量门会自动评估 Agent 输出，不达标时触发重写或择优选择
             </div>
 
@@ -800,7 +804,7 @@ export default function SettingsPanel({ onClose }) {
         {/* ====== TAB: Prompt Layers ====== */}
         {tab === 'prompt' && (
           <>
-            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: '#eef2ff', border: '1px solid #c7d2fe', fontSize: 12, color: '#4f46e5' }}>
+            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff', border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`, fontSize: 12, color: '#4f46e5' }}>
               Prompt 按层级注入，每层可独立开关。高层级（约束）优先级最高。
             </div>
 
@@ -833,8 +837,8 @@ export default function SettingsPanel({ onClose }) {
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: '#eef2ff', border: '1px solid #c7d2fe',
-              fontSize: 13, color: '#4338ca', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff', border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`,
+              fontSize: 13, color: isDark ? '#a5b4fc' : '#4338ca', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
               <span>Always-on 离线常驻自治 — 网页关闭后 Agent 仍能后台自主开发</span>
               <button onClick={fetchCronTasks} disabled={cronLoading} style={{
@@ -856,7 +860,7 @@ export default function SettingsPanel({ onClose }) {
                   cronTasks.map((t) => (
                     <div key={t.id} style={{
                       padding: '10px 14px', borderRadius: 10, background: 'var(--bg-secondary)',
-                      border: `1px solid ${t.status === 'running' ? '#a78bfa' : t.status === 'active' ? '#a7f3d0' : '#fde68a'}`,
+                      border: `1px solid ${t.status === 'running' ? '#a78bfa' : t.status === 'active' ? (isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0') : (isDark ? 'rgba(245,158,11,0.25)' : '#fde68a')}`,
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
@@ -872,11 +876,11 @@ export default function SettingsPanel({ onClose }) {
                         }}>{t.status === 'active' ? '暂停' : '恢复'}</button>
                         <button onClick={() => handleRunCronTaskNow(t.id)} disabled={saving || t.status === 'running'} style={{
                           padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                          background: '#eef2ff', border: '1px solid #c7d2fe', color: '#4338ca',
+                          background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff', border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`, color: isDark ? '#a5b4fc' : '#4338ca',
                         }}>立即执行</button>
                         <button onClick={() => handleDeleteCronTask(t.id)} disabled={saving} style={{
                           padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                          background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626',
+                          background: isDark ? 'rgba(239,68,68,0.12)' : '#fef2f2', border: 1px solid ${isDark ? 'rgba(239,68,68,0.25)' : '#fecaca'}, color: isDark ? '#f87171' : '#dc2626',
                         }}>删除</button>
                       </div>
                     </div>
@@ -935,8 +939,8 @@ export default function SettingsPanel({ onClose }) {
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: '#eef2ff', border: '1px solid #c7d2fe',
-              fontSize: 13, color: '#4338ca',
+              background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff', border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`,
+              fontSize: 13, color: isDark ? '#a5b4fc' : '#4338ca',
             }}>
               Agent 可通过 <code>[tool_call:name]</code> 标签调用以下工具，系统自动执行并返回结果
             </div>
@@ -966,15 +970,15 @@ export default function SettingsPanel({ onClose }) {
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <span style={{
                           fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                          background: tool.enabled ? '#ecfdf5' : '#fef2f2',
-                          color: tool.enabled ? '#059669' : '#dc2626',
-                          border: `1px solid ${tool.enabled ? '#a7f3d0' : '#fecaca'}`,
+                          background: tool.enabled ? (isDark ? 'rgba(34,197,94,0.12)' : '#ecfdf5') : (isDark ? 'rgba(239,68,68,0.12)' : '#fef2f2'),
+                          color: tool.enabled ? '#059669' : (isDark ? '#f87171' : '#dc2626'),
+                          border: `1px solid ${tool.enabled ? (isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0') : (isDark ? 'rgba(239,68,68,0.25)' : '#fecaca')}`,
                         }}>{tool.enabled ? '启用' : '禁用'}</span>
                         <button onClick={() => handleToggleRtTool(tool.name)} style={{
                           padding: '4px 10px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                          background: tool.enabled ? '#fef2f2' : '#ecfdf5',
-                          border: `1px solid ${tool.enabled ? '#fecaca' : '#a7f3d0'}`,
-                          color: tool.enabled ? '#dc2626' : '#059669',
+                          background: tool.enabled ? (isDark ? 'rgba(239,68,68,0.12)' : '#fef2f2') : (isDark ? 'rgba(34,197,94,0.12)' : '#ecfdf5'),
+                          border: `1px solid ${tool.enabled ? (isDark ? 'rgba(239,68,68,0.25)' : '#fecaca') : (isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0')}`,
+                          color: tool.enabled ? (isDark ? '#f87171' : '#dc2626') : '#059669',
                         }}>{tool.enabled ? '禁用' : '启用'}</button>
                       </div>
                     </div>
@@ -1011,11 +1015,11 @@ export default function SettingsPanel({ onClose }) {
               {rtTestResult && (
                 <div style={{
                   marginTop: 12, padding: '10px', borderRadius: 8,
-                  background: rtTestResult.success ? '#f0fdf4' : '#fef2f2',
-                  border: `1px solid ${rtTestResult.success ? '#bbf7d0' : '#fecaca'}`,
+                  background: rtTestResult.success ? (isDark ? 'rgba(34,197,94,0.08)' : '#f0fdf4') : (isDark ? 'rgba(239,68,68,0.12)' : '#fef2f2'),
+                  border: `1px solid ${rtTestResult.success ? (isDark ? 'rgba(34,197,94,0.2)' : '#bbf7d0') : (isDark ? 'rgba(239,68,68,0.25)' : '#fecaca')}`,
                   maxHeight: '25vh', overflowY: 'auto',
                 }}>
-                  <div style={{ fontSize: 11, color: rtTestResult.success ? 'var(--text-primary)' : 'var(--danger, #dc2626)', fontWeight: 600, marginBottom: 4 }}>
+                  <div style={{ fontSize: 11, color: rtTestResult.success ? 'var(--text-primary)' : (isDark ? '#f87171' : 'var(--danger, #dc2626)'), fontWeight: 600, marginBottom: 4 }}>
                     {rtTestResult.success ? '✅ 成功' : '❌ 失败'} {rtTestResult.usage?.time_ms ? `(${rtTestResult.usage.time_ms}ms)` : ''}
                   </div>
                   <pre style={{
@@ -1035,8 +1039,8 @@ export default function SettingsPanel({ onClose }) {
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: '#f0fdf4', border: '1px solid #bbf7d0',
-              fontSize: 13, color: '#166534', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              background: isDark ? 'rgba(34,197,94,0.08)' : '#f0fdf4', border: `1px solid ${isDark ? 'rgba(34,197,94,0.2)' : '#bbf7d0'}`,
+              fontSize: 13, color: isDark ? '#86efac' : '#166534', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
               <span>知识库已索引 <b>{kbStats.total_chunks || 0}</b> 个知识块，Agent 回复时自动检索注入</span>
               <button onClick={fetchKnowledgeDocs} disabled={kbLoading} style={{
@@ -1083,7 +1087,7 @@ export default function SettingsPanel({ onClose }) {
                       </div>
                       <button onClick={() => handleKbDelete(doc.id)} disabled={saving} style={{
                         padding: '4px 10px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                        background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626',
+                        background: isDark ? 'rgba(239,68,68,0.12)' : '#fef2f2', border: 1px solid ${isDark ? 'rgba(239,68,68,0.25)' : '#fecaca'}, color: isDark ? '#f87171' : '#dc2626',
                       }}>删除</button>
                     </div>
                   ))
@@ -1136,8 +1140,8 @@ export default function SettingsPanel({ onClose }) {
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: '#fef3c7', border: '1px solid #fde68a',
-              fontSize: 13, color: '#b45309',
+              background: isDark ? 'rgba(245,158,11,0.08)' : '#fef3c7', border: `1px solid ${isDark ? 'rgba(245,158,11,0.25)' : '#fde68a'}`,
+              fontSize: 13, color: isDark ? '#fbbf24' : '#b45309',
             }}>
               🔒 全局安全门禁与 API/WebSocket 会话密钥管理
             </div>
@@ -1216,9 +1220,9 @@ export default function SettingsPanel({ onClose }) {
         {msg && (
           <div style={{
             marginTop: 16, padding: '10px 14px', borderRadius: 8,
-            background: msg.includes('成功') || msg.includes('已保存') ? '#ecfdf5' : '#fef2f2',
-            border: `1px solid ${msg.includes('成功') || msg.includes('已保存') ? '#a7f3d0' : '#fecaca'}`,
-            fontSize: 13, color: msg.includes('成功') || msg.includes('已保存') ? '#059669' : '#dc2626',
+            background: msg.includes('成功') || msg.includes('已保存') ? (isDark ? 'rgba(34,197,94,0.12)' : '#ecfdf5') : (isDark ? 'rgba(239,68,68,0.12)' : '#fef2f2'),
+            border: `1px solid ${msg.includes('成功') || msg.includes('已保存') ? (isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0') : (isDark ? 'rgba(239,68,68,0.25)' : '#fecaca')}`,
+            fontSize: 13, color: msg.includes('成功') || msg.includes('已保存') ? '#059669' : (isDark ? '#f87171' : '#dc2626'),
           }}>{msg}</div>
         )}
       </div>

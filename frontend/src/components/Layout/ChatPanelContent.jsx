@@ -43,7 +43,7 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
   useEffect(() => {
     if (!convId) return
     if (generatingConvs.has(convId)) return
-    if (loadedConvs.has(convId)) return
+    if (loadedConvs.has(convId) && conv && conv.messages.length > 0) return
     loadedConvs.add(convId)
     loadMessages(convId)
   }, [convId])
@@ -54,6 +54,15 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
       loadedConvs.delete(convId)
     }
   }, [conv?.messages?.length, convId])
+
+  // generationTimeoutRef cleanup
+  useEffect(() => {
+    return () => {
+      if (generationTimeoutRef.current) {
+        clearTimeout(generationTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // 标记已读
   useEffect(() => {

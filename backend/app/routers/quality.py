@@ -1,4 +1,4 @@
-"""Quality gate settings and evaluation endpoints."""
+﻿"""Quality gate settings and evaluation endpoints."""
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from app.core.deps import get_quality_gate
@@ -9,7 +9,7 @@ router = APIRouter(tags=["quality"])
 
 class QualityGateSettings(BaseModel):
     enabled: bool = True
-    max_retries: int = 1
+    max_retries: int = Field(default=1, ge=0, le=5)
     use_llm_judge: bool = False
     best_of_n: int = Field(default=1, ge=1, le=10)
 

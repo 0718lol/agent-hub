@@ -1,4 +1,4 @@
-"""File operations tool — sandboxed file read/write/list for agents."""
+﻿"""File operations tool — sandboxed file read/write/list for agents."""
 
 import os
 import time
@@ -19,22 +19,22 @@ _MAX_LIST_DEPTH = 3
 
 def _safe_path(conversation_id: str, filepath: str) -> str | None:
     """Resolve path within sandbox, preventing directory traversal."""
-    sandbox_dir = os.path.abspath(os.path.join(_SANDBOX_ROOT, conversation_id))
+    sandbox_dir = os.path.realpath(os.path.join(_SANDBOX_ROOT, conversation_id))
     os.makedirs(sandbox_dir, exist_ok=True)
-    resolved = os.path.abspath(os.path.join(sandbox_dir, filepath))
+    resolved = os.path.realpath(os.path.join(sandbox_dir, filepath))
     # Security: ensure resolved path is within sandbox
-    if not resolved.startswith(sandbox_dir):
+    if not resolved.startswith(sandbox_dir + os.sep) and resolved != sandbox_dir:
         return None
     return resolved
 
 
 def _safe_workspace_path(conversation_id: str, filepath: str) -> str | None:
     """Resolve path within the unified agenthub_export workspace sandbox, preventing directory traversal."""
-    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
+    workspace_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    sandbox_dir = os.path.realpath(os.path.join(workspace_dir, "agenthub_export", conversation_id))
     os.makedirs(sandbox_dir, exist_ok=True)
-    resolved = os.path.abspath(os.path.join(sandbox_dir, filepath))
-    if not resolved.startswith(sandbox_dir):
+    resolved = os.path.realpath(os.path.join(sandbox_dir, filepath))
+    if not resolved.startswith(sandbox_dir + os.sep) and resolved != sandbox_dir:
         return None
     return resolved
 

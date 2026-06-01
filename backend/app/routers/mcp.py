@@ -1,4 +1,5 @@
-import shlex
+﻿import shlex
+import re
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.core.mcp_bridge import mcp_bridge_manager
@@ -23,9 +24,17 @@ async def list_mcp_servers():
 @router.post("/mcp/servers")
 async def register_mcp_server(body: MCPServerRegister):
     """Dynamically launch and connect to a new stdio JSON-RPC MCP server."""
-    cmd_base = shlex.split(body.command)[0] if body.command else ""
+    parts = shlex.split(body.command) if body.command.strip() else []
+    cmd_base = parts[0] if parts else ""
     if cmd_base not in ALLOWED_MCP_COMMANDS:
         return {"status": "error", "message": f"Command '{cmd_base}' not allowed. Allowed: {ALLOWED_MCP_COMMANDS}"}
+
+    # Validate args: block shell metacharacters to prevent command injection
+    _SHELL_META = re.compile(r'[;&|`$(){}!<>]')
+    for arg in body.args:
+        if _SHELL_META.search(arg):
+            return {"status": "error", "message": f"Args contain forbidden shell metacharacters: {arg}"}
+
     success = await mcp_bridge_manager.register_server(
         name=body.name,
         command=body.command,

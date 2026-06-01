@@ -1,9 +1,10 @@
-"""HTTP request tool — allows agents to make HTTP calls to APIs."""
+﻿"""HTTP request tool — allows agents to make HTTP calls to APIs."""
 
 import time
 import ipaddress
 import logging
 from urllib.parse import urlparse
+import socket
 from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_http_request")
@@ -11,6 +12,15 @@ logger = logging.getLogger("tool_http_request")
 # Maximum response body size to return (prevent huge payloads)
 _MAX_BODY_SIZE = 8000
 
+
+
+def _is_private_ip(addr: str) -> bool:
+    """Check if an IP address string is private/loopback/link-local/reserved."""
+    try:
+        ip = ipaddress.ip_address(addr)
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+    except ValueError:
+        return False
 
 class HttpRequestTool(AgentTool):
     name = "http_request"
@@ -67,6 +77,16 @@ class HttpRequestTool(AgentTool):
         except ValueError:
             pass
 
+        # DNS resolution check for domain names
+        if not _is_private_ip(hostname):  # hostname is not a literal private IP
+            try:
+                resolved = socket.getaddrinfo(hostname, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
+                for _, _, _, _, sockaddr in resolved:
+                    if _is_private_ip(sockaddr[0]):
+                        return ToolResult(success=False, error=f"安全策略禁止访问解析到私有 IP 的域名: {hostname} -> {sockaddr[0]}")
+            except (socket.gaierror, OSError):
+                pass  # DNS failure, let request fail naturally
+
         method = params.get("method", "GET").upper()
         if method not in ("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"):
             return ToolResult(success=False, error=f"不支持的 HTTP 方法: {method}")
@@ -77,7 +97,7 @@ class HttpRequestTool(AgentTool):
 
         start = time.time()
         try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                 kwargs = {"headers": headers}
                 if body and method in ("POST", "PUT", "PATCH"):
                     # Try to send as JSON if possible

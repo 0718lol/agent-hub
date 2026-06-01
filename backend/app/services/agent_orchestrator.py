@@ -1,4 +1,4 @@
-"""Agent orchestration — WebSocket message handling, group chat graph,
+﻿"""Agent orchestration — WebSocket message handling, group chat graph,
 streaming agent replies, and checkpoint recovery.
 
 Extracted from main.py to keep the app factory focused on HTTP routes
@@ -172,15 +172,29 @@ async def stream_agent_reply(
                             pass
 
                     if not parsed_ok:
-                        # Fallback: bracket-counting parser to handle nested JSON
+                        # Fallback: string-aware bracket-counting parser to handle nested JSON
                         tag_start = buffer.find('[create_agent:')
                         if tag_start == -1:
                             break
                         json_start = tag_start + len('[create_agent:')
                         bracket_depth = 0
                         json_end = -1
+                        in_string = False
+                        escape_next = False
                         for idx in range(json_start, len(buffer)):
                             ch = buffer[idx]
+                            if escape_next:
+                                escape_next = False
+                                continue
+                            if ch == '':
+                                if in_string:
+                                    escape_next = True
+                                continue
+                            if ch == '"':
+                                in_string = not in_string
+                                continue
+                            if in_string:
+                                continue
                             if ch == '{':
                                 bracket_depth += 1
                             elif ch == '}':
