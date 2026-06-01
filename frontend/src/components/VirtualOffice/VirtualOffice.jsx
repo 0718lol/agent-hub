@@ -13,20 +13,21 @@ import './VirtualOffice.css'
 const SLOT_W = 96
 const SLOT_H = 130
 
+// agent 站在椅子位置（桌子下方），看起来像"坐在椅子上"
 const WORKSTATION_PCT = [
-  { x: 0.10, y: 0.30 },
-  { x: 0.26, y: 0.30 },
-  { x: 0.42, y: 0.30 },
-  { x: 0.58, y: 0.30 },
-  { x: 0.74, y: 0.30 },
+  { x: 0.16, y: 0.36 },
+  { x: 0.32, y: 0.36 },
+  { x: 0.48, y: 0.36 },
+  { x: 0.64, y: 0.36 },
+  { x: 0.80, y: 0.36 },
 ]
 
 const REST_SLOTS_PCT = [
-  { x: 0.10, y: 0.74, type: 'sofa' },
-  { x: 0.20, y: 0.74, type: 'sofa' },
-  { x: 0.50, y: 0.78, type: 'coffee' },
-  { x: 0.66, y: 0.82, type: 'walk' },
-  { x: 0.86, y: 0.78, type: 'gym' },
+  { x: 0.13, y: 0.80, type: 'sofa' },
+  { x: 0.22, y: 0.80, type: 'sofa' },
+  { x: 0.48, y: 0.82, type: 'coffee' },
+  { x: 0.66, y: 0.86, type: 'walk' },
+  { x: 0.84, y: 0.84, type: 'gym' },
 ]
 
 const REST_ACTIONS_BY_TYPE = {
@@ -52,27 +53,41 @@ function pickRandomRestSlot(currentIdx) {
 }
 
 const FURNITURE_LIST = [
-  { type: 'Window', x: 0.10, y: 0.10, w: 200, h: 140 },
-  { type: 'Whiteboard', x: 0.50, y: 0.10, w: 200, h: 130 },
-  { type: 'WallArt', x: 0.86, y: 0.08, w: 100, h: 80 },
-  { type: 'PendantLamp', x: 0.34, y: 0.04, w: 50, h: 80 },
-  { type: 'PendantLamp', x: 0.66, y: 0.04, w: 50, h: 80 },
-  { type: 'Plant', x: 0.04, y: 0.34, w: 70, h: 110 },
-  { type: 'Plant', x: 0.94, y: 0.34, w: 70, h: 110 },
-  { type: 'Desk', x: 0.10, y: 0.36, w: 160, h: 110 },
-  { type: 'Desk', x: 0.26, y: 0.36, w: 160, h: 110 },
-  { type: 'Desk', x: 0.42, y: 0.36, w: 160, h: 110 },
-  { type: 'Desk', x: 0.58, y: 0.36, w: 160, h: 110 },
-  { type: 'Desk', x: 0.74, y: 0.36, w: 160, h: 110 },
-  { type: 'TV', x: 0.16, y: 0.62, w: 220, h: 150 },
-  { type: 'Sofa', x: 0.16, y: 0.78, w: 240, h: 100 },
-  { type: 'CoffeeTable', x: 0.16, y: 0.92, w: 110, h: 50 },
-  { type: 'CoffeeMachine', x: 0.42, y: 0.74, w: 80, h: 130 },
-  { type: 'Plant', x: 0.34, y: 0.92, w: 60, h: 95 },
-  { type: 'ZenSpot', x: 0.66, y: 0.92, w: 160, h: 110 },
-  { type: 'Plant', x: 0.58, y: 0.62, w: 70, h: 110 },
-  { type: 'Treadmill', x: 0.86, y: 0.72, w: 160, h: 150 },
-  { type: 'Plant', x: 0.94, y: 0.92, w: 60, h: 95 },
+  // 上墙：窗 / 白板 / 挂画 + 顶部吊灯
+  { type: 'Window', x: 0.10, y: 0.08, w: 180, h: 130 },
+  { type: 'Whiteboard', x: 0.50, y: 0.08, w: 160, h: 110 },
+  { type: 'WallArt', x: 0.88, y: 0.06, w: 90, h: 70 },
+  { type: 'PendantLamp', x: 0.30, y: 0.16, w: 60, h: 100 },
+  { type: 'PendantLamp', x: 0.50, y: 0.16, w: 60, h: 100 },
+  { type: 'PendantLamp', x: 0.70, y: 0.16, w: 60, h: 100 },
+
+  // 工位区两侧盆栽
+  { type: 'Plant', x: 0.03, y: 0.40, w: 70, h: 110 },
+  { type: 'Plant', x: 0.97, y: 0.40, w: 70, h: 110 },
+
+  // 工位（5 张工作站：桌+椅+显示器一体）
+  { type: 'Desk', x: 0.16, y: 0.42, w: 180, h: 200 },
+  { type: 'Desk', x: 0.32, y: 0.42, w: 180, h: 200 },
+  { type: 'Desk', x: 0.48, y: 0.42, w: 180, h: 200 },
+  { type: 'Desk', x: 0.64, y: 0.42, w: 180, h: 200 },
+  { type: 'Desk', x: 0.80, y: 0.42, w: 180, h: 200 },
+
+  // 休息区：电视 + 沙发 + 茶几（左下）
+  { type: 'TV', x: 0.16, y: 0.68, w: 220, h: 170 },
+  { type: 'Sofa', x: 0.18, y: 0.86, w: 240, h: 110 },
+  { type: 'CoffeeTable', x: 0.05, y: 0.90, w: 120, h: 70 },
+
+  // 茶水间：咖啡机 + 盆栽
+  { type: 'CoffeeMachine', x: 0.42, y: 0.82, w: 90, h: 140 },
+  { type: 'Plant', x: 0.36, y: 0.96, w: 70, h: 100 },
+
+  // 散步 / 禅意区
+  { type: 'ZenSpot', x: 0.65, y: 0.92, w: 150, h: 110 },
+  { type: 'Plant', x: 0.58, y: 0.70, w: 70, h: 110 },
+
+  // 健身区：跑步机 + 盆栽
+  { type: 'Treadmill', x: 0.85, y: 0.78, w: 180, h: 150 },
+  { type: 'Plant', x: 0.95, y: 0.95, w: 70, h: 100 },
 ]
 
 const FURNITURE_COMPONENT_MAP = {

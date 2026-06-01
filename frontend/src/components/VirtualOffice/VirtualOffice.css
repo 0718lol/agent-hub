@@ -87,67 +87,28 @@
   overflow: hidden;
 }
 
-/* ---- 墙面（上半 50%） ---- */
+/* ---- Marvis 风：白色主调，无明显墙地分割 ---- */
 .vo-wall {
   position: absolute;
-  inset: 0 0 50% 0;
-  background: linear-gradient(180deg, #f5f0e8 0%, #ebe1d2 100%);
+  inset: 0;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f5f4 60%, #e7e5e4 100%);
 }
 
 .vo-wall::before {
   content: '';
   position: absolute;
   inset: 0;
-  background: repeating-linear-gradient(
-    90deg,
-    transparent 0,
-    transparent 80px,
-    rgba(0, 0, 0, 0.025) 80px,
-    rgba(0, 0, 0, 0.025) 81px
-  );
-  opacity: 0.6;
-}
-
-/* ---- 地板（下半 50%） ---- */
-.vo-floor {
-  position: absolute;
-  inset: 50% 0 0 0;
-  background: linear-gradient(180deg, #d6c4a8 0%, #c4ad88 100%);
-}
-
-.vo-floor::before {
-  content: '';
-  position: absolute;
-  inset: 0;
   background:
-    repeating-linear-gradient(
-      0deg,
-      transparent 0,
-      transparent 60px,
-      rgba(120, 80, 40, 0.18) 60px,
-      rgba(120, 80, 40, 0.18) 62px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      transparent 0,
-      transparent 110px,
-      rgba(120, 80, 40, 0.12) 110px,
-      rgba(120, 80, 40, 0.12) 111px
-    );
+    radial-gradient(circle at 30% 20%, rgba(99, 102, 241, 0.04) 0%, transparent 50%),
+    radial-gradient(circle at 80% 70%, rgba(236, 72, 153, 0.03) 0%, transparent 50%);
 }
 
-/* 墙地接缝阴影 */
+.vo-floor {
+  display: none;
+}
+
 .vo-floor-shadow {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(50% - 6px);
-  height: 16px;
-  background: linear-gradient(180deg,
-    rgba(0, 0, 0, 0.18) 0%,
-    rgba(0, 0, 0, 0) 100%
-  );
-  pointer-events: none;
+  display: none;
 }
 
 /* ---- 暗色主题 ---- */
@@ -168,11 +129,7 @@
 [data-theme="tech-dark"] .vo-close:hover { background: rgba(255, 255, 255, 0.06); color: #fafaf9; }
 
 [data-theme="tech-dark"] .vo-wall {
-  background: linear-gradient(180deg, #292524 0%, #1c1917 100%);
-}
-
-[data-theme="tech-dark"] .vo-floor {
-  background: linear-gradient(180deg, #44403c 0%, #292524 100%);
+  background: linear-gradient(180deg, #1c1917 0%, #0c0a09 100%);
 }
 
 /* ---- 家具 ---- */
@@ -186,7 +143,7 @@
 
 .vo-furniture-piece svg {
   display: block;
-  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.15));
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.08)) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.06));
 }
 
 /* ---- office-slot ---- */
