@@ -154,6 +154,10 @@ export default function ChatPanel({ onToggleSidebar }) {
       }
       if (data.type === 'read') { markRead(activeId); return }
       if (data.type === 'message') {
+        // User messages are added locally in handleSend; the backend echoes them
+        // back over WS, which would otherwise duplicate every user bubble.
+        if (data.sender === 'user') return
+
         // 跳过服务器回显的用户消息（handleSend 已本地添加）
         if (data.sender === 'user') return
 
@@ -208,6 +212,18 @@ export default function ChatPanel({ onToggleSidebar }) {
     }
   }, [conv?.messages])
 
+  const handleSend = (text) => {
+    addMessage(activeId, {
+      sender: 'user',
+      content: { text },
+      streaming: false,
+    })
+
+    // Optimistically flip to "generating" so the stop button appears immediately,
+    // without waiting for the backend's generating=true broadcast round-trip.
+    setGenerating(activeId, true)
+
+    const targetAgent = conv?.type === 'single' ? conv.agentId : undefined
   const handleSend = (text, mentionedAgents, attachments = []) => {
     if (isGenerating) return // 双重保险：生成中禁止发送
     const msgId = `user-${Date.now()}`
@@ -231,6 +247,24 @@ export default function ChatPanel({ onToggleSidebar }) {
 
   const handleStop = () => {
     wsClient.send({ type: 'stop', conversation_id: activeId })
+  }
+
+  const handleClearHistory = async () => {
+    if (!window.confirm(`确定清空与「${conv?.name}」的所有对话历史？此操作不可恢复。`)) return
+    try {
+      await fetch(`/api/conversations/${activeId}/messages`, { method: 'DELETE' })
+      useChatStore.getState().clearMessages(activeId)
+      // Also clear right-panel artifacts tied to this conversation
+      useCanvasStore.getState().setPreviewHtml('')
+      useCanvasStore.getState().setGeneratedCode('text', '')
+      setGenerating(activeId, false)
+    } catch (e) {
+      console.error('Clear history failed:', e)
+      window.alert('清空失败，请检查后端是否运行')
+    }
+  }
+
+  if (!conv) return <div className="chat-panel"><div className="empty-state"><div className="icon">💬</div><div className="text">选择一个会话开始</div></div></div>
     if (generationTimeoutRef.current) {
       clearTimeout(generationTimeoutRef.current)
       generationTimeoutRef.current = null
@@ -267,6 +301,17 @@ export default function ChatPanel({ onToggleSidebar }) {
     <div className="chat-panel">
       {/* Header — 通栏，不受居中宽度限制 */}
       <div className="chat-header">
+        <div className="avatar">{conv.avatar}</div>
+        <div style={{ flex: 1 }}>
+          <div className="title">{conv.name}</div>
+          <div className="subtitle">
+            {typingAgentIds.length > 0
+              ? typingAgentIds.length === 1
+                ? `${useAgentStore.getState().agents.find(a => a.agent_id === typingAgentIds[0])?.name || typingAgentIds[0]} 正在输入...`
+                : `${typingAgentIds.length}人正在输入...`
+              : conv.type === 'group' ? `${conv.agents?.length || 0} 个 Agent` : ''
+            }
+          </div>
         <div className="chat-header-left">
           <button className="hamburger-btn" onClick={onToggleSidebar} title="菜单">
             <Menu size={18} />
@@ -352,6 +397,27 @@ export default function ChatPanel({ onToggleSidebar }) {
             <span className="icon-tooltip">代码/文档预览</span>
           </button>
         </div>
+        <button
+          onClick={handleClearHistory}
+          title="清空对话历史"
+          style={{
+            background: 'rgba(239,68,68,0.08)',
+            border: '1px solid rgba(239,68,68,0.2)',
+            color: '#f87171',
+            borderRadius: 8,
+            padding: '6px 12px',
+            fontSize: 12,
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+          onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.15)' }}
+          onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)' }}
+        >
+          🗑️ 新对话
+        </button>
         <button
           onClick={handleClearHistory}
           title="清空对话历史"

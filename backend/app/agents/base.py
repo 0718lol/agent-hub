@@ -67,7 +67,13 @@ class BaseAgent:
                 if text:
                     messages.append({"role": role, "content": text})
 
-        # 附件文件内容注入：将 extracted_text 追加到用户消息中
+        # Avoid duplicating the current user message when history already includes it
+        # (main.py saves the user message before fetching history, so the last entry
+        # may already be the same message — appending again breaks Anthropic's
+        # user/assistant alternation rule).
+        if not (messages and messages[-1].get("role") == "user"
+                and messages[-1].get("content") == message):
+            # 附件文件内容注入：将 extracted_text 追加到用户消息中
         enhanced_message = message
         if attachments:
             file_contexts = []
