@@ -1,0 +1,429 @@
+{
+  "timestamp": "2026-05-24T13:35:35.214167",
+  "total_cases": 12,
+  "passed": 12,
+  "failed": 0,
+  "average_score": 77.0,
+  "cases": [
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "简单问候 — 应直接回答",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "天气查询 — 简单任务",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "闲聊 — 简单任务",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "React vs Vue 选型 — 需要辩论",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "分布式系统设计 — 复杂任务",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "数据库选型对比 — 含关键词触发",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "简单代码查询 — 不需要辩论",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "架构方案对比 — 需要辩论",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "简单翻译请求",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "技术选型含 trade-off — 需要辩论",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "简单数学计算",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "前端框架方案实现 — 复杂任务",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    }
+  ]
+}

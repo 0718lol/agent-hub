@@ -1,0 +1,1 @@
+function claude { & "C:\Users\20346\AppData\Roaming\npm\claude.cmd" $args }
