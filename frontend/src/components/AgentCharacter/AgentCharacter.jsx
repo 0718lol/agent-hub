@@ -15,9 +15,10 @@ export default function AgentCharacter({
   scale = 1,
   bubble = null,
   bubbleVariant = 'default',
-  followMouse = false,         // 桌宠开启，office 关闭（性能）
-  hoverHappy = false,          // hover 时切换 happy 表情
-  moodTag = null,              // 头顶冒出来的表情符号
+  followMouse = false,
+  hoverHappy = false,
+  moodTag = null,
+  direction = 'down',  // 'up' | 'down' | 'left' | 'right'
   onClick,
   onDoubleClick,
   onContextMenu,
@@ -31,7 +32,6 @@ export default function AgentCharacter({
   const [eyeOffset, setEyeOffset] = useState({ x: 0, y: 0 })
   const [hovering, setHovering] = useState(false)
 
-  // 眼睛跟随鼠标
   useEffect(() => {
     if (!followMouse) return
     let raf = 0
@@ -41,12 +41,12 @@ export default function AgentCharacter({
         const rect = rootRef.current?.getBoundingClientRect()
         if (!rect) return
         const cx = rect.left + rect.width / 2
-        const cy = rect.top + rect.height / 2 - 16  // 头略高于中心
+        const cy = rect.top + rect.height / 2
         const dx = e.clientX - cx
         const dy = e.clientY - cy
         const dist = Math.hypot(dx, dy)
         if (dist < 0.1) return setEyeOffset({ x: 0, y: 0 })
-        const max = 2.2
+        const max = 1.8
         const ratio = Math.min(1, dist / 400)
         setEyeOffset({
           x: (dx / dist) * max * ratio,
@@ -61,17 +61,16 @@ export default function AgentCharacter({
     }
   }, [followMouse])
 
-  // hover 反应
   const handleEnter = () => hoverHappy && setHovering(true)
   const handleLeave = () => hoverHappy && setHovering(false)
 
-  // 实际生效的 action — hover 时优先走 happy
   const renderAction = hovering ? 'happy' : safeAction
 
+  // 俯视小人：圆头 + 简化身体（椭圆）+ 手臂腿（小圆点或短线）
   return (
     <div
       ref={rootRef}
-      className={`ac-root ac-${renderAction} ${className}`}
+      className={`ac-root ac-topdown ac-${renderAction} ac-dir-${direction} ${className}`}
       style={{
         left: position.x,
         top: position.y,
@@ -94,77 +93,77 @@ export default function AgentCharacter({
       )}
 
       <svg
-        className="ac-sprite"
-        viewBox="0 0 100 140"
-        width="80"
-        height="112"
+        className="ac-sprite ac-sprite-topdown"
+        viewBox="0 0 100 100"
+        width="64"
+        height="64"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <g className="ac-antenna">
-          <line x1="50" y1="18" x2="50" y2="6" stroke="var(--ac-theme)" strokeWidth="2" strokeLinecap="round" />
-          <circle cx="50" cy="5" r="3" fill="var(--ac-theme)" />
+        {/* 阴影 */}
+        <ellipse cx="50" cy="88" rx="22" ry="6" fill="rgba(0,0,0,0.25)" className="ac-shadow" />
+
+        {/* 身体（椭圆） */}
+        <ellipse cx="50" cy="60" rx="18" ry="24" fill="#f5f5f7" stroke="#d1d1d6" strokeWidth="1.5" className="ac-body" />
+
+        {/* 胸口装饰 */}
+        <ellipse cx="50" cy="60" rx="10" ry="14" fill="var(--ac-theme)" opacity="0.15" />
+        <circle cx="50" cy="60" r="3" fill="var(--ac-theme)" />
+
+        {/* 手臂（两个小圆点，左右） */}
+        <circle cx="32" cy="58" r="5" fill="#e5e5ea" className="ac-arm ac-arm-left" />
+        <circle cx="68" cy="58" r="5" fill="#e5e5ea" className="ac-arm ac-arm-right" />
+
+        {/* 腿/脚（两个小椭圆，下方） */}
+        <ellipse cx="42" cy="82" rx="5" ry="7" fill="#a1a1a6" className="ac-leg ac-leg-left" />
+        <ellipse cx="58" cy="82" rx="5" ry="7" fill="#a1a1a6" className="ac-leg ac-leg-right" />
+
+        {/* 头部（圆形） */}
+        <circle cx="50" cy="32" r="18" fill="#ffffff" stroke="#d1d1d6" strokeWidth="1.5" className="ac-head" />
+
+        {/* 天线 */}
+        <line x1="50" y1="14" x2="50" y2="8" stroke="var(--ac-theme)" strokeWidth="2" strokeLinecap="round" className="ac-antenna" />
+        <circle cx="50" cy="7" r="2.5" fill="var(--ac-theme)" className="ac-antenna-tip" />
+
+        {/* 眼睛 */}
+        <g className="ac-eye ac-eye-left">
+          <circle cx="42" cy="30" r="3" fill="#1d1d1f"
+                  transform={followMouse ? `translate(${eyeOffset.x} ${eyeOffset.y})` : undefined} />
+          <circle cx="43" cy="29" r="1" fill="#ffffff"
+                  transform={followMouse ? `translate(${eyeOffset.x} ${eyeOffset.y})` : undefined} />
+        </g>
+        <g className="ac-eye ac-eye-right">
+          <circle cx="58" cy="30" r="3" fill="#1d1d1f"
+                  transform={followMouse ? `translate(${eyeOffset.x} ${eyeOffset.y})` : undefined} />
+          <circle cx="59" cy="29" r="1" fill="#ffffff"
+                  transform={followMouse ? `translate(${eyeOffset.x} ${eyeOffset.y})` : undefined} />
         </g>
 
-        <g className="ac-body">
-          <rect x="22" y="60" width="56" height="50" rx="10" fill="#f5f5f7" stroke="#d1d1d6" strokeWidth="1.5" />
-          <rect x="32" y="72" width="36" height="22" rx="4" fill="var(--ac-theme)" opacity="0.15" />
-          <circle cx="50" cy="83" r="3" fill="var(--ac-theme)" />
+        {/* 嘴巴 */}
+        <path className="ac-mouth" d="M 44 38 Q 50 41 56 38" stroke="#1d1d1f" strokeWidth="1.5" fill="none" strokeLinecap="round" />
 
-          <g className="ac-arm ac-arm-left">
-            <rect x="14" y="65" width="8" height="22" rx="4" fill="#e5e5ea" />
-          </g>
-          <g className="ac-arm ac-arm-right">
-            <rect x="78" y="65" width="8" height="22" rx="4" fill="#e5e5ea" />
-          </g>
+        {/* 腮红 */}
+        <circle cx="36" cy="36" r="2" fill="#ff9aa2" opacity="0.5" />
+        <circle cx="64" cy="36" r="2" fill="#ff9aa2" opacity="0.5" />
 
-          <rect x="32" y="110" width="12" height="14" rx="3" fill="#a1a1a6" />
-          <rect x="56" y="110" width="12" height="14" rx="3" fill="#a1a1a6" />
-        </g>
-
-        <g className="ac-head">
-          <rect x="20" y="20" width="60" height="44" rx="14" fill="#ffffff" stroke="#d1d1d6" strokeWidth="1.5" />
-
-          <g className="ac-eye ac-eye-left">
-            <circle cx="36" cy="40" r="4" fill="#1d1d1f"
-                    transform={followMouse ? `translate(${eyeOffset.x} ${eyeOffset.y})` : undefined} />
-            <circle cx="37" cy="38.5" r="1.2" fill="#ffffff"
-                    transform={followMouse ? `translate(${eyeOffset.x} ${eyeOffset.y})` : undefined} />
-          </g>
-          <g className="ac-eye ac-eye-right">
-            <circle cx="64" cy="40" r="4" fill="#1d1d1f"
-                    transform={followMouse ? `translate(${eyeOffset.x} ${eyeOffset.y})` : undefined} />
-            <circle cx="65" cy="38.5" r="1.2" fill="#ffffff"
-                    transform={followMouse ? `translate(${eyeOffset.x} ${eyeOffset.y})` : undefined} />
-          </g>
-
-          <path className="ac-mouth" d="M 44 52 Q 50 56 56 52" stroke="#1d1d1f" strokeWidth="1.8" fill="none" strokeLinecap="round" />
-
-          <circle cx="28" cy="50" r="2" fill="#ff9aa2" opacity="0.5" />
-          <circle cx="72" cy="50" r="2" fill="#ff9aa2" opacity="0.5" />
-        </g>
-
+        {/* sleep 状态：Zzz */}
         {safeAction === 'sleep' && (
           <g className="ac-zzz">
-            <text x="72" y="22" fontSize="10" fill="var(--ac-theme)" fontWeight="600">Z</text>
-            <text x="80" y="14" fontSize="8" fill="var(--ac-theme)" fontWeight="600" opacity="0.7">z</text>
+            <text x="66" y="20" fontSize="9" fill="var(--ac-theme)" fontWeight="600">Z</text>
+            <text x="72" y="14" fontSize="7" fill="var(--ac-theme)" fontWeight="600" opacity="0.7">z</text>
           </g>
         )}
 
+        {/* coffee 状态：手里的杯子 */}
         {safeAction === 'coffee' && (
-          <g className="ac-coffee-cup">
-            <rect x="76" y="50" width="10" height="8" rx="1" fill="#fafafa" stroke="#a16207" strokeWidth="1" />
-            <path d="M 86 52 Q 90 52 90 54 Q 90 56 86 56" stroke="#a16207" strokeWidth="1" fill="none" />
-          </g>
+          <circle cx="68" cy="58" r="4" fill="#fafafa" stroke="#a16207" strokeWidth="1" className="ac-coffee-cup" />
         )}
 
+        {/* gym 状态：哑铃图标 */}
         {safeAction === 'gym' && (
           <g className="ac-dumbbells">
-            <rect x="10" y="80" width="14" height="3" fill="#1f2937" />
-            <circle cx="9" cy="81.5" r="3" fill="#1f2937" />
-            <circle cx="25" cy="81.5" r="3" fill="#1f2937" />
-            <rect x="76" y="80" width="14" height="3" fill="#1f2937" />
-            <circle cx="75" cy="81.5" r="3" fill="#1f2937" />
-            <circle cx="91" cy="81.5" r="3" fill="#1f2937" />
+            <rect x="28" y="56" width="8" height="2" fill="#1f2937" />
+            <circle cx="27" cy="57" r="2" fill="#1f2937" />
+            <circle cx="37" cy="57" r="2" fill="#1f2937" />
           </g>
         )}
       </svg>
