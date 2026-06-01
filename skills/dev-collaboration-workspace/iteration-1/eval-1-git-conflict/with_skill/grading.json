@@ -1,0 +1,36 @@
+{
+  "eval_id": 1,
+  "run_type": "with_skill",
+  "expectations": [
+    {
+      "text": "按步骤结构化流程指导（非零散建议）",
+      "passed": true,
+      "evidence": "响应按 6 个明确步骤组织：确认状态→分析冲突→解决冲突→验证→标记解决→最终验证"
+    },
+    {
+      "text": "针对每个冲突文件给出具体解决策略",
+      "passed": true,
+      "evidence": "package.json、user.ts、database.conf 三个文件分别有冲突类型识别、解决策略、代码示例"
+    },
+    {
+      "text": "包含验证步骤（检查冲突是否解决）",
+      "passed": true,
+      "evidence": "第 4 步专门验证冲突标记是否清除，每个文件后都有验证命令"
+    },
+    {
+      "text": "提供具体可执行的命令或代码",
+      "passed": true,
+      "evidence": "包含 git status、git diff、grep 冲突标记、npm install、npx tsc --noEmit 等具体命令"
+    },
+    {
+      "text": "包含放弃/回退选项",
+      "passed": true,
+      "evidence": "最后有 git merge --abort 的说明"
+    },
+    {
+      "text": "响应使用中文",
+      "passed": true,
+      "evidence": "全文使用简体中文"
+    }
+  ]
+}

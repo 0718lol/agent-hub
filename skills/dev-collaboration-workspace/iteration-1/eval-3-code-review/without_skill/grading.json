@@ -1,0 +1,31 @@
+{
+  "eval_id": 3,
+  "run_type": "without_skill",
+  "expectations": [
+    {
+      "text": "先检查代码是否存在再进行审查",
+      "passed": true,
+      "evidence": "全面检查了目录扫描、分支检查、项目结构、项目文档"
+    },
+    {
+      "text": "解释无法审查的原因",
+      "passed": true,
+      "evidence": "列出排查过程和可能原因"
+    },
+    {
+      "text": "提供审查维度清单供后续使用",
+      "passed": true,
+      "evidence": "提供安全性、正确性、代码质量、测试覆盖 4 个维度的审查清单"
+    },
+    {
+      "text": "给出后续行动建议",
+      "passed": true,
+      "evidence": "建议补充 PR 链接、源分支、目标分支、仓库地址"
+    },
+    {
+      "text": "响应使用中文",
+      "passed": true,
+      "evidence": "全文使用简体中文"
+    }
+  ]
+}

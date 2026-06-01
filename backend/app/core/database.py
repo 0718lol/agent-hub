@@ -986,3 +986,109 @@ async def async_save_artifact(conversation_id, agent_id, name, language, code, q
 
 async def async_get_artifacts(conversation_id, limit=50):
     return await asyncio.to_thread(get_artifacts, conversation_id, limit)
+
+
+# ============================================================
+# Redis 缓存层 — Cache-Aside 读取 + Write-Through 失效
+# ============================================================
+
+def _invalidate_cache(pattern: str):
+    """后台异步清除缓存，不阻塞调用方。"""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_async_invalidate_cache(pattern))
+    except RuntimeError:
+        pass  # 无事件循环时跳过（如测试环境）
+
+
+async def _async_invalidate_cache(pattern: str):
+    """实际执行缓存清除。"""
+    try:
+        from app.core.cache import cache
+        if "*" in pattern:
+            await cache.delete_pattern(pattern)
+        else:
+            await cache.delete(pattern)
+    except Exception:
+        pass  # 缓存失效失败不影响主流程
+
+
+async def async_save_message_cached(conversation_id, sender, content, streaming=False):
+    """带缓存失效的 save_message。写入 DB 后清除消息缓存。"""
+    result = await asyncio.to_thread(save_message, conversation_id, sender, content, streaming)
+    await _async_invalidate_cache(f"msg:{conversation_id}:*")
+    return result
+
+
+async def async_get_messages_cached(conversation_id, limit=100):
+    """带 Redis 缓存的 get_messages。Cache-Aside 模式：先查缓存，miss 则查 DB 并回填。"""
+    from app.core.cache import cache
+    cache_key = f"msg:{conversation_id}:{limit}"
+    cached = await cache.get_json(cache_key)
+    if cached is not None:
+        return cached
+    result = await asyncio.to_thread(get_messages, conversation_id, limit)
+    if result:  # 非空才缓存，避免缓存空列表
+        await cache.set_json(cache_key, result, ttl=30)
+    return result
+
+
+async def async_get_conversations_cached():
+    """带 Redis 缓存的 get_conversations。Cache-Aside 模式。"""
+    from app.core.cache import cache
+    cache_key = "conv:list"
+    cached = await cache.get_json(cache_key)
+    if cached is not None:
+        return cached
+    result = await asyncio.to_thread(get_conversations)
+    if result:
+        await cache.set_json(cache_key, result, ttl=60)
+    return result
+
+
+async def async_clear_messages_cached(conversation_id):
+    """带缓存失效的 clear_messages。"""
+    result = await asyncio.to_thread(clear_messages, conversation_id)
+    await _async_invalidate_cache(f"msg:{conversation_id}:*")
+    return result
+
+
+async def async_create_conversation_cached(conv_id, conv_type, name, avatar, agent_id=None, agents=None, preview=''):
+    """带缓存失效的 create_conversation。"""
+    result = await asyncio.to_thread(create_conversation, conv_id, conv_type, name, avatar, agent_id, agents, preview)
+    await _async_invalidate_cache("conv:list")
+    return result
+
+
+async def async_delete_custom_agent_cached(agent_id):
+    """带缓存失效的 delete_custom_agent。"""
+    result = await asyncio.to_thread(delete_custom_agent, agent_id)
+    await _async_invalidate_cache("conv:list")
+    return result
+
+
+async def async_get_project_memory_cached(conversation_id):
+    """带 Redis 缓存的 get_project_memory。Cache-Aside 模式。"""
+    from app.core.cache import cache
+    cache_key = f"mem:{conversation_id}"
+    cached = await cache.get_json(cache_key)
+    if cached is not None:
+        return cached
+    result = await asyncio.to_thread(get_project_memory, conversation_id)
+    if result:
+        await cache.set_json(cache_key, result, ttl=60)
+    return result
+
+
+async def async_save_memory_item_cached(conversation_id, key, value, source="system"):
+    """带缓存失效的 save_memory_item。"""
+    result = await asyncio.to_thread(save_memory_item, conversation_id, key, value, source)
+    await _async_invalidate_cache(f"mem:{conversation_id}")
+    return result
+
+
+async def async_delete_memory_item_cached(conversation_id, key):
+    """带缓存失效的 delete_memory_item。"""
+    result = await asyncio.to_thread(delete_memory_item, conversation_id, key)
+    await _async_invalidate_cache(f"mem:{conversation_id}")
+    return result

@@ -1,0 +1,36 @@
+{
+  "eval_id": 2,
+  "run_type": "with_skill",
+  "expectations": [
+    {
+      "text": "系统化排查流程（非随机猜测）",
+      "passed": true,
+      "evidence": "按 5 步流程：信息收集→快速定位→诊断命令→修复方案→验证，逻辑清晰"
+    },
+    {
+      "text": "覆盖数据库层面排查（索引、查询、锁等）",
+      "passed": true,
+      "evidence": "覆盖索引失效、N+1 查询、锁等待、连接池耗尽、表膨胀 5 个数据库层面问题"
+    },
+    {
+      "text": "覆盖应用代码层面排查",
+      "passed": true,
+      "evidence": "覆盖序列化开销、缺少分页、同步阻塞调用 3 个应用层问题"
+    },
+    {
+      "text": "提供可执行的诊断 SQL/命令",
+      "passed": true,
+      "evidence": "包含 EXPLAIN ANALYZE、pg_stat_statements 查询、锁等待查询等具体 SQL"
+    },
+    {
+      "text": "按优先级排列修复方案",
+      "passed": true,
+      "evidence": "有 P0-P3 优先级表格，标注预期效果和风险"
+    },
+    {
+      "text": "引用项目实际技术栈",
+      "passed": true,
+      "evidence": "提到 FastAPI + SQLModel + PostgreSQL + asyncio.to_thread，引用项目 database.py 的做法"
+    }
+  ]
+}

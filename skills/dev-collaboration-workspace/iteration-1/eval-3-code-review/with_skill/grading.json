@@ -1,0 +1,31 @@
+{
+  "eval_id": 3,
+  "run_type": "with_skill",
+  "expectations": [
+    {
+      "text": "先检查代码是否存在再进行审查",
+      "passed": true,
+      "evidence": "首先全面检查了项目结构、git 历史、分支状态，确认 src/auth/ 目录不存在"
+    },
+    {
+      "text": "解释无法审查的原因",
+      "passed": true,
+      "evidence": "列出 4 个原因：目录不存在、项目无认证系统、无相关 PR 变更、Git 历史无认证提交"
+    },
+    {
+      "text": "提供审查维度清单供后续使用",
+      "passed": true,
+      "evidence": "提供安全性、功能正确性、代码质量、性能 4 个维度的详细审查清单"
+    },
+    {
+      "text": "给出后续行动建议",
+      "passed": true,
+      "evidence": "建议确认 PR 链接、源分支、目标分支等信息"
+    },
+    {
+      "text": "响应使用中文",
+      "passed": true,
+      "evidence": "全文使用简体中文"
+    }
+  ]
+}

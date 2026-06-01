@@ -2,7 +2,10 @@ import asyncio
 import json
 import logging
 import re
-from app.core.database import get_messages, get_project_memory, save_memory_item
+from app.core.database import (
+    get_messages, get_project_memory, save_memory_item,
+    async_get_messages_cached, async_get_project_memory_cached, async_save_memory_item_cached,
+)
 from app.core.llm_client import llm_client
 from app.core.websocket import manager
 
@@ -26,8 +29,8 @@ async def trigger_background_reflection(conversation_id: str):
 
     _reflection_locks[conversation_id] = True
     try:
-        # 1. Fetch conversation messages
-        messages = get_messages(conversation_id, limit=40)
+        # 1. Fetch conversation messages（优先从 Redis 缓存读取）
+        messages = await async_get_messages_cached(conversation_id, limit=40)
         if len(messages) < 2:
             return  # Not enough conversation turns to reflect upon
 
@@ -38,8 +41,8 @@ async def trigger_background_reflection(conversation_id: str):
             if text:
                 history_str += f"{sender}: {text}\n"
 
-        # 2. Fetch existing memory
-        existing_mem = get_project_memory(conversation_id)
+        # 2. Fetch existing memory（优先从 Redis 缓存读取）
+        existing_mem = await async_get_project_memory_cached(conversation_id)
         existing_mem_simple = {k: v["value"] for k, v in existing_mem.items()}
 
         # 3. Formulate reflection system prompt
@@ -101,11 +104,11 @@ async def trigger_background_reflection(conversation_id: str):
         keys_saved = []
         for key in ["tech_stack", "user_preference", "implemented_features", "pending_todos"]:
             if key in updated_data and updated_data[key]:
-                save_memory_item(conversation_id, key, str(updated_data[key]), source="system")
+                await async_save_memory_item_cached(conversation_id, key, str(updated_data[key]), source="system")
                 keys_saved.append(key)
 
         # 7. Broadcast reflected memory update
-        fresh_memory = get_project_memory(conversation_id)
+        fresh_memory = await async_get_project_memory_cached(conversation_id)
         await manager.broadcast(conversation_id, {
             "type": "reflecting",
             "conversation_id": conversation_id,

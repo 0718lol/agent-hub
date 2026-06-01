@@ -15,6 +15,7 @@ from app.core.websocket import manager
 from app.core.database import (
     save_message, get_messages, get_pending_hil_checkpoint, resolve_hil_checkpoint,
     save_artifact, update_latest_artifact_quality,
+    async_get_messages_cached, async_save_message_cached,
 )
 from app.core.config import settings
 from app.core.llm_client import llm_client
@@ -63,7 +64,7 @@ async def stream_agent_reply(
     if context:
         effective_text = f"PM 的任务拆解：\n{context}\n\n用户原始需求：{user_text}"
 
-    history = get_messages(conversation_id, limit=20)
+    history = await async_get_messages_cached(conversation_id, limit=20)
 
     await manager.broadcast(conversation_id, {
         "type": "typing",
@@ -308,7 +309,7 @@ async def stream_agent_reply(
     # Don't persist LLM error responses
     is_llm_error = ("[LLM Error" in raw_text) or ("[LLM 调用出错" in raw_text) or ("[Agent 回复出错" in raw_text)
     if not is_llm_error:
-        save_message(conversation_id, agent.agent_id, {"text": raw_text}, streaming=False)
+        await async_save_message_cached(conversation_id, agent.agent_id, {"text": raw_text}, streaming=False)
 
     # Broadcast thinking/typing stop + task done
     await manager.broadcast(conversation_id, {
@@ -518,7 +519,7 @@ def build_group_chat_graph(conversation_id: str, text: str, trace: Any, stop_eve
         if not candidates_info.strip():
             return "END"
 
-        history = get_messages(conversation_id, limit=6)
+        history = await async_get_messages_cached(conversation_id, limit=6)
         history_text = ""
         for m in history:
             sender_name = m.get("sender", "unknown")

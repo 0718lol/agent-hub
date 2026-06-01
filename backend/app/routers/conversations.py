@@ -1,23 +1,26 @@
 """Conversation and message CRUD endpoints."""
 from fastapi import APIRouter, Query
-from app.core.database import get_messages, get_conversations, clear_messages, search_messages
+from app.core.database import (
+    get_messages, get_conversations, clear_messages, search_messages,
+    async_get_messages_cached, async_get_conversations_cached, async_clear_messages_cached,
+)
 
 router = APIRouter(tags=["conversations"])
 
 
 @router.get("/conversations")
 async def list_conversations():
-    return get_conversations()
+    return await async_get_conversations_cached()
 
 
 @router.get("/conversations/{conversation_id}/messages")
 async def list_messages(conversation_id: str, limit: int = 100):
-    return get_messages(conversation_id, limit)
+    return await async_get_messages_cached(conversation_id, limit)
 
 
 @router.delete("/conversations/{conversation_id}/messages")
 async def delete_messages(conversation_id: str):
-    clear_messages(conversation_id)
+    await async_clear_messages_cached(conversation_id)
     return {"status": "cleared"}
 
 

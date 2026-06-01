@@ -1,0 +1,23 @@
+{
+  "skill_name": "dev-collaboration",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我刚执行了 git merge main 合并分支，结果有 3 个文件冲突了：package.json、src/api/user.ts、src/config/database.conf。这些文件两边都改了，帮我解决冲突。",
+      "expected_output": "按照 git-conflict.md 的流程，先分析每个文件的冲突原因，然后给出具体的解决方案，最后验证并完成合并。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "我们后端接口 /api/users 最近响应特别慢，之前 200ms 现在要 3 秒多，数据库是 PostgreSQL。帮我排查一下问题。",
+      "expected_output": "按照 problem-diagnosis.md 的流程，系统化排查性能问题，从日志分析、数据库查询、索引等方面定位根因并给出修复方案。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "帮我 review 一下这个 PR，主要是一个用户认证模块的改动，涉及登录、注册、token 刷新。代码在 src/auth/ 目录下。",
+      "expected_output": "按照 code-review.md 的流程，从功能正确性、代码质量、安全性、性能、可维护性 5 个维度审查代码，输出结构化的审查报告。",
+      "files": []
+    }
+  ]
+}

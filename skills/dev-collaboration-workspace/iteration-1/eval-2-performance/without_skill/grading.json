@@ -1,0 +1,36 @@
+{
+  "eval_id": 2,
+  "run_type": "without_skill",
+  "expectations": [
+    {
+      "text": "系统化排查流程（非随机猜测）",
+      "passed": true,
+      "evidence": "有排查思路总览，按数据库层→应用层→基础设施层分层，有 5 分钟快速排查决策树"
+    },
+    {
+      "text": "覆盖数据库层面排查（索引、查询、锁等）",
+      "passed": true,
+      "evidence": "覆盖慢查询日志、EXPLAIN ANALYZE、索引问题、锁等待、数据量增长、连接数 6 个方面"
+    },
+    {
+      "text": "覆盖应用代码层面排查",
+      "passed": true,
+      "evidence": "覆盖 N+1 查询、SELECT *、序列化开销、中间件、缓存失效 5 个方面"
+    },
+    {
+      "text": "提供可执行的诊断 SQL/命令",
+      "passed": true,
+      "evidence": "包含大量 SQL 命令和 bash 命令"
+    },
+    {
+      "text": "按优先级排列修复方案",
+      "passed": false,
+      "evidence": "没有明确的优先级排序，而是按排查思路分层，但没有给出修复优先级"
+    },
+    {
+      "text": "引用项目实际技术栈",
+      "passed": false,
+      "evidence": "使用通用 Python/SQLAlchemy 示例，未引用项目的具体技术栈（FastAPI、SQLModel、asyncio.to_thread 等）"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "eval_id": 1,
+  "run_type": "without_skill",
+  "expectations": [
+    {
+      "text": "按步骤结构化流程指导（非零散建议）",
+      "passed": true,
+      "evidence": "有三步结构：查看冲突状态→逐个解决→完成合并，但每个文件内部的结构不如 with-skill 版本清晰"
+    },
+    {
+      "text": "针对每个冲突文件给出具体解决策略",
+      "passed": true,
+      "evidence": "三个文件分别有冲突特点、解决策略、操作示例、验证要点"
+    },
+    {
+      "text": "包含验证步骤（检查冲突是否解决）",
+      "passed": true,
+      "evidence": "每个文件有验证要点，最后有完成合并后的验证"
+    },
+    {
+      "text": "提供具体可执行的命令或代码",
+      "passed": true,
+      "evidence": "包含 git 命令和具体示例代码"
+    },
+    {
+      "text": "包含放弃/回退选项",
+      "passed": true,
+      "evidence": "注意事项中提到 git merge --abort"
+    },
+    {
+      "text": "响应使用中文",
+      "passed": true,
+      "evidence": "全文使用简体中文"
+    }
+  ]
+}

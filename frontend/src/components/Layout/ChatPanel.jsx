@@ -37,6 +37,7 @@ export default function ChatPanel({ onToggleSidebar }) {
   const pinnedMessages = useChatStore((s) => s.pinnedMessages)
   const messagesRef = useRef(null)
   const generationTimeoutRef = useRef(null)
+  const deployTimeoutRef = useRef(null)
 
   const slidePanelOpen = useCanvasStore((s) => s.slidePanelOpen)
   const slidePanelContent = useCanvasStore((s) => s.slidePanelContent)
@@ -138,12 +139,25 @@ export default function ChatPanel({ onToggleSidebar }) {
       }
       if (data.type === 'deploy_status') {
         const { status, log, url } = data
+        // 清除旧超时，重置 30s 看门狗
+        if (deployTimeoutRef.current) clearTimeout(deployTimeoutRef.current)
+        deployTimeoutRef.current = setTimeout(() => {
+          useCanvasStore.getState().failDeploy()
+          deployTimeoutRef.current = null
+        }, 30000)
+
         if (useCanvasStore.getState().deployStatus === 'idle') {
           useCanvasStore.getState().startDeploy()
         }
         if (log) useCanvasStore.getState().appendDeployLog(log)
-        if (status === 'success' && url) useCanvasStore.getState().finishDeploy(url)
-        if (status === 'failed') useCanvasStore.getState().failDeploy()
+        if (status === 'success' && url) {
+          useCanvasStore.getState().finishDeploy(url)
+          if (deployTimeoutRef.current) { clearTimeout(deployTimeoutRef.current); deployTimeoutRef.current = null }
+        }
+        if (status === 'failed') {
+          useCanvasStore.getState().failDeploy()
+          if (deployTimeoutRef.current) { clearTimeout(deployTimeoutRef.current); deployTimeoutRef.current = null }
+        }
         return
       }
       if (data.type === 'agent_created') {
@@ -213,6 +227,10 @@ export default function ChatPanel({ onToggleSidebar }) {
       if (generationTimeoutRef.current) {
         clearTimeout(generationTimeoutRef.current)
         generationTimeoutRef.current = null
+      }
+      if (deployTimeoutRef.current) {
+        clearTimeout(deployTimeoutRef.current)
+        deployTimeoutRef.current = null
       }
     }
   }, [activeId])
