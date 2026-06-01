@@ -691,7 +691,7 @@ export default function SettingsPanel({ onClose }) {
                   placeholder="model-name" style={inputStyle} />
               )}
               {provider === 'ollama' && ollamaError && (
-                <div style={{ marginTop: 6, fontSize: 11, color: '#d97706' }}>
+                <div style={{ marginTop: 6, fontSize: 11, color: isDark ? '#fbbf24' : '#d97706' }}>
                   ⚠️ {ollamaError}
                 </div>
               )}
@@ -762,7 +762,7 @@ export default function SettingsPanel({ onClose }) {
                 ))}
               </div>
               {bestOfN > 1 && (
-                <div style={{ marginTop: 6, fontSize: 11, color: '#d97706' }}>
+                <div style={{ marginTop: 6, fontSize: 11, color: isDark ? '#fbbf24' : '#d97706' }}>
                   ⚠️ 将消耗 {bestOfN}x Token，适合高质量关键输出
                 </div>
               )}
@@ -820,7 +820,7 @@ export default function SettingsPanel({ onClose }) {
                   <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
                     <span style={{ fontSize: 11, color: 'var(--accent)', marginRight: 6 }}>L{layer.level}</span>
                     {layer.id}
-                    {layer.has_condition && <span style={{ fontSize: 10, color: '#d97706', marginLeft: 6 }}>条件注入</span>}
+                    {layer.has_condition && <span style={{ fontSize: 10, color: isDark ? '#fbbf24' : '#d97706', marginLeft: 6 }}>条件注入</span>}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
                     {layer.content_preview}
@@ -872,7 +872,7 @@ export default function SettingsPanel({ onClose }) {
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button onClick={() => handleToggleCronTask(t.id, t.status)} disabled={saving} style={{
                           padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                          background: '#f3f4f6', border: '1px solid #d1d5db', color: '#374151',
+                          background: isDark ? 'rgba(255,255,255,0.06)' : '#f3f4f6', border: `1px solid ${isDark ? 'rgba(255,255,255,0.15)' : '#d1d5db'}`, color: isDark ? '#e5e7eb' : '#374151',
                         }}>{t.status === 'active' ? '暂停' : '恢复'}</button>
                         <button onClick={() => handleRunCronTaskNow(t.id)} disabled={saving || t.status === 'running'} style={{
                           padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
@@ -1055,7 +1055,7 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>上传文档 (支持 txt/md/pdf/docx/json/csv)</label>
               <label style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px',
-                borderRadius: 10, border: '2px dashed #d1d5db', cursor: 'pointer',
+                borderRadius: 10, border: `2px dashed ${isDark ? 'rgba(255,255,255,0.15)' : '#d1d5db'}`, cursor: 'pointer',
                 background: kbUploading ? 'var(--bg-secondary)' : 'var(--bg-secondary)', transition: 'all 0.2s',
               }}>
                 <input type="file" accept=".txt,.md,.pdf,.docx,.json,.csv" onChange={handleKbUpload} style={{ display: 'none' }} />
@@ -1231,11 +1231,12 @@ export default function SettingsPanel({ onClose }) {
 }
 
 function ToggleSwitch({ checked, onChange }) {
+  const isDark = useThemeStore((s) => s.theme === 'dark')
   return (
     <div onClick={() => onChange(!checked)} style={{
       width: 44, height: 24, borderRadius: 12, cursor: 'pointer',
-      background: checked ? '#4f46e5' : '#d1d5db',
-      border: `1px solid ${checked ? '#4f46e5' : '#d1d5db'}`,
+      background: checked ? '#4f46e5' : (isDark ? 'rgba(255,255,255,0.15)' : '#d1d5db'),
+      border: `1px solid ${checked ? '#4f46e5' : (isDark ? 'rgba(255,255,255,0.15)' : '#d1d5db')}`,
       position: 'relative', transition: 'all 0.2s', flexShrink: 0,
     }}>
       <div style={{

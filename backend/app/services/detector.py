@@ -4,6 +4,7 @@ import socket
 import os
 import json
 import httpx
+from app.core.subprocess_security import safe_terminate_process_tree
 from typing import List, Dict
 
 # Path to register prompt layers
@@ -31,8 +32,7 @@ async def get_running_processes() -> List[str]:
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
         except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
+            await safe_terminate_process_tree(proc)
             raise
         if proc.returncode == 0:
             lines = stdout.decode("utf-8", errors="replace").splitlines()
@@ -50,8 +50,7 @@ async def get_running_processes() -> List[str]:
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
         except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
+            await safe_terminate_process_tree(proc)
             raise
         if proc.returncode == 0:
             lines = stdout.decode("utf-8", errors="replace").splitlines()

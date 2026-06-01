@@ -127,7 +127,7 @@ class DaemonScheduler:
         MAX_RETRIES = 3                   # 失败自愈最大重试次数
         BASE_BACKOFF_SECONDS = 15         # 基础指数退避秒数
 
-        update_cron_task_status(task_id, "running")
+        await asyncio.to_thread(update_cron_task_status, task_id, "running")
         logger.info(f"Triggering background autonomous agent {agent_id} for cron job {task_id} (Attempt {self._retry_counts.get(task_id, 0) + 1})...")
 
         execution_success = False
@@ -145,7 +145,7 @@ class DaemonScheduler:
 
             # 【特性：跨运行周期记忆延续】
             # 在执行任务前，查找当前会话最新的历史消息，如果存在上一轮的回复，作为上下文继承喂给 Agent
-            hist = get_messages(conversation_id, limit=15)
+            hist = await asyncio.to_thread(get_messages, conversation_id, 15)
             previous_run_summary = ""
             for m in reversed(hist):
                 # 找到上一次该 Agent 的非系统提示/非报错的正常回复
@@ -186,11 +186,12 @@ class DaemonScheduler:
             # 2. 文本长度/Token预算安全阀
             if len(full_text) > MAX_OUTPUT_CHARACTERS:
                 logger.warning(f"Cron job {task_id} generated text too long ({len(full_text)} chars). Triggering truncation guardrail.")
-                save_message(
+                await asyncio.to_thread(
+                    save_message,
                     conversation_id,
                     agent_id,
                     {"text": f"⚠️ [安全警示]: 后台任务生成文本异常过长 ({len(full_text)} 字符)，已被熔断器截断，防止刷爆 Token 额度。"},
-                    streaming=False
+                    False
                 )
 
             execution_success = True
@@ -208,7 +209,7 @@ class DaemonScheduler:
             # 执行成功：清除重试计数，进入下一个正常长周期
             self._retry_counts[task_id] = 0
             next_run_str = (now + timedelta(seconds=interval)).strftime("%Y-%m-%d %H:%M:%S")
-            update_cron_task_run_time(task_id, last_run_str, next_run_str, "active")
+            await asyncio.to_thread(update_cron_task_run_time, task_id, last_run_str, next_run_str, "active")
         else:
             # 执行失败：递增重试次数
             current_retry = self._retry_counts.get(task_id, 0) + 1
@@ -224,7 +225,7 @@ class DaemonScheduler:
                 logger.warning(f"Cron task {task_id} failed. Scheduling retry {current_retry}/{MAX_RETRIES} in {backoff_seconds}s.")
                 
                 # 写入带有自动重试字样的消息广播给前端
-                save_message(
+                await asyncio.to_thread(save_message,
                     conversation_id,
                     agent_id,
                     {
@@ -236,7 +237,7 @@ class DaemonScheduler:
                     },
                     streaming=False
                 )
-                update_cron_task_run_time(task_id, last_run_str, next_run_str, "active")
+                await asyncio.to_thread(update_cron_task_run_time, task_id, last_run_str, next_run_str, "active")
             else:
                 # 重试次数超限，彻底宣告失败，只能等待下一个大周期的长轮询
                 self._retry_counts[task_id] = 0
@@ -247,7 +248,7 @@ class DaemonScheduler:
                 is_guardrail = "安全熔断" in error_msg or "TimeoutError" in error_msg
                 badge = "🛑 [后台自治安全熔断]" if is_guardrail else "🛑 [后台自治彻底失败]"
                 
-                save_message(
+                await asyncio.to_thread(save_message,
                     conversation_id,
                     agent_id,
                     {
@@ -259,7 +260,7 @@ class DaemonScheduler:
                     },
                     streaming=False
                 )
-                update_cron_task_run_time(task_id, last_run_str, next_run_str, "active")
+                await asyncio.to_thread(update_cron_task_run_time, task_id, last_run_str, next_run_str, "active")
 
 
 daemon_scheduler = DaemonScheduler()

@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from typing import Optional, List, Any
 from sqlmodel import SQLModel, Field, Session, select, create_engine, UniqueConstraint
 
+_MAX_JSON_PARSE_SIZE = 1_000_000  # 1MB -- skip parsing for oversized payloads
+
 def _safe_json_loads(s):
+    """Parse JSON with size guard and graceful fallback."""
+    if isinstance(s, str) and len(s) > _MAX_JSON_PARSE_SIZE:
+        return {"text": s, "_warning": "payload_too_large_skipped"}
     try:
         return json.loads(s)
     except (json.JSONDecodeError, TypeError):

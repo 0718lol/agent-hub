@@ -186,7 +186,7 @@ async def stream_agent_reply(
                             if escape_next:
                                 escape_next = False
                                 continue
-                            if ch == '':
+                            if ch == '\':
                                 if in_string:
                                     escape_next = True
                                 continue

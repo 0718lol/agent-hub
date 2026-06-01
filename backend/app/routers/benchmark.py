@@ -6,7 +6,11 @@ from app.core.benchmark import run_benchmark, get_current_run, BENCHMARK_CASES
 
 router = APIRouter(tags=["benchmark"])
 
-# Module-level reference to prevent GC of background benchmark task
+# Module-level reference to prevent GC of background benchmark task.
+# KNOWN LIMITATION: With uvicorn --workers > 1, each worker has its own
+# independent copy of this variable. Workers cannot detect each other's
+# running benchmarks. Cross-worker coordination requires an external store
+# (e.g. Redis lock or database flag) — not yet implemented.
 _active_benchmark_task: asyncio.Task | None = None
 
 

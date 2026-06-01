@@ -10,7 +10,8 @@ import DeployProgressCard from '../Chat/DeployProgressCard'
 import IconAvatar from '../IconAvatar'
 import { wsClient } from '../../utils/websocket'
 
-// 全局消息加载缓存：已加载过的 convId 不重复请求
+// 全局消息加载缓存：已加载过的 convId 不重复请求（上限 200 防止内存膨胀）
+const LOADED_CONVS_MAX = 200
 const loadedConvs = new Set()
 
 // 全局滚动位置缓存
@@ -44,6 +45,16 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
     if (!convId) return
     if (generatingConvs.has(convId)) return
     if (loadedConvs.has(convId) && conv && conv.messages.length > 0) return
+    // 防止 Set 无限增长：超出上限时淘汰最早加入的条目
+    if (loadedConvs.size >= LOADED_CONVS_MAX) {
+      const toDelete = loadedConvs.size - LOADED_CONVS_MAX + 1
+      let deleted = 0
+      for (const id of loadedConvs) {
+        if (deleted >= toDelete) break
+        loadedConvs.delete(id)
+        deleted++
+      }
+    }
     loadedConvs.add(convId)
     loadMessages(convId)
   }, [convId])

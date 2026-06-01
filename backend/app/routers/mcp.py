@@ -1,10 +1,21 @@
-﻿import shlex
+import shlex
 import re
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.core.mcp_bridge import mcp_bridge_manager
 
 ALLOWED_MCP_COMMANDS = {"npx", "node", "python", "uvx"}
+
+# Dangerous args patterns that could enable code execution
+_DANGEROUS_ARG_PATTERNS = [
+    re.compile(r'^-c$'),                          # python -c "code"
+    re.compile(r'^--command$'),                    # various --command flags
+    re.compile(r'^-e$'),                           # python -e / node -e
+    re.compile(r'^--eval$'),                       # node --eval
+    re.compile(r'^--require$'),                    # node -r / --require (preload modules)
+]
+
+_MAX_ARG_LENGTH = 1024
 
 router = APIRouter(tags=["mcp"])
 
@@ -29,11 +40,25 @@ async def register_mcp_server(body: MCPServerRegister):
     if cmd_base not in ALLOWED_MCP_COMMANDS:
         return {"status": "error", "message": f"Command '{cmd_base}' not allowed. Allowed: {ALLOWED_MCP_COMMANDS}"}
 
-    # Validate args: block shell metacharacters to prevent command injection
+    # Validate command field itself: block shell metacharacters
     _SHELL_META = re.compile(r'[;&|`$(){}!<>]')
-    for arg in body.args:
+    if _SHELL_META.search(body.command):
+        return {"status": "error", "message": "Command field contains forbidden shell metacharacters"}
+
+    # Validate each arg: length limit + shell metacharacter check
+    for i, arg in enumerate(body.args):
+        if len(arg) > _MAX_ARG_LENGTH:
+            return {"status": "error", "message": f"Arg[{i}] exceeds max length ({_MAX_ARG_LENGTH} chars)"}
         if _SHELL_META.search(arg):
             return {"status": "error", "message": f"Args contain forbidden shell metacharacters: {arg}"}
+
+    # Cross-validation: block dangerous arg patterns for python/node interpreters
+    # Prevent: python -c "import os; os.system(...)" or node -e "require('child_process')..."
+    if cmd_base in ("python", "node", "npx", "uvx"):
+        for i, arg in enumerate(body.args):
+            for pattern in _DANGEROUS_ARG_PATTERNS:
+                if pattern.match(arg):
+                    return {"status": "error", "message": f"Dangerous arg pattern '{arg}' not allowed for '{cmd_base}'"}
 
     success = await mcp_bridge_manager.register_server(
         name=body.name,
