@@ -1,16 +1,249 @@
-import React, { useState, useMemo, useCallback, useRef } from 'react'
-import { Plus, Settings, Pin, MoreHorizontal, X, PanelLeftClose, PanelLeftOpen, ChevronRight, Search, Bot, Wrench, BookOpen, Cpu, FolderOpen, Hammer, Trash2, Lock, Edit3 } from 'lucide-react'
+# 左侧侧边栏布局重构 — 实施计划
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 将左侧侧边栏从 200px 对话列表重构为 300px 多分组布局（智能体/资源/搜索+历史），参考 Coze 风格。
+
+**Architecture:** 侧边栏从单一 conversation-list 拆分为 5 个区域：header + 智能体分组 + 资源分组 + 搜索/新对话/历史 + footer。每个区域独立折叠控制，ChatPanelHeader 移除 Search 按钮。
+
+**Tech Stack:** React 18 + Zustand + CSS variables (Coze design tokens)
+
+---
+
+### Task 1: CSS — 侧边栏宽度 + 新分组样式
+
+**Files:**
+- Modify: `frontend/src/styles/global.css`
+
+- [ ] **Step 1: 宽度 200→300px**
+
+Replace:
+```css
+.sidebar {
+  width: 200px;
+  min-width: 200px;
+  ...
+}
+```
+With:
+```css
+.sidebar {
+  width: 300px;
+  min-width: 300px;
+  ...
+}
+```
+
+- [ ] **Step 2: 新增分组标题样式**
+
+在 `.sidebar-header` 之前插入：
+
+```css
+/* ---- Sidebar Section Groups ---- */
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--duration-fast) var(--ease-in-out);
+}
+.sidebar-section-header:hover {
+  background: var(--bg-secondary);
+}
+
+.sidebar-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sidebar-section-chevron {
+  color: var(--text-muted);
+  transition: transform var(--duration-fast) var(--ease-in-out);
+}
+.sidebar-section-chevron.open {
+  transform: rotate(90deg);
+}
+
+.sidebar-section-add {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--duration-fast) var(--ease-in-out);
+}
+.sidebar-section-add:hover {
+  background: var(--bg-secondary);
+  color: var(--accent);
+}
+```
+
+- [ ] **Step 3: 新增 Agent 行样式**
+
+```css
+/* Agent item in sidebar */
+.sidebar-agent-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  margin: 0 var(--space-1);
+  transition: background var(--duration-fast) var(--ease-in-out);
+}
+.sidebar-agent-item:hover {
+  background: var(--bg-secondary);
+}
+.sidebar-agent-item.active {
+  background: var(--accent-bg);
+}
+
+.sidebar-agent-info {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar-agent-name {
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-agent-role {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Online status dot */
+.online-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.online-dot.online  { background: var(--green); }
+.online-dot.busy   { background: var(--orange); animation: dotPulse 1.5s infinite; }
+.online-dot.offline { background: var(--text-muted); }
+
+@keyframes dotPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+```
+
+- [ ] **Step 4: 收起状态适配**
+
+在 `.sidebar.collapsed` 区域追加：
+
+```css
+.sidebar.collapsed .sidebar-section-header {
+  justify-content: center;
+  padding: var(--space-2);
+}
+.sidebar.collapsed .sidebar-section-title span,
+.sidebar.collapsed .sidebar-section-chevron,
+.sidebar.collapsed .sidebar-section-add,
+.sidebar.collapsed .sidebar-agent-item,
+.sidebar.collapsed .sidebar-resource-item,
+.sidebar.collapsed .sidebar-search-wrap,
+.sidebar.collapsed .sidebar-new-conv,
+.sidebar.collapsed .sidebar-history-list {
+  display: none;
+}
+.sidebar.collapsed .sidebar-section-title {
+  justify-content: center;
+}
+```
+
+- [ ] **Step 5: 搜索框 + 历史对话区域样式**
+
+```css
+/* Search in sidebar */
+.sidebar-search-wrap {
+  padding: var(--space-2) var(--space-2);
+  flex-shrink: 0;
+}
+.sidebar-search-wrap input {
+  width: 100%;
+  height: 32px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  padding: 0 var(--space-3);
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease-in-out);
+}
+.sidebar-search-wrap input:focus { border-color: var(--accent); }
+.sidebar-search-wrap input::placeholder { color: var(--text-muted); }
+
+/* History list in sidebar */
+.sidebar-history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 var(--space-2);
+  min-height: 0;
+}
+```
+
+- [ ] **Step 6: Build 验证**
+
+```bash
+cd /e/Program/agent-hub/frontend && npm run build
+```
+
+---
+
+### Task 2: Sidebar.jsx — 完整重写
+
+**Files:**
+- Modify: `frontend/src/components/Layout/Sidebar.jsx`
+
+- [ ] **Step 1: 替换整个 Sidebar.jsx**
+
+写入以下完整代码：
+
+```jsx
+import React, { useState, useMemo, useCallback } from 'react'
+import { Plus, Settings, Pin, MoreHorizontal, X, PanelLeftClose, PanelLeftOpen, ChevronRight, Search, Users, Bot, Wrench, BookOpen, Cpu } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useTabStore } from '../../stores/tabStore'
 import SettingsPanel from './SettingsPanel'
 import IconAvatar from '../IconAvatar'
+import AgentSelector from '../Chat/AgentSelector'
 import AgentCreator from '../Chat/AgentCreator'
 
 /* 资源子类定义 */
 const RESOURCE_CATEGORIES = [
   { key: 'skills', label: '技能', icon: Wrench },
-  { key: 'tools', label: '工具', icon: Hammer },
+  { key: 'tools', label: '工具', icon: Bot },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
   { key: 'models', label: '模型', icon: Cpu },
 ]
@@ -31,21 +264,16 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
 
   const [collapsed, setCollapsed] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showNewDialog, setShowNewDialog] = useState(false)
   const [showCreator, setShowCreator] = useState(false)
   const [contextMenu, setContextMenu] = useState(null)
   const [dragIndex, setDragIndex] = useState(null)
-  const [confirmDeleteAgentId, setConfirmDeleteAgentId] = useState(null)
-  const [renameDialog, setRenameDialog] = useState(null) // { convId, name } or null
-  const [tooltip, setTooltip] = useState(null) // { text, x, y } or null
 
   // 分组折叠状态
   const [agentsExpanded, setAgentsExpanded] = useState(true)
   const [resourcesExpanded, setResourcesExpanded] = useState(true)
   const [resourceExpanded, setResourceExpanded] = useState({})
   const [searchQuery, setSearchQuery] = useState('')
-
-  // 新对话计数器，用于生成默认名称 "新对话1", "新对话2" ...
-  const convCounterRef = useRef(1)
 
   // PM 不可删除的 ID
   const PM_ID = 'agent_pm'
@@ -96,14 +324,6 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
 
   const closeContextMenu = () => setContextMenu(null)
 
-  const handleDeleteAgent = async (e, agentId) => {
-    e.stopPropagation()
-    if (window.confirm('确定要删除该 Agent 吗？此操作不可撤销。')) {
-      await useAgentStore.getState().removeAgent(agentId)
-      setConfirmDeleteAgentId(null)
-    }
-  }
-
   const formatTime = (ts) => {
     if (!ts) return ''
     const d = new Date(ts)
@@ -111,6 +331,11 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
     if (d.toDateString() === now.toDateString())
       return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
     return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+  }
+
+  const getStatusClass = (status) => {
+    if (status === 'working') return 'busy'
+    return status || 'offline'
   }
 
   const toggleResource = (key) => {
@@ -149,13 +374,13 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
 
           <div className="sidebar-section">
             <div className="sidebar-section-header" style={{ justifyContent: 'center' }} title="智能体">
-              <Bot size={20} style={{ color: 'var(--text-secondary)' }} />
+              <Users size={20} style={{ color: 'var(--text-secondary)' }} />
             </div>
           </div>
 
           <div className="sidebar-section">
             <div className="sidebar-section-header" style={{ justifyContent: 'center' }} title="资源">
-              <FolderOpen size={20} style={{ color: 'var(--text-secondary)' }} />
+              <Bot size={20} style={{ color: 'var(--text-secondary)' }} />
             </div>
           </div>
 
@@ -169,6 +394,22 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
         </div>
 
         {/* Modals */}
+        {showNewDialog && (
+          <AgentSelector
+            onSelect={(agentId) => {
+              setShowNewDialog(false)
+              const convId = `conv_${agentId}_${Date.now()}`
+              const agent = useAgentStore.getState().agents.find((a) => a.agent_id === agentId)
+              useChatStore.getState().addConversation({
+                id: convId, type: 'single', agentId,
+                name: agent?.name || '新对话', avatar: null,
+                messages: [], pinned: false, unread: false, updatedAt: Date.now(),
+              })
+              openTab(convId, agent?.name || '新对话', agentId)
+            }}
+            onClose={() => setShowNewDialog(false)}
+          />
+        )}
         {showCreator && <AgentCreator onClose={() => setShowCreator(false)} onBack={() => setShowCreator(false)} />}
         {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
       </>
@@ -190,24 +431,18 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
           </button>
         </div>
 
-        <div className="sidebar-scroll">
         {/* ===== 智能体分组 ===== */}
         <div className="sidebar-section">
           <div className="sidebar-section-header" onClick={() => setAgentsExpanded(!agentsExpanded)}>
-            <div className="sidebar-section-title" style={{ fontSize: 'var(--text-sm)', textTransform: 'none', letterSpacing: 0 }}>
+            <div className="sidebar-section-title">
               <ChevronRight size={14} className={`sidebar-section-chevron ${agentsExpanded ? 'open' : ''}`} />
-              <Bot size={16} />
+              <Users size={14} />
               <span>智能体</span>
             </div>
             <button
               className="sidebar-section-add"
               onClick={(e) => { e.stopPropagation(); setShowCreator(true) }}
               title="新建Agent"
-              onMouseEnter={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect()
-                setTooltip({ text: '新建Agent', x: rect.left + rect.width / 2, y: rect.top - 8 })
-              }}
-              onMouseLeave={() => setTooltip(null)}
             >
               <Plus size={14} />
             </button>
@@ -217,12 +452,11 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
             <div style={{ paddingBottom: 'var(--space-1)' }}>
               {sidebarAgents.map((agent) => {
                 const isActive = activeAgentId === agent.agent_id
-                const isAgentRunning = openTabs.some((t) => t.agentId === agent.agent_id)
+                const statusClass = getStatusClass(agent.status)
                 return (
                   <div
                     key={agent.agent_id}
-                    className={`conversation-item ${isActive ? 'active' : ''}`}
-                    style={{ paddingLeft: 'var(--space-5)' }}
+                    className={`sidebar-agent-item ${isActive ? 'active' : ''}`}
                     onClick={() => {
                       const convId = `conv_${agent.agent_id}`
                       openTab(convId, agent.name, agent.agent_id)
@@ -231,24 +465,11 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
                     <div className="conv-avatar" style={{ width: 32, height: 32 }}>
                       <IconAvatar agentId={agent.agent_id} size={18} />
                     </div>
-                    <div className="conv-info">
-                      <div className="conv-name">{agent.name}</div>
-                      <div className="conv-status conv-status-idle">{agent.role}</div>
+                    <div className="sidebar-agent-info">
+                      <div className="sidebar-agent-name">{agent.name}</div>
+                      <div className="sidebar-agent-role">{agent.role}</div>
                     </div>
-                    <span className="online-dot" style={{ background: isAgentRunning ? 'var(--green)' : 'var(--red, #ef4444)' }} title={isAgentRunning ? '运行中' : '已停止'} />
-                    {agent.agent_id.startsWith('agent_custom_') ? (
-                      <button
-                        className="agent-row-delete"
-                        onClick={(e) => handleDeleteAgent(e, agent.agent_id)}
-                        title="删除"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    ) : (
-                      <span className="agent-row-lock" title="默认agent不允许删除">
-                        <Lock size={14} />
-                      </span>
-                    )}
+                    <span className={`online-dot ${statusClass}`} />
                   </div>
                 )
               })}
@@ -259,9 +480,9 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
         {/* ===== 资源分组 ===== */}
         <div className="sidebar-section">
           <div className="sidebar-section-header" onClick={() => setResourcesExpanded(!resourcesExpanded)}>
-            <div className="sidebar-section-title" style={{ fontSize: 'var(--text-sm)', textTransform: 'none', letterSpacing: 0 }}>
+            <div className="sidebar-section-title">
               <ChevronRight size={14} className={`sidebar-section-chevron ${resourcesExpanded ? 'open' : ''}`} />
-              <FolderOpen size={16} />
+              <Bot size={14} />
               <span>资源</span>
             </div>
             <button className="sidebar-section-add" onClick={(e) => e.stopPropagation()} title="资源" style={{ visibility: 'hidden' }}>
@@ -274,7 +495,6 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
               {RESOURCE_CATEGORIES.map((cat) => {
                 const isOpen = resourceExpanded[cat.key] || false
                 const CatIcon = cat.icon
-                const addTitle = `新建${cat.label}`
                 return (
                   <div key={cat.key}>
                     <div
@@ -282,21 +502,12 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
                       onClick={() => toggleResource(cat.key)}
                       style={{ paddingLeft: 'var(--space-5)' }}
                     >
-                      <div className="sidebar-section-title" style={{ fontSize: 'var(--text-xs)' }}>
+                      <div className="sidebar-section-title">
                         <ChevronRight size={12} className={`sidebar-section-chevron ${isOpen ? 'open' : ''}`} />
                         <CatIcon size={14} />
                         <span style={{ textTransform: 'none', letterSpacing: 0 }}>{cat.label}</span>
                       </div>
-                      <button
-                        className="sidebar-section-add"
-                        onClick={(e) => e.stopPropagation()}
-                        title={addTitle}
-                        onMouseEnter={(e) => {
-                          const rect = e.currentTarget.getBoundingClientRect()
-                          setTooltip({ text: addTitle, x: rect.left + rect.width / 2, y: rect.top - 8 })
-                        }}
-                        onMouseLeave={() => setTooltip(null)}
-                      >
+                      <button className="sidebar-section-add" onClick={(e) => e.stopPropagation()} title={cat.label}>
                         <Plus size={14} />
                       </button>
                     </div>
@@ -312,37 +523,27 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
           )}
         </div>
 
-        {/* ===== 新对话 + 搜索 + 历史对话 ===== */}
-        <div className="sidebar-new-conv-wrap">
-          <div className="sidebar-new-conv-btn" onClick={() => {
-            if (!activeAgentId) return
-            const convId = `conv_${activeAgentId}_${Date.now()}`
-            const defaultName = `新对话${convCounterRef.current}`
-            convCounterRef.current += 1
-            useChatStore.getState().addConversation({
-              id: convId, type: 'single', agentId: activeAgentId,
-              name: defaultName, avatar: null,
-              messages: [], pinned: false, unread: false, updatedAt: Date.now(),
-            })
-            openTab(convId, defaultName, activeAgentId)
-          }}>
-            <Plus size={16} />
-            <span>新对话</span>
-          </div>
-        </div>
-
-        <div className="sidebar-search-wrap" style={{ position: 'relative' }}>
-          <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+        {/* ===== 搜索 + 新对话 + 历史对话 ===== */}
+        <div className="sidebar-search-wrap">
           <input
             type="text"
             placeholder="搜索对话..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ paddingLeft: 30 }}
           />
         </div>
 
-        <div className="sidebar-history-label">历史对话</div>
+        <div
+          className="conversation-item sidebar-new-conv"
+          onClick={() => setShowNewDialog(true)}
+        >
+          <div className="conv-avatar" style={{ background: 'var(--accent-bg)', color: 'var(--accent)' }}>
+            <Plus size={18} />
+          </div>
+          <div className="conv-info">
+            <div className="conv-name" style={{ color: 'var(--accent)' }}>新对话</div>
+          </div>
+        </div>
 
         <div className="sidebar-history-list">
           {historyConversations.length === 0 && !searchQuery.trim() ? null : historyConversations.length === 0 ? (
@@ -356,17 +557,7 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
                 <div
                   key={conv.id}
                   className={`conversation-item ${openConvIds.has(conv.id) ? 'active' : ''}`}
-                  style={{ paddingLeft: 'var(--space-5)' }}
-                  onClick={() => {
-                    const existingTab = openTabs.find((t) => t.convId === conv.id)
-                    if (existingTab) {
-                      // 标签页已存在 → 直接切换到该标签
-                      useTabStore.getState().setActiveTab(existingTab.id)
-                    } else {
-                      // 标签页不存在 → 新建标签并打开该对话
-                      openTab(conv.id, conv.name, conv.agentId)
-                    }
-                  }}
+                  onClick={() => openTab(conv.id, conv.name, conv.agentId)}
                   onContextMenu={(e) => handleContextMenu(e, conv.id)}
                   draggable
                   onDragStart={(e) => handleDragStart(e, i)}
@@ -374,11 +565,11 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
                   onDrop={(e) => handleDrop(e, i)}
                 >
                   {conv.pinned && <span className="pin-indicator"><Pin size={10} /></span>}
-                  <div className="conv-avatar" style={{ width: 32, height: 32 }}>
+                  <div className="conv-avatar">
                     <IconAvatar
                       agentId={conv.type === 'single' ? conv.agentId : undefined}
                       iconKey={conv.type === 'group' ? 'group' : undefined}
-                      size={18}
+                      size={20}
                     />
                   </div>
                   <div className="conv-info">
@@ -396,7 +587,6 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
               )
             })
           )}
-        </div>
         </div>
 
         {/* Footer */}
@@ -417,14 +607,6 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
               <Pin size={14} />
               {conversations.find((c) => c.id === contextMenu.convId)?.pinned ? '取消置顶' : '置顶'}
             </button>
-            <button className="context-menu-item" onClick={() => {
-              const conv = conversations.find((c) => c.id === contextMenu.convId)
-              setRenameDialog({ convId: contextMenu.convId, name: conv?.name || '' })
-              closeContextMenu()
-            }}>
-              <Edit3 size={14} />
-              重命名
-            </button>
             <button className="context-menu-item danger" onClick={() => { archiveConversation(contextMenu.convId); closeContextMenu() }}>
               <X size={14} />
               归档
@@ -434,115 +616,136 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
       )}
 
       {/* Modals */}
+      {showNewDialog && (
+        <AgentSelector
+          onSelect={(agentId) => {
+            setShowNewDialog(false)
+            const convId = `conv_${agentId}_${Date.now()}`
+            const agent = useAgentStore.getState().agents.find((a) => a.agent_id === agentId)
+            useChatStore.getState().addConversation({
+              id: convId, type: 'single', agentId,
+              name: agent?.name || '新对话', avatar: null,
+              messages: [], pinned: false, unread: false, updatedAt: Date.now(),
+            })
+            openTab(convId, agent?.name || '新对话', agentId)
+          }}
+          onClose={() => setShowNewDialog(false)}
+        />
+      )}
       {showCreator && <AgentCreator onClose={() => setShowCreator(false)} onBack={() => setShowCreator(false)} />}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
-
-      {/* 重命名弹窗 */}
-      {renameDialog && (
-        <div style={{
-          position: 'fixed', inset: 0,
-          background: 'rgba(0,0,0,0.3)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 9999,
-        }} onClick={() => setRenameDialog(null)}>
-          <div style={{
-            background: 'var(--bg-primary)',
-            borderRadius: 'var(--radius-xl)',
-            border: '1px solid var(--border)',
-            padding: 'var(--space-6)',
-            width: 360,
-            boxShadow: 'var(--shadow-lg)',
-            animation: 'scaleUp 0.15s var(--ease-out)',
-          }} onClick={(e) => e.stopPropagation()}>
-            <div style={{
-              fontSize: 'var(--text-base)', fontWeight: 600,
-              color: 'var(--text-primary)', marginBottom: 'var(--space-4)',
-            }}>
-              重命名
-            </div>
-            <input
-              autoFocus
-              value={renameDialog.name}
-              onChange={(e) => setRenameDialog({ ...renameDialog, name: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && renameDialog.name.trim()) {
-                  useChatStore.getState().renameConversation(renameDialog.convId, renameDialog.name.trim())
-                  setRenameDialog(null)
-                }
-              }}
-              style={{
-                width: '100%', padding: '10px 14px',
-                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-md)', color: 'var(--text-primary)',
-                fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)', outline: 'none',
-                marginBottom: 'var(--space-4)',
-              }}
-              placeholder="输入对话名称"
-            />
-            <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => setRenameDialog(null)}
-                style={{
-                  padding: '8px 20px', borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--border)', background: 'var(--bg-secondary)',
-                  color: 'var(--text-primary)', fontSize: 'var(--text-sm)',
-                  cursor: 'pointer', fontFamily: 'var(--font-ui)',
-                }}
-              >
-                取消
-              </button>
-              <button
-                onClick={() => {
-                  if (renameDialog.name.trim()) {
-                    useChatStore.getState().renameConversation(renameDialog.convId, renameDialog.name.trim())
-                  }
-                  setRenameDialog(null)
-                }}
-                disabled={!renameDialog.name.trim()}
-                style={{
-                  padding: '8px 20px', borderRadius: 'var(--radius-md)',
-                  border: 'none', background: !renameDialog.name.trim() ? 'var(--bg-tertiary)' : 'var(--accent)',
-                  color: !renameDialog.name.trim() ? 'var(--text-muted)' : '#fff',
-                  fontSize: 'var(--text-sm)', fontWeight: 500,
-                  cursor: renameDialog.name.trim() ? 'pointer' : 'default',
-                  fontFamily: 'var(--font-ui)',
-                }}
-              >
-                确定
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Fixed-position tooltip (outside scroll container to avoid clipping) */}
-      {tooltip && (
-        <div style={{
-          position: 'fixed',
-          top: tooltip.y,
-          left: tooltip.x,
-          transform: 'translate(-50%, -100%)',
-          background: '#1D2129',
-          color: '#FFFFFF',
-          fontSize: '12px',
-          fontWeight: 500,
-          whiteSpace: 'nowrap',
-          padding: '6px 10px',
-          borderRadius: '6px',
-          pointerEvents: 'none',
-          zIndex: 9999,
-        }}>
-          {tooltip.text}
-          <div style={{
-            position: 'absolute',
-            top: '100%',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            border: '5px solid transparent',
-            borderTopColor: '#1D2129',
-          }} />
-        </div>
-      )}
     </>
   )
 }
+```
+
+- [ ] **Step 2: Build 验证**
+
+```bash
+cd /e/Program/agent-hub/frontend && npm run build
+```
+
+---
+
+### Task 3: ChatPanelHeader — 移除 Search 按钮
+
+**Files:**
+- Modify: `frontend/src/components/Layout/ChatPanelHeader.jsx:74-81`
+
+- [ ] **Step 1: 移除 Search 图标按钮**
+
+删除 lines 74-81:
+```jsx
+        <button
+          className="header-icon-btn"
+          onClick={() => toggleSlidePanel('search')}
+          style={slidePanelOpen && slidePanelContent === 'search' ? { color: 'var(--accent)' } : undefined}
+        >
+          <Search size={20} />
+          <span className="icon-tooltip">搜索对话</span>
+        </button>
+```
+
+- [ ] **Step 2: 移除 Search 导入**
+
+Line 2: 从 `lucide-react` 导入中移除 `Search`:
+```jsx
+import { Code2, GitBranch, LayoutList, Menu, PanelRightClose, MoreHorizontal, Share2 } from 'lucide-react'
+```
+
+- [ ] **Step 3: Build 验证**
+
+```bash
+cd /e/Program/agent-hub/frontend && npm run build
+```
+
+---
+
+### Task 4: SlidePanel — 移除 search 内容渲染
+
+**Files:**
+- Modify: `frontend/src/components/Layout/SlidePanel.jsx`
+
+- [ ] **Step 1: 移除 search 相关代码**
+
+1. 移除 `SearchPanel` import
+2. 移除 `useChatStore` import（如果仅用于 search）
+3. 移除 `content === 'search'` 标题行
+4. 移除 `content === 'search'` 内容渲染块
+5. 移除 `setActiveConversation` 使用
+
+- [ ] **Step 2: Build 验证**
+
+```bash
+cd /e/Program/agent-hub/frontend && npm run build
+```
+
+---
+
+### Task 5: AgentSelector — 排除 PM
+
+**Files:**
+- Modify: `frontend/src/components/Chat/AgentSelector.jsx`
+
+- [ ] **Step 1: 过滤 PM agent**
+
+在 `visibleAgents` 过滤中添加 PM 排除:
+
+```jsx
+const visibleAgents = agents.filter(
+  (a) => a.agent_id !== 'agent_builder'
+    && a.agent_id !== 'agent_pm'
+    && !deletedPresetIds.includes(a.agent_id)
+)
+```
+
+- [ ] **Step 2: Build 验证**
+
+```bash
+cd /e/Program/agent-hub/frontend && npm run build
+```
+
+---
+
+### Task 6: 最终验证
+
+- [ ] **Step 1: Build**
+
+```bash
+cd /e/Program/agent-hub/frontend && npm run build
+```
+
+Expected: 1800+ modules transformed, build succeeded.
+
+- [ ] **Step 2: 检查关键行为**
+  - [ ] PM 小助手在智能体列表第一位，不可删除
+  - [ ] 点击智能体 → 打开/切换到独立标签页
+  - [ ] 历史对话按当前 agent 过滤
+  - [ ] 无历史对话时列表为空（不显示占位符）
+  - [ ] 搜索框过滤对话
+  - [ ] 「＋ 新对话」打开 AgentSelector（PM 不在其中）
+  - [ ] 「智能体 ＋」打开 AgentCreator
+  - [ ] 资源分组可折叠，子类可展开/折叠
+  - [ ] 收起状态仅显示图标
+  - [ ] 侧边栏 300px → 收起 60px，聊天区自适应
+  - [ ] ChatPanel header 不再有 Search 按钮

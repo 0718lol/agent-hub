@@ -4,8 +4,6 @@ import { useCanvasStore } from '../../stores/canvasStore'
 import DiffViewer from '../Canvas/DiffViewer'
 import WebPreview from '../Canvas/WebPreview'
 import DeployPanel from '../Canvas/DeployPanel'
-import SearchPanel from './SearchPanel'
-import { useChatStore } from '../../stores/chatStore'
 
 const MIN_WIDTH = 280
 const MAX_WIDTH = 680
@@ -18,7 +16,6 @@ export default function SlidePanel() {
   const toggleSlidePanel = useCanvasStore((s) => s.toggleSlidePanel)
   const setTab = useCanvasStore((s) => s.setSlidePanelTab)
   const setSlidePanelWidth = useCanvasStore((s) => s.setSlidePanelWidth)
-  const setActiveConversation = useChatStore((s) => s.setActiveConversation)
 
   const [dragging, setDragging] = useState(false)
   const panelRef = useRef(null)
@@ -95,9 +92,6 @@ export default function SlidePanel() {
               </button>
             </>
           )}
-          {content === 'search' && (
-            <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-primary)' }}>搜索对话</span>
-          )}
         </div>
         <div className="slide-panel-actions">
           <button className="slide-panel-btn" onClick={() => toggleSlidePanel(content)} title="关闭面板">
@@ -109,14 +103,6 @@ export default function SlidePanel() {
         {content === 'code' && tab === 'code' && <DiffViewer />}
         {content === 'code' && tab === 'preview' && <WebPreview />}
         {content === 'code' && tab === 'deploy' && <DeployPanel />}
-        {content === 'search' && (
-          <SearchPanel
-            onSelect={(convId) => {
-              setActiveConversation(convId)
-              toggleSlidePanel('search')
-            }}
-          />
-        )}
       </div>
     </div>
   )

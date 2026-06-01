@@ -1,5 +1,5 @@
 import React, { useState, memo } from 'react'
-import { Code2, GitBranch, LayoutList, Menu, Search, PanelRightClose, MoreHorizontal, Share2 } from 'lucide-react'
+import { Code2, GitBranch, LayoutList, Menu, PanelRightClose, MoreHorizontal, Share2 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -71,14 +71,6 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
         {typingAgentIds.length > 0 && !activeTypingAgent && (
           <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
         )}
-        <button
-          className="header-icon-btn"
-          onClick={() => toggleSlidePanel('search')}
-          style={slidePanelOpen && slidePanelContent === 'search' ? { color: 'var(--accent)' } : undefined}
-        >
-          <Search size={20} />
-          <span className="icon-tooltip">搜索对话</span>
-        </button>
         <button
           className="header-icon-btn"
           onClick={onToggleTask}

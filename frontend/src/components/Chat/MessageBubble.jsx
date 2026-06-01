@@ -1,6 +1,6 @@
 import styles from './MessageBubble.module.css'
 import React, { useState } from 'react'
-import { Copy, RefreshCw, Reply, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { Copy, RefreshCw, Reply, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, Trash2, Share2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -141,10 +141,11 @@ function ToolResultBlock({ toolName, resultText }) {
   )
 }
 
-export default function MessageBubble({ message, isPinned }) {
+export default function MessageBubble({ message, isPinned, isLast }) {
   const agents = useAgentStore((s) => s.agents)
   const activeId = useChatStore((s) => s.activeConversationId)
   const addMessage = useChatStore((s) => s.addMessage)
+  const deleteMessage = useChatStore((s) => s.deleteMessage)
   const allRead = useChatStore((s) => s.allRead)
   const togglePinMessage = useChatStore((s) => s.togglePinMessage)
   const setPreviewHtml = useCanvasStore((s) => s.setPreviewHtml)
@@ -182,6 +183,22 @@ export default function MessageBubble({ message, isPinned }) {
       content: { text: `> ${text.slice(0, 80)}${text.length > 80 ? '...' : ''}\n\n` },
       streaming: false,
     })
+  }
+
+  const handleDelete = () => {
+    if (window.confirm('确定删除这条消息吗？')) {
+      deleteMessage(activeId, message.id)
+    }
+  }
+
+  const handleShare = async () => {
+    const shareData = { title: 'AgentHub 消息', text }
+    if (navigator.share) {
+      try { await navigator.share(shareData) } catch {}
+    } else {
+      navigator.clipboard.writeText(text)
+      alert('消息内容已复制到剪贴板')
+    }
   }
 
   const handleClarifySubmit = (qaList) => {
@@ -436,14 +453,12 @@ export default function MessageBubble({ message, isPinned }) {
             </span>
           )}
           <div className="message-actions">
-            <button onClick={handleReply} title="回复"><Reply size={14} /></button>
             <button onClick={handleCopy} title="复制">{copied ? <Check size={14} /> : <Copy size={14} />}</button>
-            {!isUser && !message.streaming && (
+            <button onClick={handleDelete} title="删除"><Trash2 size={14} /></button>
+            <button onClick={handleShare} title="分享"><Share2 size={14} /></button>
+            {!isUser && !message.streaming && isLast && (
               <button onClick={handleRegenerate} title="重新生成"><RefreshCw size={14} /></button>
             )}
-            <button onClick={() => togglePinMessage(activeId, message.id)} title="固定消息">
-              <Pin size={14} color={isPinned ? 'var(--accent)' : undefined} />
-            </button>
           </div>
         </div>
       </div>

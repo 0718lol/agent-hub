@@ -1,18 +1,19 @@
-import React, { useState, useCallback, memo } from 'react'
-import { X } from 'lucide-react'
+import React, { useState, useRef, useEffect, useCallback, memo } from 'react'
+import { X, Lock, Plus } from 'lucide-react'
 import { useTabStore } from '../../stores/tabStore'
 import { useChatStore } from '../../stores/chatStore'
 import IconAvatar from '../IconAvatar'
 
-const TabItem = memo(function TabItem({ tab, conv, isActive, isDragging, onActivate, onClose, onDragStart, onDragOver, onDrop }) {
+const PM_CONV_ID = 'conv_pm'
+
+const TabItem = memo(function TabItem({ tab, conv, isActive, onActivate, onClose, isPm }) {
+  const [hover, setHover] = useState(false)
   return (
     <div
-      className={`tab-item ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
+      className={`tab-item ${isActive ? 'active' : ''}`}
       onClick={onActivate}
-      draggable
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
     >
       <IconAvatar
         agentId={tab.agentId || conv?.agentId}
@@ -20,14 +21,17 @@ const TabItem = memo(function TabItem({ tab, conv, isActive, isDragging, onActiv
         size={14}
       />
       <span className="tab-item-title">{tab.title}</span>
-      {conv?.unread && <span className="unread-tab-dot" />}
-      <button
-        className="tab-close"
-        onClick={onClose}
-        title="关闭标签"
-      >
-        <X size={12} />
-      </button>
+      {isPm ? (
+        <Lock size={10} className="tab-lock" title="默认对话，不可关闭" />
+      ) : (
+        <button
+          className={`tab-close ${hover || isActive ? 'visible' : ''}`}
+          onClick={(e) => { e.stopPropagation(); onClose() }}
+          title="关闭标签"
+        >
+          <X size={12} />
+        </button>
+      )}
     </div>
   )
 })
@@ -37,50 +41,55 @@ export default function TabBar() {
   const activeTabId = useTabStore((s) => s.activeTabId)
   const setActiveTab = useTabStore((s) => s.setActiveTab)
   const closeTab = useTabStore((s) => s.closeTab)
-  const reorderTabs = useTabStore((s) => s.reorderTabs)
   const conversations = useChatStore((s) => s.conversations)
 
-  const [dragIndex, setDragIndex] = useState(null)
+  const scrollRef = useRef(null)
 
-  const handleDragStart = useCallback((e, index) => {
-    setDragIndex(index)
-    e.dataTransfer.effectAllowed = 'move'
-  }, [])
-
-  const handleDragOver = useCallback((e) => {
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-  }, [])
-
-  const handleDrop = useCallback((e, dropIndex) => {
-    e.preventDefault()
-    if (dragIndex !== null && dragIndex !== dropIndex) {
-      reorderTabs(dragIndex, dropIndex)
+  // Auto-scroll active tab into view
+  useEffect(() => {
+    if (!scrollRef.current) return
+    const activeEl = scrollRef.current.querySelector('.tab-item.active')
+    if (activeEl) {
+      activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
     }
-    setDragIndex(null)
-  }, [dragIndex, reorderTabs])
+  }, [activeTabId])
 
-  if (openTabs.length <= 1) return null
+  const handleNewTab = () => {
+    // Create a new conversation for the active tab's agent
+    const activeTab = openTabs.find((t) => t.id === activeTabId)
+    const agentId = activeTab?.agentId || 'agent_pm'
+    const convId = `conv_${agentId}_${Date.now()}`
+    const name = `新对话${useTabStore.getState().openTabs.length + 1}`
+    useChatStore.getState().addConversation({
+      id: convId, type: 'single', agentId,
+      name, avatar: null,
+      messages: [], pinned: false, unread: false, updatedAt: Date.now(),
+    })
+    useTabStore.getState().openTab(convId, name, agentId)
+  }
 
   return (
     <div className="tab-bar">
-      {openTabs.map((tab, i) => {
-        const conv = conversations.find((c) => c.id === tab.convId)
-        return (
-          <TabItem
-            key={tab.id}
-            tab={tab}
-            conv={conv}
-            isActive={tab.id === activeTabId}
-            isDragging={dragIndex === i}
-            onActivate={() => setActiveTab(tab.id)}
-            onClose={(e) => { e.stopPropagation(); closeTab(tab.id) }}
-            onDragStart={(e) => handleDragStart(e, i)}
-            onDragOver={handleDragOver}
-            onDrop={(e) => handleDrop(e, i)}
-          />
-        )
-      })}
+      <div className="tab-bar-scroll" ref={scrollRef}>
+        {openTabs.map((tab) => {
+          const conv = conversations.find((c) => c.id === tab.convId)
+          const isPm = tab.convId === PM_CONV_ID
+          return (
+            <TabItem
+              key={tab.id}
+              tab={tab}
+              conv={conv}
+              isActive={tab.id === activeTabId}
+              isPm={isPm}
+              onActivate={() => setActiveTab(tab.id)}
+              onClose={() => closeTab(tab.id)}
+            />
+          )
+        })}
+      </div>
+      <button className="tab-new-btn" onClick={handleNewTab} title="新建对话">
+        <Plus size={16} />
+      </button>
     </div>
   )
 }

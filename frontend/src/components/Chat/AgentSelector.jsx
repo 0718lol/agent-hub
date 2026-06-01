@@ -15,7 +15,9 @@ export default function AgentSelector({ onSelect, onClose, multiSelect = false, 
 
   // Exclude builder and deleted presets
   const visibleAgents = agents.filter(
-    (a) => a.agent_id !== 'agent_builder' && !deletedPresetIds.includes(a.agent_id)
+    (a) => a.agent_id !== 'agent_builder'
+      && a.agent_id !== 'agent_pm'
+      && !deletedPresetIds.includes(a.agent_id)
   )
 
   useEffect(() => {
