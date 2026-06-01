@@ -131,15 +131,6 @@ export const useChatStore = create((set, get) => ({
       thinkingAgents: { ...state.thinkingAgents, [conversationId]: {} },
     })),
 
-  clearMessages: (conversationId) =>
-    set((state) => ({
-      conversations: state.conversations.map((conv) =>
-        conv.id === conversationId ? { ...conv, messages: [], preview: '' } : conv
-      ),
-      typingAgents: { ...state.typingAgents, [conversationId]: new Set() },
-      thinkingAgents: { ...state.thinkingAgents, [conversationId]: {} },
-    })),
-
   updateLastAgentMessage: (conversationId, senderId, text, streaming) =>
     set((state) => ({
       conversations: state.conversations.map((conv) => {

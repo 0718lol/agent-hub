@@ -10,7 +10,7 @@
 
 .pet-mini-chat {
   width: 240px;
-  background: var(--bg-elevated, #ffffff);
+  background: var(--bg-secondary, #ffffff);
   border: 1px solid var(--border, #e5e5ea);
   border-radius: 14px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
@@ -30,7 +30,7 @@
   padding: 8px 12px;
   font-size: 12px;
   font-weight: 600;
-  background: var(--bg-subtle, #f5f5f7);
+  background: var(--bg-tertiary, #f5f5f7);
   border-bottom: 1px solid var(--border, #e5e5ea);
 }
 
@@ -102,7 +102,7 @@
   transform: translateX(-50%);
   min-width: 140px;
   padding: 4px;
-  background: var(--bg-elevated, #ffffff);
+  background: var(--bg-secondary, #ffffff);
   border: 1px solid var(--border, #e5e5ea);
   border-radius: 10px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
@@ -124,7 +124,7 @@
 }
 
 .pet-context-menu button:hover {
-  background: var(--bg-subtle, #f5f5f7);
+  background: var(--bg-tertiary, #f5f5f7);
 }
 
 /* ---- 隐藏后的召唤按钮 ---- */
@@ -136,7 +136,7 @@
   height: 40px;
   border-radius: 50%;
   border: 1px solid var(--border, #e5e5ea);
-  background: var(--bg-elevated, #ffffff);
+  background: var(--bg-secondary, #ffffff);
   font-size: 20px;
   cursor: pointer;
   z-index: 9998;
@@ -149,30 +149,30 @@
 }
 
 /* ---- 暗色主题 ---- */
-[data-theme="tech-dark"] .pet-mini-chat {
+[data-theme="dark"] .pet-mini-chat {
   background: rgba(30, 30, 40, 0.98);
   border-color: rgba(255, 255, 255, 0.1);
 }
 
-[data-theme="tech-dark"] .pet-mini-chat-header {
+[data-theme="dark"] .pet-mini-chat-header {
   background: rgba(255, 255, 255, 0.04);
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
-[data-theme="tech-dark"] .pet-context-menu {
+[data-theme="dark"] .pet-context-menu {
   background: rgba(30, 30, 40, 0.98);
   border-color: rgba(255, 255, 255, 0.1);
 }
 
-[data-theme="tech-dark"] .pet-context-menu button {
+[data-theme="dark"] .pet-context-menu button {
   color: #f8fafc;
 }
 
-[data-theme="tech-dark"] .pet-context-menu button:hover {
+[data-theme="dark"] .pet-context-menu button:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
-[data-theme="tech-dark"] .pet-show-btn {
+[data-theme="dark"] .pet-show-btn {
   background: rgba(30, 30, 40, 0.95);
   border-color: rgba(255, 255, 255, 0.1);
 }

@@ -294,70 +294,7 @@ async def _run_target_agent_flow(conversation_id: str, agent, text: str):
         assigned_agent_ids, pm_response = await _stream_agent_reply(
             conversation_id, agent, text, stop_event
         )
-                task = asyncio.create_task(
-                    _run_target_agent_flow(conversation_id, AGENTS[target_agent], text)
-                )
-                bg_tasks.add(task)
-                task.add_done_callback(bg_tasks.discard)
-            elif sender == "user":
-                task = asyncio.create_task(
-                    _run_user_message_flow(conversation_id, text, target_agent)
-                )
-                bg_tasks.add(task)
-                task.add_done_callback(bg_tasks.discard)
 
-    except WebSocketDisconnect:
-        manager.disconnect(websocket, conversation_id)
-        # Signal any in-flight generation to stop on disconnect
-        event = _stop_events.get(conversation_id)
-        if event:
-            event.set()
-
-
-async def _run_target_agent_flow(conversation_id: str, agent, text: str):
-    """Background generation flow when user targets a specific agent."""
-    stop_event = asyncio.Event()
-    _stop_events[conversation_id] = stop_event
-    try:
-        await manager.broadcast(conversation_id, {
-            "type": "generating",
-            "conversation_id": conversation_id,
-            "is_generating": True,
-        })
-        assigned_agent_ids, pm_response = await _stream_agent_reply(
-            conversation_id, agent, text, stop_event
-        )
-
-        # If the agent (e.g. PM) assigned downstream agents, trigger them
-        if assigned_agent_ids and not stop_event.is_set():
-            agents_to_run = [
-                AGENTS[aid] for aid in assigned_agent_ids
-                if aid in AGENTS and aid != agent.agent_id
-            ]
-            if agents_to_run:
-                await asyncio.gather(*[
-                    _stream_agent_reply(conversation_id, a, text, stop_event, context=pm_response)
-                    for a in agents_to_run
-                ])
-    finally:
-        _stop_events.pop(conversation_id, None)
-        await manager.broadcast(conversation_id, {
-            "type": "generating",
-            "conversation_id": conversation_id,
-            "is_generating": False,
-        })
-
-
-async def _run_user_message_flow(conversation_id: str, text: str, target_agent: str | None):
-    """Background generation flow for a plain user message (group or auto-routed)."""
-    stop_event = asyncio.Event()
-    _stop_events[conversation_id] = stop_event
-    try:
-        await manager.broadcast(conversation_id, {
-            "type": "generating",
-            "conversation_id": conversation_id,
-            "is_generating": True,
-        })
         # If the agent (e.g. PM) assigned downstream agents, trigger them
         if assigned_agent_ids and not stop_event.is_set():
             agents_to_run = [
@@ -404,26 +341,7 @@ async def _run_user_message_flow(conversation_id: str, text: str, target_agent: 
         pm = AGENTS.get("agent_pm")
         assigned_agent_ids = []
         pm_response = ""
-        # ---- Harness 拦截：复杂任务进入辩论沙盒 ----
-        intercepted = await try_intercept_with_harness(
-            conversation_id, text, llm_client, manager
-        )
-        if intercepted:
-            return
 
-        # User may have stopped during harness — skip downstream agents
-        if stop_event.is_set():
-            return
-
-        is_group = not target_agent
-        pm = AGENTS.get("agent_pm")
-        assigned_agent_ids = []
-        pm_response = ""
-
-        if pm:
-            assigned_agent_ids, pm_response = await _stream_agent_reply(
-                conversation_id, pm, text, stop_event
-            )
         if pm:
             assigned_agent_ids, pm_response = await _stream_agent_reply(
                 conversation_id, pm, text, stop_event
@@ -437,27 +355,7 @@ async def _run_user_message_flow(conversation_id: str, text: str, target_agent: 
                 ]
             else:
                 agents_to_run = [AGENTS["agent_designer"], AGENTS["agent_frontend"], AGENTS["agent_backend"]]
-        if is_group and not stop_event.is_set():
-            if assigned_agent_ids:
-                agents_to_run = [
-                    AGENTS[aid] for aid in assigned_agent_ids
-                    if aid in AGENTS and aid != "agent_pm"
-                ]
-            else:
-                agents_to_run = [AGENTS["agent_designer"], AGENTS["agent_frontend"], AGENTS["agent_backend"]]
 
-            if agents_to_run:
-                await asyncio.gather(*[
-                    _stream_agent_reply(conversation_id, agent, text, stop_event, context=pm_response)
-                    for agent in agents_to_run
-                ])
-    finally:
-        _stop_events.pop(conversation_id, None)
-        await manager.broadcast(conversation_id, {
-            "type": "generating",
-            "conversation_id": conversation_id,
-            "is_generating": False,
-        })
             if agents_to_run:
                 await asyncio.gather(*[
                     _stream_agent_reply(conversation_id, agent, text, stop_event, context=pm_response)

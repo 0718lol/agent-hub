@@ -18,11 +18,11 @@ export default function ClarificationCard({ questions, onSubmit }) {
       <div style={{
         margin: '8px 0',
         padding: 16,
-        background: 'rgba(16, 185, 129, 0.08)',
-        border: '1px solid rgba(16, 185, 129, 0.2)',
+        background: 'rgba(16, 185, 129, 0.15)',
+        border: '1px solid rgba(16, 185, 129, 0.3)',
         borderRadius: 10,
         fontSize: 13,
-        color: '#10b981',
+        color: 'var(--text-primary)',
       }}>
         已收到你的回答，正在为你生成详细方案...
       </div>
@@ -33,14 +33,14 @@ export default function ClarificationCard({ questions, onSubmit }) {
     <div style={{
       margin: '8px 0',
       padding: 16,
-      background: 'rgba(99, 102, 241, 0.06)',
-      border: '1px solid rgba(99, 102, 241, 0.15)',
+      background: 'var(--bg-secondary)',
+      border: '1px solid var(--border)',
       borderRadius: 10,
     }}>
       <div style={{
-        fontSize: 13,
+        fontSize: 14,
         fontWeight: 600,
-        color: '#6366f1',
+        color: 'var(--text-primary)',
         marginBottom: 12,
         display: 'flex',
         alignItems: 'center',
@@ -52,8 +52,8 @@ export default function ClarificationCard({ questions, onSubmit }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {questions.map((q, i) => (
           <div key={i}>
-            <div style={{ fontSize: 13, color: '#e2e8f0', marginBottom: 6 }}>
-              <span style={{ color: '#6366f1', fontWeight: 600 }}>Q{i + 1}.</span> {q}
+            <div style={{ fontSize: 13, color: 'var(--text-primary)', marginBottom: 6 }}>
+              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>Q{i + 1}.</span> {q}
             </div>
             <input
               value={answers[i]}
@@ -66,10 +66,10 @@ export default function ClarificationCard({ questions, onSubmit }) {
               style={{
                 width: '100%',
                 padding: '8px 12px',
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'var(--bg-tertiary)',
+                border: '1px solid var(--border)',
                 borderRadius: 6,
-                color: '#f8fafc',
+                color: 'var(--text-primary)',
                 fontSize: 13,
                 outline: 'none',
                 fontFamily: 'inherit',
@@ -86,7 +86,7 @@ export default function ClarificationCard({ questions, onSubmit }) {
           marginTop: 14,
           width: '100%',
           padding: '10px',
-          background: allAnswered ? '#6366f1' : 'rgba(99, 102, 241, 0.3)',
+          background: allAnswered ? 'var(--accent)' : 'rgba(99, 102, 241, 0.3)',
           border: 'none',
           borderRadius: 8,
           color: 'white',

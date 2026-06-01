@@ -112,23 +112,23 @@
 }
 
 /* ---- 暗色主题 ---- */
-[data-theme="tech-dark"] .virtual-office-panel {
+[data-theme="dark"] .virtual-office-panel {
   background: #0c0a09;
 }
 
-[data-theme="tech-dark"] .vo-header,
-[data-theme="tech-dark"] .vo-footer {
+[data-theme="dark"] .vo-header,
+[data-theme="dark"] .vo-footer {
   background: #1c1917;
   border-color: rgba(255, 255, 255, 0.08);
 }
 
-[data-theme="tech-dark"] .vo-title { color: #fafaf9; }
-[data-theme="tech-dark"] .vo-stats,
-[data-theme="tech-dark"] .vo-close,
-[data-theme="tech-dark"] .vo-hint { color: #a8a29e; }
-[data-theme="tech-dark"] .vo-close:hover { background: rgba(255, 255, 255, 0.06); color: #fafaf9; }
+[data-theme="dark"] .vo-title { color: #fafaf9; }
+[data-theme="dark"] .vo-stats,
+[data-theme="dark"] .vo-close,
+[data-theme="dark"] .vo-hint { color: #a8a29e; }
+[data-theme="dark"] .vo-close:hover { background: rgba(255, 255, 255, 0.06); color: #fafaf9; }
 
-[data-theme="tech-dark"] .vo-wall {
+[data-theme="dark"] .vo-wall {
   background: linear-gradient(180deg, #1c1917 0%, #0c0a09 100%);
 }
 

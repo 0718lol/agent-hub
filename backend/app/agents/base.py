@@ -74,19 +74,19 @@ class BaseAgent:
         if not (messages and messages[-1].get("role") == "user"
                 and messages[-1].get("content") == message):
             # 附件文件内容注入：将 extracted_text 追加到用户消息中
-        enhanced_message = message
-        if attachments:
-            file_contexts = []
-            for att in attachments:
-                extracted = att.get("extracted_text", "")
-                if extracted:
-                    file_contexts.append(
-                        f"[文件: {att.get('original_name', 'unknown')}]\n{extracted[:2000]}"
-                    )
-            if file_contexts:
-                enhanced_message = message + "\n\n" + "\n\n".join(file_contexts)
+            enhanced_message = message
+            if attachments:
+                file_contexts = []
+                for att in attachments:
+                    extracted = att.get("extracted_text", "")
+                    if extracted:
+                        file_contexts.append(
+                            f"[文件: {att.get('original_name', 'unknown')}]\n{extracted[:2000]}"
+                        )
+                if file_contexts:
+                    enhanced_message = message + "\n\n" + "\n\n".join(file_contexts)
 
-        messages.append({"role": "user", "content": enhanced_message})
+            messages.append({"role": "user", "content": enhanced_message})
         return messages
 
     def _generate_reply(self, message: str, context: list = None) -> str:

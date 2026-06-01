@@ -212,18 +212,6 @@ export default function ChatPanel({ onToggleSidebar }) {
     }
   }, [conv?.messages])
 
-  const handleSend = (text) => {
-    addMessage(activeId, {
-      sender: 'user',
-      content: { text },
-      streaming: false,
-    })
-
-    // Optimistically flip to "generating" so the stop button appears immediately,
-    // without waiting for the backend's generating=true broadcast round-trip.
-    setGenerating(activeId, true)
-
-    const targetAgent = conv?.type === 'single' ? conv.agentId : undefined
   const handleSend = (text, mentionedAgents, attachments = []) => {
     if (isGenerating) return // 双重保险：生成中禁止发送
     const msgId = `user-${Date.now()}`
@@ -250,33 +238,14 @@ export default function ChatPanel({ onToggleSidebar }) {
   }
 
   const handleClearHistory = async () => {
-    if (!window.confirm(`确定清空与「${conv?.name}」的所有对话历史？此操作不可恢复。`)) return
-    try {
-      await fetch(`/api/conversations/${activeId}/messages`, { method: 'DELETE' })
-      useChatStore.getState().clearMessages(activeId)
-      // Also clear right-panel artifacts tied to this conversation
-      useCanvasStore.getState().setPreviewHtml('')
-      useCanvasStore.getState().setGeneratedCode('text', '')
-      setGenerating(activeId, false)
-    } catch (e) {
-      console.error('Clear history failed:', e)
-      window.alert('清空失败，请检查后端是否运行')
-    }
-  }
-
-  if (!conv) return <div className="chat-panel"><div className="empty-state"><div className="icon">💬</div><div className="text">选择一个会话开始</div></div></div>
-    if (generationTimeoutRef.current) {
-      clearTimeout(generationTimeoutRef.current)
-      generationTimeoutRef.current = null
-    }
-  }
-
-  const handleClearHistory = async () => {
     if (!activeId) return
     if (!window.confirm('确定要清空当前会话的全部历史消息吗？此操作不可撤销。')) return
     try {
       await fetch(`/api/conversations/${activeId}/messages`, { method: 'DELETE' })
       clearMessages(activeId)
+      useCanvasStore.getState().setPreviewHtml('')
+      useCanvasStore.getState().setGeneratedCode('text', '')
+      setGenerating(activeId, false)
     } catch (err) {
       console.error('Clear history failed:', err)
       window.alert('清空失败，请稍后再试。')
@@ -301,17 +270,6 @@ export default function ChatPanel({ onToggleSidebar }) {
     <div className="chat-panel">
       {/* Header — 通栏，不受居中宽度限制 */}
       <div className="chat-header">
-        <div className="avatar">{conv.avatar}</div>
-        <div style={{ flex: 1 }}>
-          <div className="title">{conv.name}</div>
-          <div className="subtitle">
-            {typingAgentIds.length > 0
-              ? typingAgentIds.length === 1
-                ? `${useAgentStore.getState().agents.find(a => a.agent_id === typingAgentIds[0])?.name || typingAgentIds[0]} 正在输入...`
-                : `${typingAgentIds.length}人正在输入...`
-              : conv.type === 'group' ? `${conv.agents?.length || 0} 个 Agent` : ''
-            }
-          </div>
         <div className="chat-header-left">
           <button className="hamburger-btn" onClick={onToggleSidebar} title="菜单">
             <Menu size={18} />
@@ -329,9 +287,9 @@ export default function ChatPanel({ onToggleSidebar }) {
                 <div className="chat-header-name">{conv.name}</div>
                 <div className="chat-header-desc">
                   {conv.agents?.length || 0} 人
-                  {activeTypingAgent && (
+                  {typingAgentIds.length > 0 && (
                     <span style={{ color: 'var(--accent)', marginLeft: 8 }}>
-                      · {activeTypingAgent.name} 正在回复...
+                      · {typingAgentIds.length}人正在输入...
                     </span>
                   )}
                 </div>
@@ -353,7 +311,7 @@ export default function ChatPanel({ onToggleSidebar }) {
         </div>
         <div className="chat-header-spacer" />
         <div className="chat-header-right">
-          {typingAgentIds.length > 0 && !activeTypingAgent && (
+          {typingAgentIds.length > 0 && (
             <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
           )}
           <button
@@ -397,27 +355,6 @@ export default function ChatPanel({ onToggleSidebar }) {
             <span className="icon-tooltip">代码/文档预览</span>
           </button>
         </div>
-        <button
-          onClick={handleClearHistory}
-          title="清空对话历史"
-          style={{
-            background: 'rgba(239,68,68,0.08)',
-            border: '1px solid rgba(239,68,68,0.2)',
-            color: '#f87171',
-            borderRadius: 8,
-            padding: '6px 12px',
-            fontSize: 12,
-            cursor: 'pointer',
-            transition: 'all 0.15s',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-          }}
-          onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.15)' }}
-          onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)' }}
-        >
-          🗑️ 新对话
-        </button>
         <button
           onClick={handleClearHistory}
           title="清空对话历史"
