@@ -50,3 +50,20 @@ def mock_ws_manager():
 @pytest.fixture
 def sample_conversation_id():
     return "conv_test_001"
+
+
+
+@pytest.fixture(autouse=True)
+def test_env():
+    """Set test environment variables for all tests."""
+    os.environ["AGENTHUB_DB_PATH"] = ":memory:"
+    os.environ["AGENTHUB_ENCRYPT_KEY"] = "test-key-12345"
+    yield
+    # No cleanup needed for env vars in test context
+
+@pytest.fixture
+def tmp_sandbox(tmp_path):
+    """Create a temporary sandbox directory for file operation tests."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    return sandbox

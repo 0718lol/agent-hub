@@ -1,7 +1,7 @@
 import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.core.database import async_get_custom_agents
+from app.core.async_wrappers import async_get_custom_agents
 from app.services.agent_registry import agent_registry
 
 router = APIRouter(tags=["agents"])

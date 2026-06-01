@@ -2,7 +2,7 @@ import json
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Dict, Any
-from app.core.database import async_get_project_memory, async_save_memory_item, async_delete_memory_item
+from app.core.async_wrappers import async_get_project_memory, async_save_memory_item, async_delete_memory_item
 from app.core.websocket import manager
 
 router = APIRouter(tags=["workflows"])

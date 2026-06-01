@@ -3,7 +3,7 @@ import json
 import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.websocket import manager
-from app.core.database import async_save_message, async_get_pending_hil_checkpoint
+from app.core.async_wrappers import async_save_message, async_get_pending_hil_checkpoint
 from app.tools.judge_tools import _pending_interactions
 from app.core.config import settings
 from app.core.logging_config import get_logger

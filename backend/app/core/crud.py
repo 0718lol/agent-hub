@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Any
 from sqlmodel import Session, select
 
-from app.core.database import engine
+from app.core._engine import engine
 
 from app.core.models import (
     Conversation, Message, CustomAgent, ProjectMemory, UploadedFile,

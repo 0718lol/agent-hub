@@ -8,42 +8,15 @@ so that ``from app.core.database import X`` continues to work unchanged.
 import sqlite3
 import json
 import os
-from sqlalchemy import event, text
+from sqlalchemy import text
 import logging as _logging
 
 _db_logger = _logging.getLogger("database")
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import SQLModel, Session
 
-# ============================================================
-# Engine & connection configuration
-# MUST be defined BEFORE importing crud.py, which needs ``engine``.
-# ============================================================
-
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'agenthub.db')
-
-db_url = os.environ.get('DATABASE_URL')
-if db_url:
-    if db_url.startswith('postgres://'):
-        db_url = db_url.replace('postgres://', 'postgresql://', 1)
-    engine = create_engine(db_url)
-else:
-    engine = create_engine(
-        f'sqlite:///{DB_PATH}',
-        connect_args={
-            'check_same_thread': False,
-            'timeout': 30.0
-        }
-    )
-
-    @event.listens_for(engine, 'connect')
-    def set_sqlite_pragma(dbapi_connection, connection_record):
-        try:
-            cursor = dbapi_connection.cursor()
-            cursor.execute('PRAGMA journal_mode=WAL;')
-            cursor.execute('PRAGMA synchronous=NORMAL;')
-            cursor.close()
-        except Exception as e:
-            _db_logger.warning(f"Failed to set SQLite PRAGMA (connect event): {e}")
+# Engine is defined in _engine.py to break the circular dependency
+# between database.py and crud.py.
+from app.core._engine import engine, DB_PATH  # noqa: F401
 
 
 # ============================================================
@@ -72,7 +45,6 @@ def get_db():
     return conn
 
 
-@db_write_transaction
 def init_db():
     _ensure_dir()
     try:
@@ -138,5 +110,6 @@ def init_db():
 
 
 # Re-export async wrappers AFTER init_db is defined (no circular dep issue)
-from app.core.async_wrappers import *  # noqa: F401,F403
+# async_wrappers imported lazily to avoid circular dependency
+# Use: from app.core.async_wrappers import async_save_event, ...
 

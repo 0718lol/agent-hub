@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
-from app.core.database import (
+from app.core.async_wrappers import (
     async_get_cron_tasks, async_save_cron_task, async_update_cron_task_status, async_delete_cron_task
 )
 

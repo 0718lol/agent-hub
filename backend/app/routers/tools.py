@@ -1,7 +1,18 @@
 """Tool listing and testing endpoints."""
 import asyncio
 from fastapi import APIRouter
+from pydantic import BaseModel, Field
 from app.agents.custom import AVAILABLE_TOOLS
+
+
+class ToolTestRequest(BaseModel):
+    params: dict = Field(default_factory=dict, description="Parameters to pass to the tool")
+
+
+class ToolToggleResponse(BaseModel):
+    tool: str
+    enabled: bool
+
 
 router = APIRouter()
 
@@ -26,10 +37,10 @@ async def list_runtime_tools():
 
 
 @router.post("/runtime-tools/{tool_name}/test")
-async def test_runtime_tool(tool_name: str, body: dict = {}):
+async def test_runtime_tool(tool_name: str, body: ToolTestRequest = ToolTestRequest()):
     """Manually test an executable tool with given params."""
     from app.tools import execute_tool_call
-    result = await execute_tool_call(tool_name, body)
+    result = await execute_tool_call(tool_name, body.params)
     return {
         "tool": tool_name,
         "success": result.success,

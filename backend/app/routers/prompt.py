@@ -1,7 +1,19 @@
 """Prompt engine configuration endpoints."""
 from fastapi import APIRouter
+from pydantic import BaseModel
 from app.core.prompt_engine import prompt_engine
 from app.services.agent_registry import agent_registry
+
+
+class PromptLayerToggle(BaseModel):
+    enabled: bool = True
+
+
+class PromptPreviewRequest(BaseModel):
+    agent_id: str = "agent_frontend"
+    message: str = ""
+    task_type: str | None = None
+
 
 router = APIRouter(tags=["prompt"])
 
@@ -13,19 +25,19 @@ async def list_prompt_layers():
 
 
 @router.post("/prompt/layers/{layer_id}")
-async def toggle_prompt_layer(layer_id: str, body: dict):
-    """Enable/disable a prompt layer. Body: {"enabled": true/false}"""
-    enabled = body.get("enabled", True)
+async def toggle_prompt_layer(layer_id: str, body: PromptLayerToggle):
+    """Enable/disable a prompt layer."""
+    enabled = body.enabled
     prompt_engine.set_layer_enabled(layer_id, enabled)
     return {"status": "ok", "layer_id": layer_id, "enabled": enabled}
 
 
 @router.post("/prompt/preview")
-async def preview_prompt(body: dict):
+async def preview_prompt(body: PromptPreviewRequest):
     """Preview the assembled prompt for a given agent and context."""
-    agent_id = body.get("agent_id", "agent_frontend")
-    message = body.get("message", "")
-    task_type = body.get("task_type")
+    agent_id = body.agent_id
+    message = body.message
+    task_type = body.task_type
 
     agent = agent_registry._agents.get(agent_id)
     if not agent:

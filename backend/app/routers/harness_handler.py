@@ -14,7 +14,7 @@ from typing import Any
 
 from app.agents.harness_engine import evaluate_interaction_need, run_debate_arena, format_debate_response
 from app.core.websocket import ConnectionManager
-from app.core.database import async_save_message
+from app.core.async_wrappers import async_save_message
 
 
 async def try_intercept_with_harness(
