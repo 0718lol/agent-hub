@@ -27,8 +27,8 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend
-          pip install -r requirements.txt
-          pip install pytest
+          pip install -r requirements-test.txt
+          pip install pytest-asyncio
       - name: Run tests
         run: cd backend && python -m pytest tests/ -v --tb=short
 
@@ -43,7 +43,7 @@ jobs:
       - name: Install and lint
         run: |
           cd frontend
-          npm ci
+          npm ci --legacy-peer-deps
           npm run lint
 
   security:
