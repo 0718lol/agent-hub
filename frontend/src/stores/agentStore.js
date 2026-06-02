@@ -14,7 +14,7 @@ const PRESET_AGENTS = [
 function loadDeletedPresets() {
   try {
     return JSON.parse(localStorage.getItem('agent-hub-deleted-presets') || '[]')
-  } catch { return [] }
+  } catch (_e) { return [] }
 }
 
 export const useAgentStore = create((set, get) => ({
@@ -42,7 +42,7 @@ export const useAgentStore = create((set, get) => ({
         if (newcomers.length === 0) return {}
         return { agents: [...state.agents, ...newcomers] }
       })
-    } catch {}
+    } catch (_e) { /* ignore fetch errors */ }
   },
 
   // 添加本地自定义 Agent（创建成功后调用）
@@ -65,7 +65,7 @@ export const useAgentStore = create((set, get) => ({
   removeAgent: async (agentId) => {
     const isCustom = agentId.startsWith('agent_custom_')
     if (isCustom) {
-      try { await fetch(`/api/agents/custom/${agentId}`, { method: 'DELETE' }) } catch {}
+      try { await fetch(`/api/agents/custom/${agentId}`, { method: 'DELETE' }) } catch (_e) { /* ignore */ }
     }
     set((state) => {
       if (isCustom) {
@@ -75,7 +75,7 @@ export const useAgentStore = create((set, get) => ({
         return { agents: state.agents.filter((a) => a.agent_id !== agentId) }
       }
       const newDeleted = [...new Set([...state.deletedPresetIds, agentId])]
-      try { localStorage.setItem('agent-hub-deleted-presets', JSON.stringify(newDeleted)) } catch {}
+      try { localStorage.setItem('agent-hub-deleted-presets', JSON.stringify(newDeleted)) } catch (_e) { /* ignore */ }
       return { deletedPresetIds: newDeleted }
     })
   },

@@ -3,7 +3,7 @@
  * No emoji rendering. All icons are Lucide linear outline.
  */
 import {
-  Bot, ClipboardList, Palette, Code, Settings,
+  Bot, ClipboardList, Palette, Code,
   FlaskConical, Rocket, Wrench, Terminal,
   Users, User
 } from 'lucide-react'

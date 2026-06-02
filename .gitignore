@@ -39,3 +39,8 @@ agenthub_export/
 # 所有日志文件
 *.log
 backend/*.log
+
+# 本地工具脚本
+backend/fix_quotes.py
+backend/0.1.0
+backend/gen_test.py

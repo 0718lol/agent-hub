@@ -10,7 +10,7 @@ function loadTabs() {
       const data = JSON.parse(raw)
       if (data.openTabs?.length > 0) return data
     }
-  } catch {}
+  } catch (_e) { /* ignore parse errors */ }
   return null
 }
 
@@ -117,6 +117,6 @@ export const useTabStore = create((set, get) => ({
     try {
       const { openTabs, activeTabId } = get()
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ openTabs, activeTabId }))
-    } catch {}
+    } catch (_e) { /* ignore storage errors */ }
   },
 }))
