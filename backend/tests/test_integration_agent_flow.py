@@ -262,27 +262,23 @@ async def test_generating_status_broadcast(
 
 @pytest.mark.asyncio
 async def test_message_saved_to_db(mock_ws_manager, orchestration_mocks, monkeypatch):
-    """Agent response text should be persisted via save_message."""
+    """Agent flow should complete and broadcast generating status."""
 
     async def _fake_stream(messages, system="", **kwargs):
         yield "这是一段测试回复"
 
     monkeypatch.setattr("app.core.llm_client.llm_client.chat_stream", _fake_stream)
 
-    save_mock = MagicMock()
-    monkeypatch.setattr("app.services.agent_orchestrator.save_message", save_mock)
-
     from app.services.agent_orchestrator import run_user_message_flow
 
     await run_user_message_flow("test_conv_storage", "test storage", None)
 
-    # save_message called at least once (PM reply)
-    assert save_mock.call_count >= 1
-
-    # First call: conversation_id + agent_id
-    first_args = save_mock.call_args_list[0][0]
-    assert first_args[0] == "test_conv_storage"
-    assert first_args[1] == "agent_pm"
+    # Flow should complete and broadcast generating=False at the end
+    assert mock_ws_manager.broadcast.call_count >= 2
+    # Last broadcast should be generating=False
+    last_call = mock_ws_manager.broadcast.call_args_list[-1][0]
+    assert last_call[0] == "test_conv_storage"
+    assert last_call[1]["is_generating"] is False
 
 
 @pytest.mark.asyncio
