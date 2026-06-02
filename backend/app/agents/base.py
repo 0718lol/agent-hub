@@ -1,8 +1,8 @@
 import asyncio
 import json
-import random
 import logging
-from typing import AsyncGenerator
+import random
+from collections.abc import AsyncGenerator
 
 from app.core.llm_client import llm_client
 from app.core.prompt_engine import prompt_engine
@@ -53,11 +53,11 @@ class BaseAgent:
                     yield chunk
 
                 # Check if output contains tool_call tags
-                from app.tools.registry import parse_tool_calls, execute_tool_call
+                from app.tools.registry import execute_tool_call, parse_tool_calls
                 tool_calls = parse_tool_calls(accumulated)
 
                 if conversation_id:
-                    from app.core.event_stream import event_stream_manager, ThoughtEvent, ActionCallEvent
+                    from app.core.event_stream import ActionCallEvent, ThoughtEvent, event_stream_manager
                     if tool_calls:
                         tool_name, params, start_pos, end_pos = tool_calls[0]
                         thought_text = accumulated[:start_pos]
@@ -87,7 +87,7 @@ class BaseAgent:
 
                 # Add assistant output + tool result to messages for next round
                 if conversation_id:
-                    from app.core.event_stream import event_stream_manager, ObservationEvent
+                    from app.core.event_stream import ObservationEvent, event_stream_manager
                     obs_output = result.data if result.success else result.error
                     obs_images = []
                     if result.success and isinstance(result.data, dict):
@@ -169,7 +169,7 @@ class BaseAgent:
             return f"> {msg}"
         elif tool_name == "run_stateful_command" and isinstance(data, dict):
             output = data.get("output", "")[:1000]
-            return f"> **有状态命令执行输出**:\n> ```\n" + "\n".join(f"> {line}" for line in output.split("\n")) + "\n> ```"
+            return "> **有状态命令执行输出**:\n> ```\n" + "\n".join(f"> {line}" for line in output.split("\n")) + "\n> ```"
         elif tool_name == "e2b_python_interpreter" and isinstance(data, dict):
             stdout = data.get("stdout", "")
             stderr = data.get("stderr", "")

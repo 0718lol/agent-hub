@@ -1,9 +1,9 @@
-import os
 import json
+import logging
+import os
 import socket
 from dataclasses import dataclass
 
-import logging
 _logger = logging.getLogger("smart_router")
 
 ROUTER_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "router_config.json")
@@ -31,7 +31,7 @@ class SmartRouter:
     def _load_config(self):
         try:
             if os.path.exists(ROUTER_CONFIG_PATH):
-                with open(ROUTER_CONFIG_PATH, "r", encoding="utf-8") as f:
+                with open(ROUTER_CONFIG_PATH, encoding="utf-8") as f:
                     data = json.load(f)
                     self.auto_routing = data.get("auto_routing", True)
                     self.manual_routes = data.get("manual_routes", {})

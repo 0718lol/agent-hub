@@ -8,12 +8,10 @@ Auto Evaluator — Agent 生成代码的自动化测试与量化打分模块
   4. execute_automated_evaluation — 编排函数，串联以上步骤生成综合报告
 """
 
-import re
 import ast
 import json
-import asyncio
+import re
 from typing import Any
-
 
 # ============================================================
 # 任务 1：代码提取

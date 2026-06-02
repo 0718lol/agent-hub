@@ -16,13 +16,13 @@ Usage in route:
 Usage in tests:
     app.dependency_overrides[get_llm_client] = lambda: mock_llm
 """
-from fastapi import Depends, Request
+from fastapi import Request
 
 from app.core.llm_client import llm_client as _llm_client
-from app.core.quality_gate import quality_gate as _quality_gate
-from app.core.prompt_engine import prompt_engine as _prompt_engine
-from app.core.speech import stt_client as _stt_client
 from app.core.metrics import metrics as _metrics
+from app.core.prompt_engine import prompt_engine as _prompt_engine
+from app.core.quality_gate import quality_gate as _quality_gate
+from app.core.speech import stt_client as _stt_client
 
 
 def get_llm_client(request: Request = None):

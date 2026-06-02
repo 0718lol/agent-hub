@@ -1,7 +1,8 @@
-import os
 import base64
 import hashlib
 import logging
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("config.encryption")
@@ -65,7 +66,8 @@ def _derive_fernet_key() -> bytes:
     if env_key:
         raw = hashlib.sha256(env_key.encode("utf-8")).digest()
     else:
-        import platform, getpass
+        import getpass
+        import platform
         fingerprint = f"agenthub:{platform.node()}:{getpass.getuser()}"
         raw = hashlib.sha256(fingerprint.encode("utf-8")).digest()
         logger.info("AGENTHUB_ENCRYPT_KEY not set, using machine-derived encryption key. "

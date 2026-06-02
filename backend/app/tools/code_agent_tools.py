@@ -1,10 +1,12 @@
 """Safe Python Executor Tool — restricted Python execution sandbox for agents."""
 
-import logging
 import json
-from .registry import AgentTool, ToolResult, register_tool, execute_tool_call
+import logging
+
 from app.core.ast_interpreter import SafeASTInterpreter
 from app.core.mcp_client import mcp_manager
+
+from .registry import AgentTool, ToolResult, execute_tool_call, register_tool
 
 logger = logging.getLogger("tool_code_agent_tools")
 
@@ -38,19 +40,19 @@ class SafePythonExecutorTool(AgentTool):
         async def file_read(path: str) -> str:
             res = await mcp_manager.execute_tool("SystemServer__workspace_read_file", {"path": path}, conv_id)
             if res.get("isError"):
-                raise IOError(res["content"][0]["text"])
+                raise OSError(res["content"][0]["text"])
             return res["content"][0]["text"]
 
         async def file_write(path: str, content: str) -> str:
             res = await mcp_manager.execute_tool("SystemServer__workspace_write_file", {"path": path, "content": content}, conv_id)
             if res.get("isError"):
-                raise IOError(res["content"][0]["text"])
+                raise OSError(res["content"][0]["text"])
             return res["content"][0]["text"]
 
         async def file_list(path: str = ".") -> list:
             res = await mcp_manager.execute_tool("SystemServer__workspace_list_dir", {"path": path}, conv_id)
             if res.get("isError"):
-                raise IOError(res["content"][0]["text"])
+                raise OSError(res["content"][0]["text"])
             try:
                 return json.loads(res["content"][0]["text"])
             except Exception:
@@ -93,7 +95,7 @@ class SafePythonExecutorTool(AgentTool):
         # Initialize safe interpreter and run
         interpreter = SafeASTInterpreter(allowed_tools=allowed_tools)
         run_res = await interpreter.execute(code)
-        
+
         if not run_res["success"]:
             return ToolResult(
                 success=False,

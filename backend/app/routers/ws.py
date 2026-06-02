@@ -1,17 +1,22 @@
 ﻿"""WebSocket endpoint for real-time agent communication."""
-import json
 import asyncio
+import json
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.core.websocket import manager
-from app.core.async_wrappers import async_save_message, async_get_pending_hil_checkpoint
-from app.tools.judge_tools import _pending_interactions
+
+from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save_message
 from app.core.config import settings
 from app.core.logging_config import get_logger
+from app.core.websocket import manager
 from app.routers.harness_handler import handle_verdict
 from app.services.agent_orchestrator import (
-    run_target_agent_flow, run_user_message_flow,
-    resume_graph_from_checkpoint, _stop_events, get_agents,
+    _stop_events,
+    get_agents,
+    resume_graph_from_checkpoint,
+    run_target_agent_flow,
+    run_user_message_flow,
 )
+from app.tools.judge_tools import _pending_interactions
 
 router = APIRouter()
 logger = get_logger("ws")
@@ -33,7 +38,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     # ---- WebSocket IP/Token 鉴权 ----
     client_host = websocket.client.host if websocket.client else None
     authorized = False
-    
+
     if settings.api_secret:
         header_token = websocket.headers.get("x-api-secret")
         query_token = websocket.query_params.get("token")
@@ -42,7 +47,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     else:
         if client_host in ("127.0.0.1", "::1", "localhost"):
             authorized = True
-            
+
     if not authorized:
         await websocket.accept()
         await websocket.close(code=4001, reason="Unauthorized connection attempt")
@@ -72,7 +77,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
 
             # Intercept user interaction response if there's a pending interactive judge wait
             is_active_hil = conversation_id in _pending_interactions
-            
+
             # Recovery path check
             is_recovered_hil = False
             if not is_active_hil:
@@ -87,7 +92,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 reply_text = text
                 if reply_text.startswith("[ask_user_reply]"):
                     reply_text = reply_text.replace("[ask_user_reply]", "").strip()
-                
+
                 if is_active_hil:
                     fut = _pending_interactions.get(conversation_id)
                     if fut is None:
@@ -100,7 +105,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 else:
                     # Recovery path: trigger asynchronous recovery task
                     create_tracked_task(resume_graph_from_checkpoint(conversation_id, reply_text), name=f"resume_graph_{conversation_id}")
-                    
+
                 # We still want to save and broadcast this message to display it in the Chat UI as a user reply
                 await async_save_message(conversation_id, sender, content, streaming=False)
                 await manager.broadcast(conversation_id, {

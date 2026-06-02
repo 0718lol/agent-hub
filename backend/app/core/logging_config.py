@@ -18,9 +18,9 @@ Output (production JSON):
 Output (development console):
     [info] (abc123) task_completed  duration_ms=150 agent_id=agent_pm
 """
+import logging
 import os
 import sys
-import logging
 import uuid
 from contextvars import ContextVar
 

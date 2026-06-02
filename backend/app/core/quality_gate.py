@@ -15,14 +15,11 @@ Usage:
   final_output = await gate.evaluate_and_improve(agent, message, raw_output, conversation_id)
 """
 
-import re
 import asyncio
-from typing import AsyncGenerator
+import re
 
-from app.core.quality_standards import (
-    QualityReport, detect_output_type, run_rules, STANDARDS
-)
 from app.core.llm_client import llm_client
+from app.core.quality_standards import STANDARDS, QualityReport, detect_output_type, run_rules
 
 
 class QualityGate:
@@ -52,22 +49,22 @@ class QualityGate:
                 output_type = self._lang_to_type(lang) or detect_output_type(code, agent_id)
                 r = run_rules(code, output_type)
                 reports.append(r)
-            
+
             if not reports:
                 return QualityReport(output_type="general", score=1.0, passed=True)
-            
+
             # Find the worst report by score
             worst_report = min(reports, key=lambda r: r.score)
-            
+
             # Combine all results, suggestions, and calculate overall passed
             all_results = []
             all_suggestions = []
             for r in reports:
                 all_results.extend(r.results)
                 all_suggestions.extend(r.suggestions)
-            
+
             all_passed = all(r.passed for r in reports)
-            
+
             return QualityReport(
                 output_type=worst_report.output_type,
                 score=worst_report.score,
@@ -174,7 +171,7 @@ class QualityGate:
                     output_type = self._lang_to_type(lang) or detect_output_type(code, agent_id)
                     r = await self.evaluate_with_llm_judge(code, output_type)
                     reports.append(r)
-                
+
                 if reports:
                     worst_report = min(reports, key=lambda r: r.score)
                     all_results = []

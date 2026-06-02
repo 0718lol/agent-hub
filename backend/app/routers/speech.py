@@ -1,12 +1,15 @@
 """Speech-to-text settings and transcription endpoints."""
-import os
 import json
 import logging
-from fastapi import APIRouter, UploadFile, File
+import os
+
+from fastapi import APIRouter, File, UploadFile
 from pydantic import BaseModel
-from app.core.speech import stt_client
+
+from app.core.config import deobfuscate_key as decrypt_key
+from app.core.config import obfuscate_key as encrypt_key
 from app.core.llm_client import llm_client
-from app.core.config import obfuscate_key as encrypt_key, deobfuscate_key as decrypt_key
+from app.core.speech import stt_client
 
 logger = logging.getLogger("routers.speech")
 router = APIRouter(tags=["speech"])
@@ -17,7 +20,7 @@ STT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "s
 def _load_stt_config():
     try:
         if os.path.exists(STT_CONFIG_PATH):
-            with open(STT_CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(STT_CONFIG_PATH, encoding="utf-8") as f:
                 cfg = json.load(f)
             api_key = cfg.get("api_key", "")
             api_key = decrypt_key(api_key)

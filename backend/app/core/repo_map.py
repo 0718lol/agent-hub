@@ -1,13 +1,14 @@
 """Repo Map Scanner — Lightweight AST codebase analyzer that maps classes, functions, and imports."""
 
-import os
 import ast
-from typing import Dict, Any, List
+import os
+from typing import Any
+
 
 class CodebaseMapScanner:
     """Recursively scans a workspace directory and uses AST to map classes, methods, and functions."""
 
-    def __init__(self, ignored_names: List[str] = None):
+    def __init__(self, ignored_names: list[str] = None):
         self.ignored_names = ignored_names or [
             ".git", ".venv", "venv", "__pycache__", "node_modules", "agenthub_export", "dist", "build"
         ]
@@ -21,15 +22,15 @@ class CodebaseMapScanner:
         for root, dirs, files in os.walk(directory_path):
             # Prune ignored directories in-place
             dirs[:] = [d for d in dirs if d not in self.ignored_names and not d.startswith(".")]
-            
+
             for file in files:
                 ext = os.path.splitext(file)[1].lower()
                 if ext not in (".py", ".js", ".jsx", ".ts", ".tsx"):
                     continue
-                    
+
                 abs_path = os.path.join(root, file)
                 rel_path = os.path.relpath(abs_path, directory_path)
-                
+
                 try:
                     if ext == ".py":
                         symbols = self._parse_file_symbols(abs_path)
@@ -37,7 +38,7 @@ class CodebaseMapScanner:
                         symbols = self._parse_js_symbols(abs_path)
                     if symbols:
                         tree_lines.append(self._format_file_symbols(rel_path, symbols))
-                except Exception as e:
+                except Exception:
                     # Ignore parsing errors for broken scripts during live dev sessions
                     pass
 
@@ -46,9 +47,9 @@ class CodebaseMapScanner:
 
         return "\n".join(tree_lines)
 
-    def _parse_file_symbols(self, file_path: str) -> Dict[str, Any]:
+    def _parse_file_symbols(self, file_path: str) -> dict[str, Any]:
         """Parse file using AST to extract class names, methods, functions, and imports."""
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(file_path, encoding="utf-8", errors="ignore") as f:
             code = f.read()
 
         try:
@@ -85,9 +86,9 @@ class CodebaseMapScanner:
             "functions": functions
         }
 
-    def _parse_js_symbols(self, file_path: str) -> Dict[str, Any]:
+    def _parse_js_symbols(self, file_path: str) -> dict[str, Any]:
         """Parse JS/TS file using regex to extract class names, methods, functions, and imports."""
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(file_path, encoding="utf-8", errors="ignore") as f:
             code = f.read()
 
         imports = []
@@ -180,24 +181,24 @@ class CodebaseMapScanner:
             arg_names.append(f"**{args.kwarg.arg}")
         return ", ".join(arg_names)
 
-    def _format_file_symbols(self, rel_path: str, symbols: Dict[str, Any]) -> str:
+    def _format_file_symbols(self, rel_path: str, symbols: dict[str, Any]) -> str:
         """Formats the symbols dict into a compact markdown representation."""
         lines = [f"- 📄 `{rel_path}`"]
-        
+
         # Format imports compactly on one line
         if symbols["imports"]:
             lines.append(f"    - 🔌 imports: {', '.join(f'`{imp}`' for imp in symbols['imports'][:10])}")
-            
+
         # Format standalone functions
         for func in symbols["functions"]:
             lines.append(f"    - ⚙️ function: `{func}`")
-            
+
         # Format classes and methods
         for cls_name, methods in symbols["classes"].items():
             lines.append(f"    - 📦 class: `{cls_name}`")
             for meth in methods:
                 lines.append(f"        - 🛠️ method: `{meth}`")
-                
+
         return "\n".join(lines)
 
 

@@ -1,13 +1,16 @@
-import httpx
 from typing import Literal
+
+import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel
+
 from app.core.config import settings
-from app.core.llm_client import llm_client
 from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config
+from app.core.llm_client import llm_client
 
 router = APIRouter(tags=["settings"])
 from app.core.logging_config import get_logger
+
 logger = get_logger("settings")
 
 

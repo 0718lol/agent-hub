@@ -1,6 +1,7 @@
 ﻿"""Quality gate settings and evaluation endpoints."""
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+
 from app.core.deps import get_quality_gate
 from app.core.quality_gate import QualityGate
 

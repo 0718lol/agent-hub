@@ -5,11 +5,11 @@ Runs a set of predefined tasks through agents, collects quality scores,
 and produces a comparison report (normal vs best-of-N, with/without quality gate).
 """
 
-import asyncio
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Optional, Callable, Any
+from typing import Any
 
 
 @dataclass
@@ -144,18 +144,18 @@ class BenchmarkRun:
 
 
 # Global benchmark state
-_current_run: Optional[BenchmarkRun] = None
+_current_run: BenchmarkRun | None = None
 
 
-def get_current_run() -> Optional[BenchmarkRun]:
+def get_current_run() -> BenchmarkRun | None:
     return _current_run
 
 
 async def run_benchmark(
     agents: dict,
     quality_gate: Any,
-    on_progress: Optional[Callable] = None,
-    cases: Optional[list[BenchmarkCase]] = None,
+    on_progress: Callable | None = None,
+    cases: list[BenchmarkCase] | None = None,
 ) -> BenchmarkRun:
     """
     Run the benchmark suite.

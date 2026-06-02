@@ -1,9 +1,10 @@
 """Web search tool — uses DuckDuckGo for zero-config internet search."""
 
-import time
 import logging
-from typing import Optional
+import time
+
 from pydantic import BaseModel, Field
+
 from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_web_search")
@@ -11,7 +12,7 @@ logger = logging.getLogger("tool_web_search")
 
 class WebSearchInput(BaseModel):
     query: str = Field(..., description="搜索关键词")
-    max_results: Optional[int] = Field(5, description="最大返回结果数 (1-10)")
+    max_results: int | None = Field(5, description="最大返回结果数 (1-10)")
 
 
 class WebSearchTool(AgentTool):
@@ -77,7 +78,7 @@ class WebSearchTool(AgentTool):
 
         except Exception as e:
             logger.error(f"Web search failed: {e}")
-            return ToolResult(success=False, error=f"搜索失败: {str(e)}")
+            return ToolResult(success=False, error=f"搜索失败: {e!s}")
 
 
 # Auto-register on import

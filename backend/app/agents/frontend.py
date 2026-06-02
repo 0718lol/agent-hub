@@ -1,6 +1,5 @@
 from .base import BaseAgent
 
-
 PREVIEW_HTML = {
     "promo": """<!DOCTYPE html>
 <html>

@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 
+
 async def run_git_cmd(cwd: str, *args) -> tuple[int, str, str]:
     """Helper to safely run a git command asynchronously in the target sandboxed workspace."""
     try:
@@ -24,23 +25,23 @@ async def git_init(sandbox_dir: str) -> bool:
         return True
 
     os.makedirs(sandbox_dir, exist_ok=True)
-    
+
     # 1. git init
     code, _, err = await run_git_cmd(sandbox_dir, "init")
     if code != 0:
         print(f"[GitSandbox] git init failed: {err}")
         return False
-        
+
     # 2. Configure user.name and user.email locally to avoid global lock issues
     await run_git_cmd(sandbox_dir, "config", "user.name", "AgentHub")
     await run_git_cmd(sandbox_dir, "config", "user.email", "agent@agenthub.local")
-    
+
     # 3. Create a basic ignore file if not exists
     ignore_file = os.path.join(sandbox_dir, ".gitignore")
     if not os.path.exists(ignore_file):
         with open(ignore_file, "w", encoding="utf-8") as f:
             f.write("*.log\n")
-            
+
     # 4. Create initial commit
     await run_git_cmd(sandbox_dir, "add", ".")
     await run_git_cmd(sandbox_dir, "commit", "-m", "Initial Commit: 沙盒工作区版本控制开启")
@@ -54,7 +55,7 @@ async def git_is_dirty(sandbox_dir: str) -> bool:
 async def git_checkpoint(sandbox_dir: str, message: str) -> str:
     """Stage all changes and commit. Returns the commit hash or empty string on failure."""
     await git_init(sandbox_dir)
-    
+
     # Check if dirty first
     dirty = await git_is_dirty(sandbox_dir)
     if not dirty:
@@ -96,12 +97,12 @@ async def git_log(sandbox_dir: str) -> list[dict]:
     dot_git = os.path.join(sandbox_dir, ".git")
     if not os.path.exists(dot_git):
         return []
-        
+
     # Query log: hash|unix_timestamp|message
     code, out, _ = await run_git_cmd(sandbox_dir, "log", "--pretty=format:%H|%ct|%s")
     if code != 0 or not out:
         return []
-        
+
     commits = []
     for line in out.splitlines():
         line = line.strip()

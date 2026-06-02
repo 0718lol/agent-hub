@@ -6,22 +6,28 @@ imported from :mod:`app.core.database` (which must be defined before this
 module is first imported).
 """
 import json
-import re
-import os
 import logging
+import re
 
 _crud_logger = logging.getLogger("crud")
-import threading
 import functools
-from datetime import datetime, timezone
-from typing import Optional, List, Any
+import threading
+from datetime import UTC, datetime
+
 from sqlmodel import Session, select
 
 from app.core._engine import engine
-
 from app.core.models import (
-    Conversation, Message, CustomAgent, ProjectMemory, UploadedFile,
-    CronTask, KnowledgeDoc, ProjectEventStream, PendingHil, Artifact,
+    Artifact,
+    Conversation,
+    CronTask,
+    CustomAgent,
+    KnowledgeDoc,
+    Message,
+    PendingHil,
+    ProjectEventStream,
+    ProjectMemory,
+    UploadedFile,
 )
 
 # ============================================================
@@ -438,7 +444,7 @@ def save_memory_item(conversation_id: str, key: str, value: str, source: str = "
         if existing:
             existing.value = value
             existing.source = source
-            existing.updated_at = datetime.now(timezone.utc).isoformat()
+            existing.updated_at = datetime.now(UTC).isoformat()
             session.add(existing)
         else:
             item = ProjectMemory(
@@ -692,7 +698,7 @@ def update_latest_artifact_quality(conversation_id: str, agent_id: str,
         statement = select(Artifact).where(
             Artifact.conversation_id == conversation_id,
             Artifact.agent_id == agent_id,
-            Artifact.quality_score == None,
+            Artifact.quality_score.is_(None),
         )
         results = session.exec(statement).all()
         for art in results:

@@ -1,14 +1,13 @@
 ﻿import asyncio
-import shutil
-import socket
-import os
-import json
-import httpx
-from app.core.subprocess_security import safe_terminate_process_tree
 import logging
+import os
+import shutil
+
+import httpx
+
+from app.core.subprocess_security import safe_terminate_process_tree
 
 _logger = logging.getLogger("detector")
-from typing import List, Dict
 
 # Path to register prompt layers
 PROMPT_LAYER_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "core", "prompt_engine.py"))
@@ -24,7 +23,7 @@ async def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
         _logger.debug(f"Port check failed: {e}")
         return False
 
-async def get_running_processes() -> List[str]:
+async def get_running_processes() -> list[str]:
     processes = []
     # Try Windows-specific PowerShell detection first
     try:
@@ -35,7 +34,7 @@ async def get_running_processes() -> List[str]:
         )
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await safe_terminate_process_tree(proc)
             raise
         if proc.returncode == 0:
@@ -53,7 +52,7 @@ async def get_running_processes() -> List[str]:
         )
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await safe_terminate_process_tree(proc)
             raise
         if proc.returncode == 0:
@@ -72,10 +71,10 @@ async def get_running_processes() -> List[str]:
         _logger.debug(f"Tasklist process detection failed: {e}")
     return []
 
-async def detect_local_ai_tools() -> List[Dict]:
+async def detect_local_ai_tools() -> list[dict]:
     detected = []
     running_procs = await get_running_processes()
-    
+
     # 1. Ollama
     ollama_running = "ollama" in running_procs or await is_port_open("127.0.0.1", 11434)
     ollama_installed = shutil.which("ollama") is not None
@@ -117,7 +116,7 @@ async def detect_local_ai_tools() -> List[Dict]:
     # Usually runs inside node CLI so process name might be node, we check PATH and global node modules or processes
     claude_code_installed = shutil.which("claude") is not None
     claude_code_running = any("claude" in p for p in running_procs)
-    
+
     # We can also check if `@anthropic-ai/claude-code` package or `claude-code-sdk` is installed
     sdk_installed = False
     try:

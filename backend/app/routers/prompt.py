@@ -1,6 +1,7 @@
 """Prompt engine configuration endpoints."""
 from fastapi import APIRouter
 from pydantic import BaseModel
+
 from app.core.prompt_engine import prompt_engine
 from app.services.agent_registry import agent_registry
 

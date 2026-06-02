@@ -10,9 +10,7 @@ Harness Engine — 人类在环多 Agent 辩论评估沙盒
 """
 
 import json
-import asyncio
 from typing import Any
-
 
 # ============================================================
 # Prompt 模板

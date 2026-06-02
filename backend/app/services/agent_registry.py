@@ -1,29 +1,27 @@
 import asyncio
 import json
 import logging
-from typing import Dict, Any, List
-from app.agents.base import BaseAgent
-from app.core.database import (
-    get_custom_agents, save_custom_agent, delete_custom_agent, create_conversation,
-)
-from app.core.async_wrappers import (
-    async_save_custom_agent, async_delete_custom_agent, async_create_conversation
-)
-from app.agents.pm import PMAgent
-from app.agents.frontend import FrontendAgent
+
 from app.agents.backend_agent import BackendAgent
-from app.agents.tester import TesterAgent
-from app.agents.devops import DevopsAgent
-from app.agents.designer import DesignerAgent
+from app.agents.base import BaseAgent
 from app.agents.builder import AgentBuilderAgent
 from app.agents.custom import CustomAgent
+from app.agents.designer import DesignerAgent
+from app.agents.devops import DevopsAgent
+from app.agents.frontend import FrontendAgent
+from app.agents.pm import PMAgent
+from app.agents.tester import TesterAgent
+from app.core.async_wrappers import async_create_conversation, async_delete_custom_agent, async_save_custom_agent
+from app.core.database import (
+    get_custom_agents,
+)
 
 logger = logging.getLogger("agent_registry")
 
 class AgentRegistry:
     def __init__(self):
         self._lock = asyncio.Lock()
-        self._agents: Dict[str, BaseAgent] = {
+        self._agents: dict[str, BaseAgent] = {
             "agent_pm": PMAgent(),
             "agent_frontend": FrontendAgent(),
             "agent_backend": BackendAgent(),
@@ -74,7 +72,7 @@ class AgentRegistry:
         async with self._lock:
             return self._agents.get(agent_id)
 
-    async def get_all_agents(self) -> Dict[str, BaseAgent]:
+    async def get_all_agents(self) -> dict[str, BaseAgent]:
         async with self._lock:
             return dict(self._agents)
 

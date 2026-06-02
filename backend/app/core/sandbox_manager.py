@@ -1,12 +1,13 @@
 import asyncio
 import logging
 import os
+import shlex
 import sys
 import tempfile
 import time
-import shlex
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Any
+
 from app.core.config import settings
 
 _logger = logging.getLogger("sandbox_manager")
@@ -22,7 +23,7 @@ class BaseSandbox(ABC):
     """Abstract interface class representing any code execution sandbox."""
 
     @abstractmethod
-    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> Dict[str, Any]:
+    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> dict[str, Any]:
         """Execute the given script code and return the standardized result dictionary."""
         pass
 
@@ -30,9 +31,9 @@ class BaseSandbox(ABC):
 class SubprocessSandbox(BaseSandbox):
     """Legacy Subprocess-based local execution sandbox. Serves as a highly reliable fallback rail."""
 
-    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> Dict[str, Any]:
+    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> dict[str, Any]:
         logger.info(f"[Sandbox] Fallback Subprocess Sandbox executing [{language}] (timeout: {timeout}s)...")
-        
+
         lang_config = {
             "python": {"ext": ".py", "cmd": ["python", "-u"]},
             "py": {"ext": ".py", "cmd": ["python", "-u"]},
@@ -127,7 +128,7 @@ class SubprocessSandbox(BaseSandbox):
                     "truncated": truncated,
                 }
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await safe_terminate_process_tree(proc)
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 return {
@@ -145,7 +146,7 @@ class SubprocessSandbox(BaseSandbox):
                 "language": language,
                 "status": "error",
                 "stdout": "",
-                "stderr": f"本地沙盒启动失败: {str(e)}",
+                "stderr": f"本地沙盒启动失败: {e!s}",
                 "exit_code": -1,
                 "duration_ms": 0,
                 "truncated": False,
@@ -189,10 +190,10 @@ class DockerSandbox(BaseSandbox):
         except Exception:
             return False
 
-    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> Dict[str, Any]:
+    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> dict[str, Any]:
         lang_key = language.lower().strip()
         img = self.image_map.get(lang_key)
-        
+
         # Bash or shell uses local bash inside standard alpine/ubuntu or similar
         if not img:
             if lang_key in ("shell", "bash", "sh"):
@@ -270,7 +271,7 @@ class DockerSandbox(BaseSandbox):
                     "truncated": truncated,
                 }
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # If timed out, forcefully kill the subprocess spawning docker
                 try:
                     proc.kill()
@@ -301,7 +302,7 @@ class E2BSandbox(BaseSandbox):
         # E2B Sandbox standard HTTP endpoints
         self.base_url = "https://api.e2b.dev"
 
-    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> Dict[str, Any]:
+    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> dict[str, Any]:
         """Spawns an AWS Firecracker microVM instance, executes the code and returns outputs."""
         logger.info(f"[Sandbox] Contacting E2B MicroVM Sandbox Cloud service (timeout: {timeout}s)...")
         start_time = time.perf_counter()
@@ -314,7 +315,7 @@ class E2BSandbox(BaseSandbox):
         # 1. Create a lightweight sandboxed microVM instance
         # Using E2B's standard base template "base" or customized "code-interpreter"
         template_id = "base"
-        
+
         # We use standard HTTP client to completely bypass heavy third-party SDK dependencies
         async with httpx_client_context() as client:
             try:
@@ -330,13 +331,13 @@ class E2BSandbox(BaseSandbox):
 
                 instance = spawn_resp.json()
                 instance_id = instance.get("instanceID")
-                
+
                 # 2. Write and execute code inside the microVM
                 # Write standard file script
                 ext_map = {"python": ".py", "py": ".py", "javascript": ".js", "js": ".js", "shell": ".sh", "bash": ".sh"}
                 ext = ext_map.get(language.lower().strip(), ".py")
                 target_file = f"/home/user/script{ext}"
-                
+
                 # Prepare execution run commands
                 if language.lower().strip() in ("python", "py"):
                     run_cmd = f"python3 {target_file}"
@@ -349,7 +350,7 @@ class E2BSandbox(BaseSandbox):
                 write_payload = {
                     "cmd": f"cat << 'EOF' > {target_file}\n{code}\nEOF\n"
                 }
-                
+
                 # Command execution endpoint
                 exec_url = f"{self.base_url}/instances/{instance_id}/commands"
                 await client.post(exec_url, json=write_payload, headers=headers, timeout=10.0)
@@ -359,10 +360,10 @@ class E2BSandbox(BaseSandbox):
                     "cmd": run_cmd,
                     "timeout": timeout
                 }
-                
+
                 run_resp = await client.post(exec_url, json=exec_payload, headers=headers, timeout=float(timeout + 5))
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-                
+
                 # 3. Terminate microVM to clean up cloud resources
                 try:
                     await client.delete(f"{self.base_url}/instances/{instance_id}", headers=headers, timeout=5.0)
@@ -419,7 +420,7 @@ class SandboxManager:
         # Configuration control: allow explicitly forcing/disabling rails
         self.enable_docker = os.environ.get("AGENTHUB_DOCKER_SANDBOX", "true").lower() == "true"
 
-    async def execute(self, code: str, language: str = "python", timeout: int = 10, stdin_data: str = "") -> Dict[str, Any]:
+    async def execute(self, code: str, language: str = "python", timeout: int = 10, stdin_data: str = "") -> dict[str, Any]:
         """Main dispatcher entrypoint selecting the safest available Sandbox rail."""
         # --- Rail 1: Cloud E2B (Highest Priority when API Key configured) ---
         if self.e2b_api_key.strip():

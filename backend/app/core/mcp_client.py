@@ -1,12 +1,11 @@
 import asyncio
 import json
+import logging
 import os
 import sys
-import ctypes
+
 from app.core.subprocess_security import limit_windows_process, safe_terminate_process_tree
 
-
-import logging
 _logger = logging.getLogger("mcp_client")
 
 MCP_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "mcp_config.json")
@@ -112,7 +111,7 @@ class MCPClient:
             # Wait for response with 15 second timeout
             response = await asyncio.wait_for(fut, timeout=15.0)
             return response
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if req_id in self._request_futures:
                 self._request_futures.pop(req_id)
             return {"error": {"message": f"Request {method} timed out after 15 seconds"}}
@@ -215,17 +214,17 @@ class SystemMCPServer:
         """安全物理路径校验：确保目标路径及其所有已存在的祖先目录经过真实符号链接解析后仍严格位于沙盒目录内部。"""
         try:
             abs_sandbox = os.path.realpath(sandbox_dir)
-            
+
             # 1. 词法路径基本校验：防止直接的相对路径偏离
             abs_target_lexical = os.path.abspath(target_path)
             if os.path.commonpath([abs_sandbox, abs_target_lexical]) != abs_sandbox:
                 return False
-                
+
             # 2. 真实路径物理符号链接校验：防止对已存在链接的穿越
             abs_target = os.path.realpath(target_path)
             if os.path.commonpath([abs_sandbox, abs_target]) != abs_sandbox:
                 return False
-                
+
             # 3. 递归已存在祖先路径校验：防范针对非存在路径的软链接TOCTOU绕过欺骗
             curr = os.path.abspath(target_path)
             while True:
@@ -238,7 +237,7 @@ class SystemMCPServer:
                         return False
                     break  # 只需要校验最邻近的已存在祖先即可
                 curr = parent
-                
+
             return True
         except Exception:
             return False
@@ -279,7 +278,7 @@ class SystemMCPServer:
                 if not os.path.exists(target_file) or not os.path.isfile(target_file):
                     return {"isError": True, "content": [{"type": "text", "text": f"Error: File '{sub_path}' not found"}]}
 
-                with open(target_file, "r", encoding="utf-8", errors="replace") as f:
+                with open(target_file, encoding="utf-8", errors="replace") as f:
                     content = f.read()
                 return {"content": [{"type": "text", "text": content}]}
 
@@ -322,7 +321,7 @@ class SystemMCPServer:
 
             elif tool_name == "workspace_run_command":
                 cmd = arguments.get("command", "")
-                
+
                 # 1. Create pre-command checkpoint
                 from app.core.git_sandbox import git_checkpoint, git_rollback
                 await git_checkpoint(sandbox_dir, f"Pre-command: {cmd}")
@@ -363,7 +362,7 @@ class SystemMCPServer:
                             image,
                             "sh", "-c", cmd
                         ]
-                        
+
                         proc = await asyncio.create_subprocess_exec(
                             *docker_cmd,
                             stdout=asyncio.subprocess.PIPE,
@@ -403,11 +402,11 @@ class SystemMCPServer:
                             cwd=sandbox_dir,
                             creationflags=0x08000000 if sys.platform == "win32" else 0
                         )
-                        
+
                         # 🪟 Windows OS 底层作业对象 (Job Objects) 内存隔离限制挂载
                         if sys.platform == "win32":
                             limit_windows_process(proc.pid, settings.shell_memory_limit_mb * 1024 * 1024, cpu_limit_secs=int(settings.shell_timeout) + 2)
-                    
+
                     # ⏱️ 跨平台 CPU 挂载硬超时包络拦截
                     from app.core.config import settings
                     try:
@@ -415,7 +414,7 @@ class SystemMCPServer:
                             proc.communicate(),
                             timeout=settings.shell_timeout
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         await safe_terminate_process_tree(proc)
                         # 超时触发 Git 安全回滚自愈
                         await git_rollback(sandbox_dir)
@@ -464,7 +463,7 @@ class MCPManager:
     def load_config(self):
         try:
             if os.path.exists(MCP_CONFIG_PATH):
-                with open(MCP_CONFIG_PATH, "r", encoding="utf-8") as f:
+                with open(MCP_CONFIG_PATH, encoding="utf-8") as f:
                     self.config = json.load(f)
             else:
                 self.config = {"servers": {}}

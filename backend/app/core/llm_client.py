@@ -1,9 +1,11 @@
-import json
-import httpx
-import time
 import asyncio
+import json
 import logging
-from typing import AsyncGenerator, List, Dict, Any, Optional
+import time
+from collections.abc import AsyncGenerator
+from typing import Any
+
+import httpx
 
 logger = logging.getLogger("llm_client")
 
@@ -49,15 +51,15 @@ class ContextOptimizer:
                 folded_lines = []
                 folded_count = 0
                 in_class_or_def = False
-                
+
                 for idx, line in enumerate(lines):
                     stripped = line.strip()
                     # We keep header elements (first 10 lines, last 10 lines) and class/def/import signatures
-                    if (idx < 10 or idx > len(lines) - 10 or 
-                        stripped.startswith("import ") or 
-                        stripped.startswith("from ") or 
-                        stripped.startswith("class ") or 
-                        stripped.startswith("def ") or 
+                    if (idx < 10 or idx > len(lines) - 10 or
+                        stripped.startswith("import ") or
+                        stripped.startswith("from ") or
+                        stripped.startswith("class ") or
+                        stripped.startswith("def ") or
                         stripped.startswith("function ") or
                         stripped.startswith("export ")):
                         if in_class_or_def and folded_count > 0:
@@ -70,10 +72,10 @@ class ContextOptimizer:
                             folded_count += 1
                         else:
                             folded_lines.append(line)
-                
+
                 if folded_count > 0:
                     folded_lines.append(f"    # [... 中段 {folded_count} 行实现被折叠以节省 Token ...]")
-                
+
                 folded_code = "\n".join(folded_lines)
                 content = content.replace(code, folded_code)
 
@@ -180,7 +182,7 @@ class CircuitBreaker:
     async def _get_state_from_redis(self):
         """Retrieve the circuit breaker state from Redis with in-memory fallback."""
         from app.core.redis import redis_manager
-        
+
         if await redis_manager.check_connection():
             try:
                 client = redis_manager.get_client()
@@ -193,7 +195,7 @@ class CircuitBreaker:
             except Exception as e:
                 logger.warning(f"Failed to get CB state from Redis for {self.name}: {e}")
                 redis_manager._is_connected = False
-        
+
         # Fallback to local variables
         return self.state, self.failed_attempts, self.last_state_change
 
@@ -203,7 +205,7 @@ class CircuitBreaker:
         self.state = state
         self.failed_attempts = failed_attempts
         self.last_state_change = last_state_change
-        
+
         from app.core.redis import redis_manager
         if await redis_manager.check_connection():
             try:
@@ -256,8 +258,9 @@ class CircuitBreaker:
 def get_backup_provider_config(primary_provider: str) -> dict | None:
     """Scans settings or environment variables for fallback cloud credentials."""
     import os
+
     from app.core.config import settings
-    
+
     # Define potential backups
     if primary_provider in ("openai", "opencode"):
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -273,7 +276,7 @@ def get_backup_provider_config(primary_provider: str) -> dict | None:
         if not openai_key and settings.llm_provider == "openai" and settings.llm_api_key:
             from app.core.config import deobfuscate_key
             openai_key = deobfuscate_key(settings.llm_api_key)
-            
+
         if openai_key:
             return {
                 "provider": "openai",
@@ -298,7 +301,7 @@ class ResilienceManager:
     async def execute_failover(self, client_instance, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
         provider = client_instance.provider
         backup_cfg = get_backup_provider_config(provider)
-        
+
         # Tier 2: Backup Cloud Model (e.g. OpenAI GPT-4o-mini if Claude fails)
         if backup_cfg:
             backup_provider = backup_cfg["provider"]
@@ -306,7 +309,7 @@ class ResilienceManager:
             if await backup_breaker.allow_request():
                 failover_notice = f"⚠️ [主模型服务连接已熔断，已自动降级 Failover 路由至备份云服务 {backup_provider} ({backup_cfg['model']})]\n\n"
                 yield failover_notice
-                
+
                 backup_success = False
                 try:
                     output_chunks = []
@@ -315,7 +318,7 @@ class ResilienceManager:
                             backup_success = True
                         output_chunks.append(chunk)
                         yield chunk
-                    
+
                     if backup_success:
                         await backup_breaker.record_success()
                     else:
@@ -323,20 +326,20 @@ class ResilienceManager:
                 except Exception as e:
                     await backup_breaker.record_failure()
                     yield f"\n[云端备份提供商 {backup_provider} 降级执行异常: {type(e).__name__}: {str(e)[:150]}]"
-                
+
                 if backup_success:
                     return
-        
+
         # Tier 3: Local Ollama Model
         if provider != "ollama" and client_instance.is_ollama_active():
             failover_notice = "⚠️ [主模型与备份云服务均已熔断/未配置，已自动降级至本地 Ollama 运行...]\n\n"
             yield failover_notice
-            
+
             try:
                 ollama_gen = client_instance._openai_stream_fallback_ollama(messages, system, enabled_tools)
             except TypeError:
                 ollama_gen = client_instance._openai_stream_fallback_ollama(messages, system)
-            
+
             async for chunk in ollama_gen:
                 yield chunk
         else:
@@ -365,7 +368,7 @@ class ResilienceManager:
             async for chunk in self.execute_failover(client_instance, messages, system, enabled_tools):
                 output_chunks.append(chunk)
                 yield chunk
-            
+
             if span:
                 generated_text = "".join(output_chunks)
                 span.finish(
@@ -404,7 +407,7 @@ class ResilienceManager:
                 async for chunk in gen:
                     output_chunks.append(chunk)
                     yield chunk
-                
+
                 # Successful end of LLM stream span logging
                 if span:
                     generated_text = "".join(output_chunks)
@@ -425,7 +428,7 @@ class ResilienceManager:
 
                 if not retriable:
                     await breaker.record_failure()
-                    err_msg = f"\n[LLM 终端错误 (不可重试): {str(e)}]"
+                    err_msg = f"\n[LLM 终端错误 (不可重试): {e!s}]"
                     output_chunks.append(err_msg)
                     yield err_msg
                     if span:
@@ -593,7 +596,7 @@ class LLMClient:
                     continue
                 if enabled_tools is not None and name not in enabled_tools:
                     continue
-                
+
                 api_tools.append({
                     "type": "function",
                     "function": {
@@ -634,7 +637,7 @@ class LLMClient:
             "Content-Type": "application/json; charset=utf-8",
         }
 
-        active_tool_calls: Dict[int, Dict[str, Any]] = {}
+        active_tool_calls: dict[int, dict[str, Any]] = {}
 
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
@@ -657,7 +660,7 @@ class LLMClient:
                                 continue
                             delta = choices[0].get("delta", {})
                             content = delta.get("content", "")
-                            
+
                             # 1. Dispatch text chunk directly
                             if content:
                                 yield content
@@ -729,7 +732,7 @@ class LLMClient:
             "Content-Type": "application/json; charset=utf-8",
         }
 
-        active_tool_calls: Dict[int, Dict[str, Any]] = {}
+        active_tool_calls: dict[int, dict[str, Any]] = {}
 
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
@@ -745,7 +748,7 @@ class LLMClient:
                         try:
                             event = json.loads(line[6:])
                             event_type = event.get("type")
-                            
+
                             # 1. Text chunk delta
                             if event_type == "content_block_delta":
                                 delta = event.get("delta", {})

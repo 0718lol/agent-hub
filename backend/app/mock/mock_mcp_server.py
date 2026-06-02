@@ -1,5 +1,6 @@
-import sys
 import json
+import sys
+
 
 def main():
     # Read from stdin, process standard JSON-RPC 2.0, write to stdout
@@ -11,7 +12,7 @@ def main():
             req = json.loads(line_str)
             method = req.get("method")
             req_id = req.get("id")
-            
+
             if method == "tools/list":
                 res = {
                     "jsonrpc": "2.0",

@@ -1,9 +1,8 @@
 """
 文档解析器 — 支持 txt / md / docx / pdf 纯文本提取
 """
-import os
 import logging
-from typing import Optional
+import os
 
 _logger = logging.getLogger("document_parser")
 
@@ -15,7 +14,7 @@ class DocumentParser:
     SUPPORTED_EXTENSIONS = {".txt", ".md", ".docx", ".pdf", ".json", ".csv"}
 
     @classmethod
-    def extract_text(cls, file_path: str, content_type: str = "") -> Optional[str]:
+    def extract_text(cls, file_path: str, content_type: str = "") -> str | None:
         """
         根据文件扩展名选择合适的解析器提取文本。
         返回提取到的纯文本字符串，失败返回 None。
@@ -34,14 +33,14 @@ class DocumentParser:
         return None
 
     @classmethod
-    def _extract_text_file(cls, file_path: str) -> Optional[str]:
+    def _extract_text_file(cls, file_path: str) -> str | None:
         """从纯文本文件中读取内容"""
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 return f.read()
         except UnicodeDecodeError:
             try:
-                with open(file_path, "r", encoding="gbk") as f:
+                with open(file_path, encoding="gbk") as f:
                     return f.read()
             except Exception as e:
                 _logger.warning(f"Failed to read file with utf-8 and gbk encoding: {e}")
@@ -51,7 +50,7 @@ class DocumentParser:
             return None
 
     @classmethod
-    def _extract_docx(cls, file_path: str) -> Optional[str]:
+    def _extract_docx(cls, file_path: str) -> str | None:
         """从 .docx 文件中提取纯文本"""
         try:
             import docx
@@ -63,7 +62,7 @@ class DocumentParser:
             return None
 
     @classmethod
-    def _extract_pdf(cls, file_path: str) -> Optional[str]:
+    def _extract_pdf(cls, file_path: str) -> str | None:
         """从 .pdf 文件中提取纯文本"""
         try:
             from pypdf import PdfReader

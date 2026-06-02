@@ -1,9 +1,11 @@
 """Stateful Terminal Tool — executes shell commands within persistent terminal sessions."""
 
-import os
 import logging
-from .registry import AgentTool, ToolResult, register_tool
+import os
+
 from app.core.terminal import stateful_terminal_manager
+
+from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_stateful_terminal")
 
@@ -56,7 +58,7 @@ class StatefulTerminalTool(AgentTool):
             )
         except Exception as e:
             logger.error(f"[StatefulTerminalTool] Execution failed: {e}")
-            return ToolResult(success=False, error=f"有状态命令行执行异常: {str(e)}")
+            return ToolResult(success=False, error=f"有状态命令行执行异常: {e!s}")
 
 # Auto-register on import
 register_tool(StatefulTerminalTool())

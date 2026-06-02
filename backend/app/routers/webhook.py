@@ -1,8 +1,9 @@
 """Webhook callback endpoints for Slack and Telegram integrations."""
-import os
 import json
 import logging
-from fastapi import APIRouter, Request, HTTPException
+import os
+
+from fastapi import APIRouter, HTTPException, Request
 
 logger = logging.getLogger("routers.webhook")
 router = APIRouter(tags=["webhook"])

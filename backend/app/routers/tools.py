@@ -1,7 +1,9 @@
 """Tool listing and testing endpoints."""
 import asyncio
+
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
+
 from app.agents.custom import AVAILABLE_TOOLS
 
 

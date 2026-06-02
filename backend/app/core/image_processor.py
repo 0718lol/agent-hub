@@ -2,7 +2,6 @@
 图片处理工具 — 预留 OCR 接口，当前为占位实现
 """
 import os
-from typing import Optional
 
 
 class ImageProcessor:
@@ -15,7 +14,7 @@ class ImageProcessor:
         return f"{name}_thumb{ext}"
 
     @staticmethod
-    def extract_text(stored_name: str) -> Optional[str]:
+    def extract_text(stored_name: str) -> str | None:
         """
         OCR 文本提取（占位实现）
         未来可接入 Tesseract / EasyOCR / Cloud Vision API

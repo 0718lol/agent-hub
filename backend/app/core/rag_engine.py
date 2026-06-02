@@ -8,10 +8,8 @@ RAG Engine — 简易知识库检索增强生成引擎
   - 上下文注入 (将检索结果拼接到 Agent prompt)
 """
 
-import os
-import uuid
 import logging
-from typing import Optional
+import os
 
 logger = logging.getLogger("rag_engine")
 
@@ -76,11 +74,11 @@ def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
         # 重组片段，使其尽量接近 chunk_size，同时保证相邻块有 overlap
         chunks = []
         current_part = ""
-        
+
         for part in splits:
             if not part:
                 continue
-            
+
             # 如果加上这个片段和分隔符仍然不超过 chunk_size，则累加
             potential = current_part + (sep if current_part else "") + part
             if len(potential) <= chunk_size:
@@ -89,7 +87,7 @@ def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
                 # 先把当前已有的累加块存入结果
                 if current_part:
                     chunks.append(current_part.strip())
-                
+
                 # 如果这个新片段本身就超过 chunk_size，递归下级分割符进行子分块
                 if len(part) > chunk_size:
                     sub_chunks = _recursive_split(part, seps[1:])
@@ -104,10 +102,10 @@ def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
                         current_part = overlap_prefix + (sep if overlap_prefix else "") + part
                     else:
                         current_part = part
-                        
+
         if current_part.strip():
             chunks.append(current_part.strip())
-            
+
         return [c for c in chunks if c]
 
     return _recursive_split(text, separators)

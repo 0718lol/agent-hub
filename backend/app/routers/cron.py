@@ -1,10 +1,13 @@
-import asyncio
 import uuid
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Optional
+
 from app.core.async_wrappers import (
-    async_get_cron_tasks, async_save_cron_task, async_update_cron_task_status, async_delete_cron_task
+    async_delete_cron_task,
+    async_get_cron_tasks,
+    async_save_cron_task,
+    async_update_cron_task_status,
 )
 
 router = APIRouter(tags=["cron"])
@@ -18,7 +21,7 @@ class CronTaskCreate(BaseModel):
 
 
 @router.get("/cron")
-async def list_cron_tasks(conversation_id: Optional[str] = None):
+async def list_cron_tasks(conversation_id: str | None = None):
     return await async_get_cron_tasks(conversation_id)
 
 
@@ -51,9 +54,9 @@ async def run_cron_task_now(task_id: str):
     if not task:
         return {"status": "error", "message": "自治任务未找到"}
 
-    from app.services.daemon_scheduler import daemon_scheduler
     from app.routers.ws import create_tracked_task
-    
+    from app.services.daemon_scheduler import daemon_scheduler
+
     # 采用 Wac 强引用控制器进行 Task 运行，消除 GC 夭折隐患
     create_tracked_task(
         daemon_scheduler._run_task(task),
