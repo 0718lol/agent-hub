@@ -1,6 +1,5 @@
 """Conversation and message CRUD endpoints."""
 from fastapi import APIRouter, Query
-from fastapi import Query
 
 from app.core.async_wrappers import (
     async_clear_messages,
