@@ -193,7 +193,7 @@ class QualityGate:
     async def best_of_n_generate(
         self, agent, message: str, agent_id: str = "",
         history: list | None = None, n: int | None = None,
-        on_progress: callable | None = None,
+        on_progress: object | None = None,
     ) -> tuple[str, QualityReport, list[dict]]:
         """
         Generate N candidates in parallel, evaluate each, return the best.
