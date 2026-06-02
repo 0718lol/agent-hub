@@ -106,12 +106,12 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
           <textarea value="" readOnly placeholder="Agent 正在回复..." rows={1} style={{ opacity: 0.5, cursor: 'not-allowed' }} />
           <div className="coze-input-toolbar">
             <div className="coze-input-left">
-              <button className="coze-toolbar-btn" disabled><Paperclip size={18} /></button>
-              <button className="coze-toolbar-btn" disabled><Plus size={18} /></button>
+              <button className="coze-toolbar-btn" disabled aria-label="上传附件"><Paperclip size={18} /></button>
+              <button className="coze-toolbar-btn" disabled aria-label="添加内容"><Plus size={18} /></button>
               <span className="coze-input-divider" />
-              <button className="coze-toolbar-btn" disabled><AtSign size={18} /></button>
+              <button className="coze-toolbar-btn" disabled aria-label="指定 Agent"><AtSign size={18} /></button>
             </div>
-            <button className="stop-btn" onClick={onStop} title="停止生成">
+            <button className="stop-btn" onClick={onStop} title="停止生成" aria-label="停止生成">
               <Square size={14} fill="currentColor" />
             </button>
           </div>
@@ -132,6 +132,7 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
           onKeyDown={handleKeyDown}
           placeholder="发消息..."
           rows={1}
+          aria-label="输入消息"
         />
 
         {/* Mentioned tags + Attachment tags */}
@@ -140,7 +141,7 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
             {attachments.map((att) => (
               <span key={att.stored_name} className="at-tag" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>
                 {att.is_image ? '🖼 ' : '📎 '}{att.original_name}
-                <button onClick={() => setAttachments((prev) => prev.filter((a) => a.stored_name !== att.stored_name))}>&times;</button>
+                <button onClick={() => setAttachments((prev) => prev.filter((a) => a.stored_name !== att.stored_name))} aria-label={`移除附件 ${att.original_name}`}>&times;</button>
               </span>
             ))}
             {mentionedAgents.map((id) => {
@@ -148,7 +149,7 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
               return (
                 <span key={id} className="at-tag">
                   @{agent?.name || id}
-                  <button onClick={() => removeMention(id)}>&times;</button>
+                  <button onClick={() => removeMention(id)} aria-label={`移除提及 ${agent?.name || id}`}>&times;</button>
                 </span>
               )
             })}
@@ -169,6 +170,7 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
               className="coze-toolbar-btn"
               onClick={() => setShowFileUploader(true)}
               title="上传附件"
+              aria-label="上传附件"
             >
               <Paperclip size={18} />
             </button>
@@ -185,6 +187,7 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
                 setShowPlusMenu(!showPlusMenu)
               }}
               title="添加"
+              aria-label="添加内容"
             >
               <Plus size={18} />
             </button>
@@ -194,6 +197,7 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
               className="coze-toolbar-btn"
               onClick={() => setShowSelector(!showSelector)}
               title="@ 指定 Agent"
+              aria-label="指定 Agent"
               style={{ color: mentionedAgents.length > 0 ? 'var(--accent)' : undefined }}
             >
               <AtSign size={18} />
@@ -205,13 +209,14 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
               className="coze-toolbar-btn"
               onClick={stopRecording}
               title="停止录音"
+              aria-label="停止录音"
               style={{ color: 'var(--red, #ef4444)', animation: 'pulse 1s infinite' }}
             >
               <MicOff size={18} />
               <span style={{ fontSize: 11, marginLeft: 2 }}>{duration}s</span>
             </button>
           ) : isTranscribing ? (
-            <button className="coze-toolbar-btn" disabled title="识别中...">
+            <button className="coze-toolbar-btn" disabled title="识别中..." aria-label="语音识别中">
               <Loader size={18} style={{ animation: 'spin 1s linear infinite' }} />
             </button>
           ) : (
@@ -219,11 +224,12 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
               className="coze-toolbar-btn"
               onClick={startRecording}
               title="语音输入"
+              aria-label="语音输入"
             >
               <Mic size={18} />
             </button>
           )}
-          <button className="coze-send-btn" onClick={handleSend} disabled={!hasContent}>
+          <button className="coze-send-btn" onClick={handleSend} disabled={!hasContent} aria-label="发送消息">
             <Send size={16} />
           </button>
         </div>
@@ -249,6 +255,7 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
           </span>
           <button
             onClick={cancelRecording}
+            aria-label="取消录音"
             style={{
               padding: '4px 12px', borderRadius: 6, fontSize: 12,
               background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
@@ -257,6 +264,7 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
           >取消</button>
           <button
             onClick={stopRecording}
+            aria-label="完成语音识别"
             style={{
               padding: '4px 12px', borderRadius: 6, fontSize: 12,
               background: 'var(--accent, #6366f1)', border: 'none',
@@ -338,6 +346,7 @@ export default function InputBar({ onSend, isGenerating, onStop, isGroup }) {
         accept="image/*,.pdf,.doc,.docx,.txt,.md,.json,.csv,.xlsx"
         onChange={handleFileSelect}
         style={{ display: 'none' }}
+        aria-hidden="true"
       />
     </div>
   )

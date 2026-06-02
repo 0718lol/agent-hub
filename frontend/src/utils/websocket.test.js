@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 
 // Manual WebSocket mock
 class MockWebSocket {
@@ -81,6 +81,7 @@ describe("WSClient (websocket.js)", () => {
     wsClient.pendingMessages = []
     wsClient.currentConvId = null
     wsClient.reconnectTimer = null
+    wsClient.status = "disconnected"
 
     // Reset localStorage mock
     localStorage.getItem.mockReset()
@@ -98,7 +99,7 @@ describe("WSClient (websocket.js)", () => {
     expect(MockWebSocket.instances[0].url).toBe("ws://localhost:8000/ws/conv_test_001")
   })
 
-  it("connect sends auth token when available", async () => {
+  it("connect sends auth token in URL when available", async () => {
     localStorage.getItem.mockImplementation((key) => {
       if (key === "agenthub_api_secret") return "test-token-123"
       return null
@@ -107,9 +108,7 @@ describe("WSClient (websocket.js)", () => {
     wsClient.connect("conv_test_001")
     await vi.waitFor(() => expect(MockWebSocket.instances.length).toBe(1))
     const ws = MockWebSocket.instances[0]
-    await vi.waitFor(() => expect(ws.sentMessages.length).toBe(1))
-    const authMsg = JSON.parse(ws.sentMessages[0])
-    expect(authMsg).toEqual({ type: "auth", token: "test-token-123" })
+    expect(ws.url).toContain("token=test-token-123")
   })
 
   it("connect does not send auth when no token stored", async () => {

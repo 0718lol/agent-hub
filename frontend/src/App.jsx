@@ -4,6 +4,7 @@ import ChatPanel from './components/Layout/ChatPanel'
 import SlidePanel from './components/Layout/SlidePanel'
 import DesktopPet from './components/AgentCharacter/DesktopPet'
 import VirtualOffice from './components/VirtualOffice/VirtualOffice'
+import ConnectionBanner from './components/ConnectionBanner'
 import { useChatStore } from './stores/chatStore'
 import { useAgentStore } from './stores/agentStore'
 import { useCanvasStore } from './stores/canvasStore'
@@ -35,6 +36,7 @@ export default function App() {
 
   return (
     <div className="app-layout">
+      <ConnectionBanner />
       <div
         className={`sidebar-overlay ${mobileSidebarOpen ? 'visible' : ''}`}
         onClick={() => setMobileSidebarOpen(false)}

@@ -8,6 +8,23 @@ class WSClient {
     this.reconnectAttempts = 0
     this.maxReconnectDelay = 30000 // Maximum 30 seconds
     this.baseReconnectDelay = 1000 // Start at 1 second
+    // Connection status tracking
+    this.status = 'disconnected' // 'connected' | 'reconnecting' | 'disconnected'
+    this._statusListeners = new Set()
+  }
+
+  /** Register a callback for status changes. Returns unsubscribe function. */
+  onStatusChange(callback) {
+    this._statusListeners.add(callback)
+    return () => this._statusListeners.delete(callback)
+  }
+
+  _setStatus(newStatus) {
+    if (this.status === newStatus) return
+    this.status = newStatus
+    for (const fn of this._statusListeners) {
+      try { fn(newStatus) } catch (e) { console.error('Status listener error:', e) }
+    }
   }
 
   connect(conversationId) {
@@ -22,17 +39,19 @@ class WSClient {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     let url = `${protocol}//${window.location.host}/ws/${conversationId}`
-    
+    const authToken = localStorage.getItem('agenthub_api_secret')
+    if (authToken) {
+      url += `?token=${encodeURIComponent(authToken)}`
+    }
+
     const ws = new WebSocket(url)
     this.ws = ws
+    this.status = 'reconnecting'
 
     ws.onopen = () => {
       if (this.ws !== ws) return // Safe guard against stale connections
-      const authToken = localStorage.getItem('agenthub_api_secret')
-      if (authToken) {
-        ws.send(JSON.stringify({ type: 'auth', token: authToken }))
-      }
       this.reconnectAttempts = 0
+      this._setStatus('connected')
       while (this.pendingMessages.length > 0) {
         const msg = this.pendingMessages.shift()
         ws.send(msg)
@@ -51,8 +70,13 @@ class WSClient {
 
     ws.onclose = () => {
       if (this.ws !== ws) return // Safe guard against stale connections
-      const delay = this._calculateReconnectDelay()
       this.reconnectAttempts++
+      if (this.reconnectAttempts > 5) {
+        this._setStatus('disconnected')
+      } else {
+        this._setStatus('reconnecting')
+      }
+      const delay = this._calculateReconnectDelay()
       this.reconnectTimer = setTimeout(() => this.connect(conversationId), delay)
     }
 
@@ -118,6 +142,7 @@ class WSClient {
     clearTimeout(this.reconnectTimer)
     this.reconnectAttempts = 0
     this.pendingMessages = []
+    this._setStatus('disconnected')
     if (this.ws) {
       const oldWs = this.ws
       oldWs.onclose = null

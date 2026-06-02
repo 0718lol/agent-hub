@@ -67,14 +67,19 @@ function ToolCallBlock({ toolName, params }) {
 
   return (
     <div className={styles.toolCallBlock}>
-      <div 
+      <div
         onClick={() => hasParams && setExpanded(!expanded)}
         className={`${styles.toolCallHeader} ${!hasParams ? styles.toolCallHeaderNoParams : ''}`}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={`工具调用 ${toolName}`}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hasParams && setExpanded(!expanded) } }}
       >
         <div className={styles.toolCallIcon}>
           <Icon size={14} style={{ animation: 'spin-slow 4s linear infinite' }} />
         </div>
-        
+
         <div className={styles.toolCallInfo}>
           <span className={styles.toolCallName}>
             调用工具：{toolName}
@@ -133,9 +138,14 @@ function ToolResultBlock({ toolName, resultText }) {
 
   return (
     <div className={`${styles.toolResultBlock} ${isError ? styles.toolResultBlockError : styles.toolResultBlockSuccess}`}>
-      <div 
+      <div
         onClick={() => setExpanded(!expanded)}
         className={`${styles.toolResultHeader} ${isError ? styles.toolResultHeaderError : styles.toolResultHeaderSuccess}`}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={`${toolName} ${isError ? '执行失败' : '执行成功'}`}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(!expanded) } }}
       >
         <div className={`${styles.toolResultIcon} ${isError ? styles.toolResultIconError : styles.toolResultIconSuccess}`}>
           <Icon size={14} />
@@ -161,7 +171,7 @@ function ToolResultBlock({ toolName, resultText }) {
       </div>
 
       <div className={`${styles.toolResultBody} ${isError ? styles.toolResultBodyError : styles.toolResultBodySuccess}`}>
-        <pre 
+        <pre
           onClick={() => !expanded && setExpanded(true)}
           className={`${styles.toolResultPre} ${isError ? styles.toolResultPreError : styles.toolResultPreSuccess} ${expanded ? styles.toolResultPreExpanded : ''}`}>
           {displayedContent}
@@ -270,7 +280,7 @@ export default function MessageBubble({ message, isPinned }) {
           <div className="code-block">
             <div className="code-block-header">
               <span>{match[1]}</span>
-              <button onClick={() => navigator.clipboard.writeText(codeStr)}>
+              <button onClick={() => navigator.clipboard.writeText(codeStr)} aria-label={`复制 ${match[1]} 代码`}>
                 <Copy size={12} />
               </button>
             </div>
@@ -406,7 +416,7 @@ export default function MessageBubble({ message, isPinned }) {
           <div key={i} className="code-block">
             <div className="code-block-header">
               <span>{lang}</span>
-              <button onClick={() => navigator.clipboard.writeText(code)}>
+              <button onClick={() => navigator.clipboard.writeText(code)} aria-label={`复制 ${lang} 代码`}>
                 <Copy size={12} />
               </button>
             </div>
@@ -419,8 +429,10 @@ export default function MessageBubble({ message, isPinned }) {
     })
   }
 
+  const senderName = isUser ? '你' : (agent?.name || message.sender)
+
   return (
-    <div className={`message-row ${isUser ? 'user' : ''}`}>
+    <div className={`message-row ${isUser ? 'user' : ''}`} role="article" aria-label={`${senderName}的消息`}>
       {!isUser && (
         <div className="msg-avatar">
           <IconAvatar agentId={message.sender} size={16} />
@@ -465,12 +477,12 @@ export default function MessageBubble({ message, isPinned }) {
             </span>
           )}
           <div className="message-actions">
-            <button onClick={handleReply} title="回复"><Reply size={14} /></button>
-            <button onClick={handleCopy} title="复制">{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+            <button onClick={handleReply} title="回复" aria-label="回复"><Reply size={14} /></button>
+            <button onClick={handleCopy} title="复制" aria-label="复制消息">{copied ? <Check size={14} /> : <Copy size={14} />}</button>
             {!isUser && !message.streaming && (
-              <button onClick={handleRegenerate} title="重新生成"><RefreshCw size={14} /></button>
+              <button onClick={handleRegenerate} title="重新生成" aria-label="重新生成"><RefreshCw size={14} /></button>
             )}
-            <button onClick={() => togglePinMessage(activeId, message.id)} title="固定消息">
+            <button onClick={() => togglePinMessage(activeId, message.id)} title="固定消息" aria-label={isPinned ? '取消固定' : '固定消息'}>
               <Pin size={14} color={isPinned ? 'var(--accent)' : undefined} />
             </button>
           </div>

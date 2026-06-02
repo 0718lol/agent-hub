@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 import './styles/global.css'
 
 // 全局 API Token 拦截注入层 (Fetch Interceptor)
@@ -37,6 +38,8 @@ useThemeStore.subscribe((state) => {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 )
