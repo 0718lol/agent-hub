@@ -72,6 +72,10 @@ class AgentRegistry:
         async with self._lock:
             return self._agents.get(agent_id)
 
+    def get_agent_dict(self) -> dict[str, BaseAgent]:
+        """Return agents dict synchronously (for get_agents() compatibility)."""
+        return dict(self._agents)
+
     async def get_all_agents(self) -> dict[str, BaseAgent]:
         async with self._lock:
             return dict(self._agents)
