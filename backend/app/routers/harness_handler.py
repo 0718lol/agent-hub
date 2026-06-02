@@ -14,7 +14,7 @@ from typing import Any
 
 from app.agents.harness_engine import evaluate_interaction_need, run_debate_arena, format_debate_response
 from app.core.websocket import ConnectionManager
-from app.core.database import save_message
+from app.core.async_wrappers import async_save_message
 
 
 async def try_intercept_with_harness(
@@ -63,7 +63,7 @@ async def try_intercept_with_harness(
         result["conversation_id"] = conversation_id
 
         # Step 5: 保存辩论结果到数据库
-        save_message(
+        await async_save_message(
             conversation_id,
             "harness_engine",
             {"text": json.dumps(result, ensure_ascii=False)},
@@ -123,7 +123,7 @@ async def handle_verdict(
         verdict_text += f"\n用户说明：{content}"
 
     # 保存裁决到数据库
-    save_message(
+    await async_save_message(
         conversation_id,
         "user",
         {"text": verdict_text},

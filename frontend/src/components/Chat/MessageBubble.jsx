@@ -1,10 +1,13 @@
+import styles from './MessageBubble.module.css'
 import React, { useState, useEffect, useRef } from 'react'
+import { Copy, RefreshCw, Reply, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import { Check, Reply, Copy, RefreshCw, Pin } from 'lucide-react'
+import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useAgentStore } from '../../stores/agentStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useCanvasStore } from '../../stores/canvasStore'
-import CodeCard from './CodeCard'
 import MockupCard from './MockupCard'
 import ClarificationCard from './ClarificationCard'
 import AskUserCard from './AskUserCard'
@@ -41,6 +44,131 @@ const MD_COMPONENTS = {
     <a href={href} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc', textDecoration: 'underline' }}>{children}</a>
   ),
   hr: () => <hr style={{ border: 'none', borderTop: '1px solid rgba(255,255,255,0.08)', margin: '0.6em 0' }} />,
+}
+
+const TOOL_ICONS = {
+  web_search: Globe,
+  http_request: Globe,
+  file_read: FileText,
+  file_write: FileText,
+  file_list: FileText,
+  file_edit_line: Settings2,
+  file_patch_block: Settings2,
+  safe_python_executor: Wrench,
+  run_stateful_command: Wrench,
+  browser_action: Globe,
+}
+
+// Dify-Style Collapsible Tool Call Component
+function ToolCallBlock({ toolName, params }) {
+  const [expanded, setExpanded] = useState(false)
+  const Icon = TOOL_ICONS[toolName] || Wrench
+  const hasParams = Object.keys(params).length > 0
+
+  return (
+    <div className={styles.toolCallBlock}>
+      <div 
+        onClick={() => hasParams && setExpanded(!expanded)}
+        className={`${styles.toolCallHeader} ${!hasParams ? styles.toolCallHeaderNoParams : ''}`}
+      >
+        <div className={styles.toolCallIcon}>
+          <Icon size={14} style={{ animation: 'spin-slow 4s linear infinite' }} />
+        </div>
+        
+        <div className={styles.toolCallInfo}>
+          <span className={styles.toolCallName}>
+            调用工具：{toolName}
+          </span>
+          <span className={styles.toolCallLabel}>
+            System Tool Call
+          </span>
+        </div>
+
+        <div className={styles.toolCallRight}>
+          <span className={styles.toolCallBadge}>
+            <span className={styles.toolCallDot} />
+            System Call
+          </span>
+          {hasParams && (
+            <span className={styles.toolCallChevron}>
+              {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {expanded && hasParams && (
+        <div className={styles.toolCallExpandBody}>
+          <div className={styles.toolCallArgLabel}>输入参数 (Arguments):</div>
+          <pre className={styles.toolCallArgPre}>
+            {JSON.stringify(params, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Dify-Style Collapsible Tool Result Component
+function ToolResultBlock({ toolName, resultText }) {
+  const [expanded, setExpanded] = useState(false)
+  let resultObj = {}
+  let isError = false
+  try {
+    resultObj = JSON.parse(resultText.trim())
+    isError = !!resultObj.error
+  } catch (e) {
+    resultObj = { output: resultText.trim() }
+  }
+
+  const Icon = isError ? AlertCircle : CheckCircle2
+  const color = isError ? '#f87171' : '#34d399'
+  const bg = isError ? 'rgba(239, 68, 68, 0.02)' : 'rgba(16, 185, 129, 0.02)'
+  const border = isError ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)'
+  const badgeBg = isError ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)'
+
+  const contentStr = JSON.stringify(resultObj, null, 2)
+  const isTruncated = contentStr.length > 500
+  const displayedContent = expanded ? contentStr : (contentStr.slice(0, 500) + (isTruncated ? '\n\n... [数据已折叠，点击展开查看完整输出]' : ''))
+
+  return (
+    <div className={`${styles.toolResultBlock} ${isError ? styles.toolResultBlockError : styles.toolResultBlockSuccess}`}>
+      <div 
+        onClick={() => setExpanded(!expanded)}
+        className={`${styles.toolResultHeader} ${isError ? styles.toolResultHeaderError : styles.toolResultHeaderSuccess}`}
+      >
+        <div className={`${styles.toolResultIcon} ${isError ? styles.toolResultIconError : styles.toolResultIconSuccess}`}>
+          <Icon size={14} />
+        </div>
+
+        <div className={styles.toolResultInfo}>
+          <span className={styles.toolResultName}>
+            {toolName} {isError ? '执行失败' : '执行成功'}
+          </span>
+          <span className={styles.toolResultLabel}>
+            Tool Output Received
+          </span>
+        </div>
+
+        <div className={styles.toolCallRight}>
+          <span className={`${styles.toolResultBadge} ${isError ? styles.toolResultBadgeError : styles.toolResultBadgeSuccess}`}>
+            {isError ? 'Failed' : 'Success'}
+          </span>
+          <span className={styles.toolResultChevron}>
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </span>
+        </div>
+      </div>
+
+      <div className={`${styles.toolResultBody} ${isError ? styles.toolResultBodyError : styles.toolResultBodySuccess}`}>
+        <pre 
+          onClick={() => !expanded && setExpanded(true)}
+          className={`${styles.toolResultPre} ${isError ? styles.toolResultPreError : styles.toolResultPreSuccess} ${expanded ? styles.toolResultPreExpanded : ''}`}>
+          {displayedContent}
+        </pre>
+      </div>
+    </div>
+  )
 }
 
 export default function MessageBubble({ message, isPinned }) {
@@ -132,6 +260,47 @@ export default function MessageBubble({ message, isPinned }) {
     })
   }
 
+  // Markdown 渲染组件配置
+  const markdownComponents = {
+    code({ node, inline, className, children, ...props }) {
+      const match = /language-(\w+)/.exec(className || '')
+      const codeStr = String(children).replace(/\n$/, '')
+      if (!inline && match) {
+        return (
+          <div className="code-block">
+            <div className="code-block-header">
+              <span>{match[1]}</span>
+              <button onClick={() => navigator.clipboard.writeText(codeStr)}>
+                <Copy size={12} />
+              </button>
+            </div>
+            <SyntaxHighlighter
+              style={oneDark}
+              language={match[1]}
+              PreTag="div"
+              customStyle={{ margin: 0, borderRadius: '0 0 8px 8px', fontSize: 13, background: 'var(--code-bg)' }}
+            >
+              {codeStr}
+            </SyntaxHighlighter>
+          </div>
+        )
+      }
+      return <code className="markdown-inline-code" {...props}>{children}</code>
+    },
+    table({ children }) {
+      return <div className="markdown-table-wrap"><table>{children}</table></div>
+    },
+    a({ children, href, ...props }) {
+      return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+    },
+  }
+
+  const renderMarkdown = (text) => (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {text}
+    </ReactMarkdown>
+  )
+
   const renderText = (t) => {
     let clean = t.replace(/\[thinking\][\s\S]*?\[\/thinking\]/g, '')
     clean = clean.replace(/\[assign:\w+\]/g, '')
@@ -139,9 +308,28 @@ export default function MessageBubble({ message, isPinned }) {
 
     if (!clean) return null
 
-    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[ask_user:[^\]]+\]|\[options:[^\]]+\]|```[\s\S]*?```)/g)
+    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[ask_user:[^\]]+\]|\[options:[^\]]+\]|\[tool_call:[^\]]+\][\s\S]*?\[\/tool_call\]|\[工具结果: [^\]]+\][\s\S]*?请基于以上工具结果继续回复用户。|```[\s\S]*?```)/g)
     return parts.map((part, i) => {
       if (!part) return null
+
+      // Tool Call Match
+      const toolCallMatch = part.match(/\[tool_call:([^\]]+)\]([\s\S]*?)\[\/tool_call\]/)
+      if (toolCallMatch) {
+        const toolName = toolCallMatch[1]
+        let params = {}
+        try {
+          params = JSON.parse(toolCallMatch[2].trim())
+        } catch(e) {}
+        return <ToolCallBlock key={i} toolName={toolName} params={params} />
+      }
+
+      // Tool Result Match
+      const toolResultMatch = part.match(/\[工具结果: ([^\]]+)\]\n([\s\S]*?)\n\n请基于以上工具结果继续回复用户。/)
+      if (toolResultMatch) {
+        const toolName = toolResultMatch[1]
+        const resultText = toolResultMatch[2]
+        return <ToolResultBlock key={i} toolName={toolName} resultText={resultText} />
+      }
 
       const mockupMatch = part.match(/\[mockup:(\w+)\]/)
       if (mockupMatch) return <MockupCard key={i} type={mockupMatch[1]} />
@@ -196,7 +384,7 @@ export default function MessageBubble({ message, isPinned }) {
       if (optionsMatch) {
         const options = optionsMatch[1].split('|')
         return (
-          <div key={i} style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '8px 0' }}>
+          <div key={i} className={styles.optionsRow}>
             {options.map((opt, j) => (
               <button key={j} onClick={() => handleOptionClick(opt)} style={{
                 padding: '6px 14px', borderRadius: 'var(--radius-full)',
@@ -209,6 +397,24 @@ export default function MessageBubble({ message, isPinned }) {
           </div>
         )
       }
+
+      const codeMatch = part.match(/```(\w*)\n([\s\S]*?)```/)
+      if (codeMatch) {
+        const lang = codeMatch[1] || 'text'
+        const code = codeMatch[2]
+        return (
+          <div key={i} className="code-block">
+            <div className="code-block-header">
+              <span>{lang}</span>
+              <button onClick={() => navigator.clipboard.writeText(code)}>
+                <Copy size={12} />
+              </button>
+            </div>
+            <pre><code>{code}</code></pre>
+          </div>
+        )
+      }
+
       return <ReactMarkdown key={i} components={MD_COMPONENTS}>{part}</ReactMarkdown>
     })
   }
@@ -224,7 +430,7 @@ export default function MessageBubble({ message, isPinned }) {
       <div className="message-content">
         {/* Pin indicator */}
         {isPinned && (
-          <div style={{ fontSize: 11, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+          <div className={styles.pinIndicator}>
             <Pin size={10} /> 已固定
           </div>
         )}

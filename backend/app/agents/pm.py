@@ -18,7 +18,7 @@ class PMAgent(BaseAgent):
         "\n- 回复简洁：2-3 句话描述方案 + 任务列表 + 分配标记。总共不超过 8 行。"
         "\n- 不要使用 markdown 标题（#），用加粗和数字列表即可。"
         "\n- 任务分配后，必须在末尾输出分配标记：[assign:agent_frontend] [assign:agent_backend] 等，让系统自动启动对应 agent。"
-        "- 根据任务内容选择合适的 agent：前端页面→agent_frontend，后端接口→agent_backend，测试→agent_tester，部署→agent_devops，设计→agent_designer，海报/宣传图/网页交互设计→同时分配给设计 agent_designer 和前端 agent_frontend，以便设计视觉方案并由前端生成高精度的交互预览与代码。"
+        "\n- 根据任务内容选择合适的 agent：前端页面→agent_frontend，后端接口→agent_backend，测试→agent_tester，部署→agent_devops，设计→agent_designer，海报/宣传图/网页交互设计→同时分配给设计 agent_designer 和前端 agent_frontend，以便设计视觉方案并由前端生成高精度的交互预览与代码。"
         "\n- 绝对不要输出 [clarify:...] 标记。永远不要问问题。"
         "\n\n【唯一例外 — ask_user 工具】遇到影响整个技术方案走向的关键分歧（如：用户说'做个 App'但没说平台；'做商城'但没说品类），可以用一次 ask_user 问一个关键问题："
         "\n  [ask_user:简短问题?|选项A::一句话说明|*推荐项加星::说明|选项C::说明]"

@@ -1,18 +1,37 @@
 import { create } from 'zustand'
 
-const INITIAL_CONVERSATIONS = [
+/** Map backend conversation to frontend shape */
+function mapConversation(c) {
+  return {
+    id: c.id,
+    type: c.type,
+    name: c.name,
+    avatar: c.avatar || null,
+    agentId: c.agent_id || null,
+    agents: c.agents ? (typeof c.agents === 'string' ? JSON.parse(c.agents) : c.agents) : undefined,
+    role: c.preview || '',
+    preview: c.preview || '',
+    messages: [],
+    pinned: false,
+    unread: false,
+    updatedAt: c.created_at ? new Date(c.created_at).getTime() : Date.now(),
+  }
+}
+
+/** Fallback conversations when backend is unavailable */
+const FALLBACK_CONVERSATIONS = [
   { id: 'conv_pm', type: 'single', agentId: 'agent_pm', name: 'PM 小助手', avatar: null, role: '需求分析与任务拆解', messages: [], pinned: false, unread: false, updatedAt: Date.now() },
   { id: 'conv_frontend', type: 'single', agentId: 'agent_frontend', name: '前端工程师', avatar: null, role: 'React 组件与样式开发', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 1000 },
   { id: 'conv_backend', type: 'single', agentId: 'agent_backend', name: '后端工程师', avatar: null, role: 'API 接口与数据模型', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 2000 },
   { id: 'conv_tester', type: 'single', agentId: 'agent_tester', name: '测试工程师', avatar: null, role: '测试用例与 Bug 分析', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 3000 },
   { id: 'conv_devops', type: 'single', agentId: 'agent_devops', name: '运维工程师', avatar: null, role: 'Docker 部署与 CI/CD', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 4000 },
   { id: 'conv_designer', type: 'single', agentId: 'agent_designer', name: '设计顾问', avatar: null, role: 'UI/UX 设计建议', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 5000 },
-  { id: 'conv_agent_builder', type: 'single', agentId: 'agent_builder', name: 'Agent 工坊', avatar: null, role: '对话式创建自定义 Agent', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 6000 },
+  { id: 'conv_builder', type: 'single', agentId: 'agent_builder', name: 'Agent 工坊', avatar: null, role: '对话式创建自定义 Agent', messages: [], pinned: false, unread: false, updatedAt: Date.now() - 6000 },
   { id: 'conv_group_demo', type: 'group', name: 'Demo 项目群', avatar: null, agents: ['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer'], messages: [], pinned: false, unread: false, updatedAt: Date.now() - 7000 },
 ]
 
 export const useChatStore = create((set, get) => ({
-  conversations: INITIAL_CONVERSATIONS,
+  conversations: FALLBACK_CONVERSATIONS,
   activeConversationId: 'conv_pm',
   typingAgents: {},
   thinkingAgents: {},
@@ -93,6 +112,7 @@ export const useChatStore = create((set, get) => ({
   loadMessages: async (conversationId) => {
     try {
       const resp = await fetch(`/api/conversations/${conversationId}/messages`)
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const messages = await resp.json()
       set((state) => ({
         conversations: state.conversations.map((conv) =>
@@ -112,7 +132,7 @@ export const useChatStore = create((set, get) => ({
         if (conv.id !== conversationId) return conv
         // 如果提供了 id，检查是否已存在（防止重复）
         if (message.id && conv.messages.some((m) => m.id === message.id)) return conv
-        const msgId = message.id || Date.now() + Math.random()
+        const msgId = message.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2))
         return {
           ...conv,
           messages: [...conv.messages, { ...message, id: msgId, timestamp: message.timestamp || new Date().toISOString() }],
@@ -157,13 +177,48 @@ export const useChatStore = create((set, get) => ({
     }),
 
   removeConversation: (convId) =>
+    set((state) => {
+      const remaining = state.conversations.filter((c) => c.id !== convId)
+      const needsSwitch = state.activeConversationId === convId
+      return {
+        conversations: remaining,
+        activeConversationId: needsSwitch
+          ? (remaining[0]?.id || 'conv_pm')
+          : state.activeConversationId,
+      }
+    }),
+
+  updateConversation: (convId, updates) =>
     set((state) => ({
-      conversations: state.conversations.filter((c) => c.id !== convId),
-      activeConversationId: state.activeConversationId === convId ? 'conv_pm' : state.activeConversationId,
+      conversations: state.conversations.map((c) =>
+        c.id === convId ? { ...c, ...updates } : c
+      ),
     })),
 
   getActiveConversation: () => {
     const state = get()
     return state.conversations.find((c) => c.id === state.activeConversationId)
+  },
+
+  /** Fetch conversations from backend API. Falls back to hardcoded defaults on error. */
+  fetchConversations: async () => {
+    try {
+      const resp = await fetch('/api/conversations')
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data = await resp.json()
+      // Backend may return array or { conversations: [...] }
+      const list = Array.isArray(data) ? data : (data.conversations || [])
+      if (list.length > 0) {
+        set({
+          conversations: list.map(mapConversation),
+          activeConversationId: list[0]?.id || 'conv_pm',
+        })
+      } else {
+        set({ conversations: FALLBACK_CONVERSATIONS, activeConversationId: 'conv_pm' })
+      }
+    } catch (e) {
+      console.warn('Failed to fetch conversations from backend, using fallback:', e)
+      set({ conversations: FALLBACK_CONVERSATIONS, activeConversationId: 'conv_pm' })
+    }
   },
 }))

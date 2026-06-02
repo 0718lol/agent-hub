@@ -1,5 +1,8 @@
 from .base import BaseAgent
 
+# Runtime executable tool IDs that can be assigned to custom agents
+RUNTIME_TOOL_IDS = ["web_search", "http_request", "file_read", "file_write", "file_list", "safe_python_executor", "browser_action", "file_view_windowed", "file_edit_line", "run_stateful_command", "e2b_python_interpreter", "file_patch_block"]
+
 
 AVAILABLE_TOOLS = {
     "code_gen": {
@@ -72,6 +75,55 @@ AVAILABLE_TOOLS = {
         "description": "文案、故事、营销内容创作",
         "prompt_addon": "\n- 你擅长创意写作，包括广告文案、故事创作、营销内容等，文笔优美有感染力。",
     },
+    "safe_python_executor": {
+        "id": "safe_python_executor",
+        "name": "安全代码沙箱",
+        "icon": "🛡️",
+        "description": "安全执行 Python 脚本，以单步自愈和自校验的方式批量读写文件及运行测试",
+        "prompt_addon": "\n- 你可以使用安全代码沙箱。使用 [tool_call:safe_python_executor]{\"code\": \"python代码\"}[/tool_call] 调用，允许单步多工具运行、循环自测与纠错。",
+    },
+    "browser_action": {
+        "id": "browser_action",
+        "name": "赛博浏览器",
+        "icon": "🌐",
+        "description": "以视觉验证和DOM元素扁平压缩的形式在浏览器内模拟页面交互与视觉自校验",
+        "prompt_addon": "\n- 你可以使用赛博浏览器交互工具。使用 [tool_call:browser_action]{\"action\": \"goto\", \"url\": \"http://example.com\"}[/tool_call] 调用，支持 click, type, scroll 等操作。在点击/输入时，你既可以使用网页截图中的数字标签进行常规的 [tool_call:browser_action]{\"action\": \"click\", \"element_id\": ID}[/tool_call] 点击，也可以在无法确定 ID 或面对复杂Canvas/非标节点时，直接使用视觉自然语言描述进行定位：[tool_call:browser_action]{\"action\": \"click\", \"visual_description\": \"右侧绿色的登录按钮\"}[/tool_call]，系统将自动触发多模态 Vision-Loop 定位与模糊文本匹配自愈点按。",
+    },
+    "file_view_windowed": {
+        "id": "file_view_windowed",
+        "name": "窗口化查看器",
+        "icon": "🔭",
+        "description": "以视口式滑动窗口的形式精细滚动读取沙盒中大文件的特定行区间，节省 Token",
+        "prompt_addon": "\n- 你可以使用窗口化查看器精细读取文件片段（不推荐全量 file_read 读大文件）。使用 [tool_call:file_view_windowed]{\"path\": \"文件路径\", \"start_line\": 1, \"line_count\": 100}[/tool_call] 调用，根据末尾提示的 [Scroll up/down available] 决定是否翻页滚动。",
+    },
+    "file_edit_line": {
+        "id": "file_edit_line",
+        "name": "行级微编辑器",
+        "icon": "✂️",
+        "description": "对沙盒中的文件执行高容错、省 Token 的行级微替换编辑，并自动触发静态编译语法自检校验",
+        "prompt_addon": "\n- 你可以使用行级微编辑器来修改已有文件（强烈推荐代替 replace_file_content）。使用 [tool_call:file_edit_line]{\"path\": \"文件路径\", \"start_line\": 起始行, \"end_line\": 结束行, \"replacement_code\": \"新代码\"}[/tool_call] 调用，系统在物理保存前会自动执行 linter 静态编译校验，若语法损坏则会自动回滚防写烂。",
+    },
+    "run_stateful_command": {
+        "id": "run_stateful_command",
+        "name": "有状态命令行",
+        "icon": "💻",
+        "description": "在物理沙盒工作空间内持久地、有状态地执行指定的 Shell 命令行，支持多步环境状态继承",
+        "prompt_addon": "\n- 你可以使用有状态命令行（比 workspace_run_command 更有状态）。使用 [tool_call:run_stateful_command]{\"command\": \"命令行指令\"}[/tool_call] 调用，支持跨步骤继承路径目录状态（如先 cd 后运行测试）与激活的环境变量状态，带 15 秒命令超时保护。",
+    },
+    "e2b_python_interpreter": {
+        "id": "e2b_python_interpreter",
+        "name": "E2B代码解释器",
+        "icon": "📊",
+        "description": "在完全物理隔离的本地安全沙箱中执行任意 Python/数据科学代码，支持 Matplotlib/Pandas 绘图及生成 CSV",
+        "prompt_addon": "\n- 你可以使用 E2B 代码解释器。使用 [tool_call:e2b_python_interpreter]{\"code\": \"python代码\"}[/tool_call] 调用，允许执行包含 numpy、pandas、matplotlib 等高级数学与数据科学库的任意 Python 脚本。如果需要进行数据可视化绘图，请直接在代码尾部调用 plt.show()，系统将自动捕获生成的图表图片并直接展示在聊天气泡中呈现给用户。",
+    },
+    "file_patch_block": {
+        "id": "file_patch_block",
+        "name": "块级微编辑器",
+        "icon": "🩹",
+        "description": "对指定文件执行 Aider 格式高容错 SEARCH/REPLACE 块微调修改，支持单次多块替换与编译静态守卫门禁",
+        "prompt_addon": "\n- 你可以使用块级微编辑器（极其推荐代替整文件覆写）。使用 [tool_call:file_patch_block]{\"path\": \"文件路径\", \"patch_blocks\": \"<<<<<<< SEARCH\\n旧代码\\n=======\\n新代码\\n>>>>>>> REPLACE\"}[/tool_call] 调用。支持一次对同一个文件进行多处块微调，系统在写盘后会自动编译校验，若语法损坏则会自动回档，极度安全防写烂。",
+    },
 }
 
 
@@ -86,6 +138,9 @@ class CustomAgent(BaseAgent):
         self.role = role
         self.style = style
         self.tools = tools or []
+        # Separate prompt-addon tools from executable runtime tools
+        filtered = [t for t in self.tools if t in RUNTIME_TOOL_IDS]
+        self.enabled_tools = filtered if self.tools else None
         # Build the final system prompt with tool capabilities
         self.system_prompt = self._build_full_prompt(system_prompt)
 

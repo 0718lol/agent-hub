@@ -1,223 +1,115 @@
+"""
+Database engine, connection setup, and schema initialization.
+
+This is the public entry-point for all database symbols.  It re-exports
+everything from :mod:`models`, :mod:`crud`, and :mod:`async_wrappers`
+so that ``from app.core.database import X`` continues to work unchanged.
+"""
 import sqlite3
 import json
 import os
-from datetime import datetime
+from sqlalchemy import text
+import logging as _logging
 
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'agenthub.db')
+_db_logger = _logging.getLogger("database")
+from sqlmodel import SQLModel, Session
 
+# Engine is defined in _engine.py to break the circular dependency
+# between database.py and crud.py.
+from app.core._engine import engine, DB_PATH  # noqa: F401
+
+
+# ============================================================
+# Re-export all public symbols for backward compatibility
+# ============================================================
+from app.core.models import *          # noqa: F401,F403
+from app.core.crud import *            # noqa: F401,F403 -- brings in db_write_transaction
+
+# ============================================================
+# Database Initialization
+# ============================================================
 
 def _ensure_dir():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 
 def get_db():
+    """Retained for backward compatibility with external direct SQLite connections."""
     _ensure_dir()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute('PRAGMA journal_mode=WAL;')
+    except Exception as e:
+        _db_logger.warning(f"Failed to set WAL mode in get_db(): {e}")
     return conn
 
 
 def init_db():
-    conn = get_db()
-    conn.executescript('''
-        CREATE TABLE IF NOT EXISTS conversations (
-            id TEXT PRIMARY KEY,
-            type TEXT NOT NULL,
-            name TEXT NOT NULL,
-            avatar TEXT,
-            agent_id TEXT,
-            agents TEXT,
-            preview TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
+    _ensure_dir()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute('PRAGMA journal_mode=WAL;')
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        _db_logger.warning(f"Failed to set WAL mode during init_db(): {e}")
 
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT NOT NULL,
-            sender TEXT NOT NULL,
-            content TEXT NOT NULL,
-            streaming INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
-
-        CREATE TABLE IF NOT EXISTS custom_agents (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            avatar TEXT DEFAULT '🤖',
-            role TEXT DEFAULT '',
-            style TEXT DEFAULT '',
-            system_prompt TEXT NOT NULL,
-            tools TEXT DEFAULT '[]',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS uploaded_files (
-            id TEXT PRIMARY KEY,
-            original_name TEXT NOT NULL,
-            stored_name TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            content_type TEXT DEFAULT '',
-            size INTEGER DEFAULT 0,
-            extracted_text TEXT DEFAULT '',
-            uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-    ''')
-
-    default_convs = [
-        ('conv_pm', 'single', 'PM 小助手', '📋', 'agent_pm', None, '需求分析与任务拆解'),
-        ('conv_frontend', 'single', '前端工程师', '🎨', 'agent_frontend', None, 'React 组件与样式开发'),
-        ('conv_backend', 'single', '后端工程师', '⚙️', 'agent_backend', None, 'API 接口与数据模型'),
-        ('conv_tester', 'single', '测试工程师', '🧪', 'agent_tester', None, '测试用例与 Bug 分析'),
-        ('conv_devops', 'single', '运维工程师', '🚀', 'agent_devops', None, 'Docker 部署与 CI/CD'),
-        ('conv_designer', 'single', '设计顾问', '🎯', 'agent_designer', None, 'UI/UX 设计建议'),
-        ('conv_builder', 'single', 'Agent 工坊', '🔧', 'agent_builder', None, '对话式创建自定义 Agent'),
-        ('conv_group_demo', 'group', 'Demo 项目群', '💬', None,
-         json.dumps(['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer']),
-         '多 Agent 协作演示'),
-    ]
-
-    for conv in default_convs:
-        conn.execute(
-            'INSERT OR IGNORE INTO conversations (id, type, name, avatar, agent_id, agents, preview) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            conv
+    try:
+        from alembic.config import Config
+        from alembic import command
+        alembic_cfg = Config(
+            os.path.join(os.path.dirname(__file__), '..', '..', 'alembic.ini')
         )
+        if not os.environ.get('DATABASE_URL'):
+            alembic_cfg.set_main_option('sqlalchemy.url', f'sqlite:///{DB_PATH}')
+        command.upgrade(alembic_cfg, 'head')
+    except Exception:
+        SQLModel.metadata.create_all(engine)
 
-    conn.commit()
-    conn.close()
+    with Session(engine) as session:
+        default_convs = [
+            Conversation(id='conv_pm', type='single', name='PM \u5c0f\u52a9\u624b', avatar='\U0001f4cb', agent_id='agent_pm', preview='\u9700\u6c42\u5206\u6790\u4e0e\u4efb\u52a1\u62c6\u89e3'),
+            Conversation(id='conv_frontend', type='single', name='\u524d\u7aef\u5de5\u7a0b\u5e08', avatar='\U0001f3a8', agent_id='agent_frontend', preview='React \u7ec4\u4ef6\u4e0e\u6837\u5f0f\u5f00\u53d1'),
+            Conversation(id='conv_backend', type='single', name='\u540e\u7aef\u5de5\u7a0b\u5e08', avatar='\u2699\ufe0f', agent_id='agent_backend', preview='API \u63a5\u53e3\u4e0e\u6570\u636e\u6a21\u578b'),
+            Conversation(id='conv_tester', type='single', name='\u6d4b\u8bd5\u5de5\u7a0b\u5e08', avatar='\U0001f9ea', agent_id='agent_tester', preview='\u6d4b\u8bd5\u7528\u4f8b\u4e0e Bug \u5206\u6790'),
+            Conversation(id='conv_devops', type='single', name='\u8fd0\u7ef4\u5de5\u7a0b\u5e08', avatar='\U0001f680', agent_id='agent_devops', preview='Docker \u90e8\u7f72\u4e0e CI/CD'),
+            Conversation(id='conv_designer', type='single', name='\u8bbe\u8ba1\u987e\u95ee', avatar='\U0001f3af', agent_id='agent_designer', preview='UI/UX \u8bbe\u8ba1\u5efa\u8bae'),
+            Conversation(id='conv_builder', type='single', name='Agent \u5de5\u574a', avatar='\U0001f527', agent_id='agent_builder', preview='\u5bf9\u8bdd\u5f0f\u521b\u5efa\u81ea\u5b9a\u4e49 Agent'),
+            Conversation(id='conv_group_demo', type='group', name='Demo \u9879\u76ee\u7fa4', avatar='\U0001f4ac', agents=json.dumps(['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer']), preview='\u591a Agent \u534f\u4f5c\u6f14\u793a'),
+        ]
+        for conv in default_convs:
+            existing = session.get(Conversation, conv.id)
+            if not existing:
+                session.add(conv)
+        session.commit()
 
-
-def save_message(conversation_id: str, sender: str, content: dict, streaming: bool = False):
-    conn = get_db()
-    conn.execute(
-        'INSERT INTO messages (conversation_id, sender, content, streaming) VALUES (?, ?, ?, ?)',
-        (conversation_id, sender, json.dumps(content, ensure_ascii=False), int(streaming))
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_messages(conversation_id: str, limit: int = 100):
-    conn = get_db()
-    rows = conn.execute(
-        'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT ?',
-        (conversation_id, limit)
-    ).fetchall()
-    conn.close()
-    return [
-        {
-            'id': row['id'],
-            'conversation_id': row['conversation_id'],
-            'sender': row['sender'],
-            'content': json.loads(row['content']),
-            'streaming': bool(row['streaming']),
-            'timestamp': row['created_at'],
-        }
-        for row in rows
-    ]
-
-
-def get_conversations():
-    conn = get_db()
-    rows = conn.execute('SELECT * FROM conversations ORDER BY created_at ASC').fetchall()
-    conn.close()
-    result = []
-    for row in rows:
-        conv = dict(row)
-        if conv['agents']:
-            conv['agents'] = json.loads(conv['agents'])
-        result.append(conv)
-    return result
-
-
-def clear_messages(conversation_id: str):
-    conn = get_db()
-    conn.execute('DELETE FROM messages WHERE conversation_id = ?', (conversation_id,))
-    conn.commit()
-    conn.close()
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
+                "content_text, content='messages', content_rowid='id', tokenize='unicode61')"
+            ))
+            conn.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN "
+                "INSERT INTO messages_fts(rowid, content_text) VALUES (new.id, COALESCE(json_extract(new.content, '$.text'), '')); END"
+            ))
+            conn.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN "
+                "INSERT INTO messages_fts(messages_fts, rowid, content_text) VALUES('delete', old.id, COALESCE(json_extract(old.content, '$.text'), '')); END"
+            ))
+            conn.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN "
+                "INSERT INTO messages_fts(messages_fts, rowid, content_text) VALUES('delete', old.id, COALESCE(json_extract(old.content, '$.text'), '')); "
+                "INSERT INTO messages_fts(rowid, content_text) VALUES (new.id, COALESCE(json_extract(new.content, '$.text'), '')); END"
+            ))
+            conn.commit()
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger("database").warning(f"FTS5 setup skipped: {e}")
 
 
-# ---- Custom Agents CRUD ----
+# Re-export async wrappers AFTER init_db is defined (no circular dep issue)
+# async_wrappers imported lazily to avoid circular dependency
+# Use: from app.core.async_wrappers import async_save_event, ...
 
-def save_custom_agent(agent_id: str, name: str, avatar: str, role: str,
-                      style: str, system_prompt: str, tools: list[str]):
-    conn = get_db()
-    conn.execute(
-        'INSERT OR REPLACE INTO custom_agents (id, name, avatar, role, style, system_prompt, tools) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        (agent_id, name, avatar, role, style, system_prompt, json.dumps(tools, ensure_ascii=False))
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_custom_agents() -> list[dict]:
-    conn = get_db()
-    rows = conn.execute('SELECT * FROM custom_agents ORDER BY created_at ASC').fetchall()
-    conn.close()
-    return [
-        {
-            'agent_id': row['id'],
-            'name': row['name'],
-            'avatar': row['avatar'],
-            'role': row['role'],
-            'style': row['style'],
-            'system_prompt': row['system_prompt'],
-            'tools': json.loads(row['tools']),
-            'created_at': row['created_at'],
-            'custom': True,
-        }
-        for row in rows
-    ]
-
-
-def delete_custom_agent(agent_id: str):
-    conn = get_db()
-    conn.execute('DELETE FROM custom_agents WHERE id = ?', (agent_id,))
-    conn.execute('DELETE FROM conversations WHERE agent_id = ?', (agent_id,))
-    conn.execute('DELETE FROM messages WHERE conversation_id = ?', (f'conv_{agent_id}',))
-    conn.commit()
-    conn.close()
-
-
-def create_conversation(conv_id: str, conv_type: str, name: str, avatar: str,
-                        agent_id: str = None, agents: list[str] = None, preview: str = ''):
-    conn = get_db()
-    conn.execute(
-        'INSERT OR IGNORE INTO conversations (id, type, name, avatar, agent_id, agents, preview) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        (conv_id, conv_type, name, avatar, agent_id,
-         json.dumps(agents, ensure_ascii=False) if agents else None, preview)
-    )
-    conn.commit()
-    conn.close()
-
-
-# ---- Uploaded Files CRUD ----
-
-def save_uploaded_file(file_id: str, original_name: str, stored_name: str,
-                       file_path: str, content_type: str = "", size: int = 0,
-                       extracted_text: str = ""):
-    conn = get_db()
-    conn.execute(
-        'INSERT OR REPLACE INTO uploaded_files (id, original_name, stored_name, file_path, content_type, size, extracted_text) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        (file_id, original_name, stored_name, file_path, content_type, size, extracted_text)
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_uploaded_file(file_id: str) -> dict | None:
-    conn = get_db()
-    row = conn.execute('SELECT * FROM uploaded_files WHERE id = ?', (file_id,)).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return dict(row)
-
-
-def get_all_uploaded_files() -> list[dict]:
-    conn = get_db()
-    rows = conn.execute('SELECT * FROM uploaded_files ORDER BY uploaded_at DESC').fetchall()
-    conn.close()
-    return [dict(row) for row in rows]

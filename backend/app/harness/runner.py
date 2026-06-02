@@ -11,6 +11,7 @@ from app.tools.judge_tools import (
     ComplexityJudgeTool,
     QualityJudgeTool,
     AlignmentJudgeTool,
+    UserInteractionJudgeTool,
 )
 from app.harness.evaluator import evaluate_result, EvalReport
 
@@ -20,6 +21,7 @@ TOOL_REGISTRY = {
     "complexity_judge": ComplexityJudgeTool,
     "quality_judge": QualityJudgeTool,
     "alignment_judge": AlignmentJudgeTool,
+    "user_interaction_judge": UserInteractionJudgeTool,
 }
 
 SAMPLES_DIR = Path(__file__).parent / "samples"
@@ -56,13 +58,7 @@ class HarnessRunner:
         tool = tool_cls()
 
         # Build input_data from case
-        input_data = {}
-        if "user_input" in case:
-            input_data["user_input"] = case["user_input"]
-        if "task" in case:
-            input_data["task"] = case["task"]
-        if "solution" in case:
-            input_data["solution"] = case["solution"]
+        input_data = case.copy()
 
         # Run the tool
         result = await tool.run(input_data, llm_client=self.llm_client)

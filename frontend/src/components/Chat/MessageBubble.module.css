@@ -1,0 +1,359 @@
+/* MessageBubble component styles — extracted from inline styles */
+/* Tool Call Block */
+.toolCallBlock {
+  margin: 12px 0;
+  border-radius: 8px;
+  background: rgba(129, 140, 248, 0.03);
+  border: 1px solid rgba(129, 140, 248, 0.12);
+  overflow: hidden;
+}
+
+.toolCallHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(129, 140, 248, 0.05);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toolCallHeaderNoParams {
+  cursor: default;
+}
+
+.toolCallIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(129, 140, 248, 0.12);
+  color: #818cf8;
+}
+
+.toolCallInfo {
+  display: flex;
+  flex-direction: column;
+}
+
+.toolCallName {
+  font-size: 13px;
+  font-weight: 600;
+  color: #c7d2fe;
+}
+
+.toolCallLabel {
+  font-size: 10px;
+  color: #818cf8;
+  opacity: 0.8;
+  letter-spacing: 0.5px;
+}
+
+.toolCallRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolCallBadge {
+  font-size: 10px;
+  background: rgba(129, 140, 248, 0.15);
+  border: 1px solid rgba(129, 140, 248, 0.3);
+  color: #a5b4fc;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolCallDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #818cf8;
+  box-shadow: 0 0 6px #818cf8;
+}
+
+.toolCallChevron {
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+}
+
+.toolCallExpandBody {
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border-top: 1px solid rgba(129, 140, 248, 0.08);
+}
+
+.toolCallArgLabel {
+  font-size: 11px;
+  color: #818cf8;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.toolCallArgPre {
+  margin: 0;
+  font-size: 11px;
+  color: #cbd5e1;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Tool Result Block */
+.toolResultBlock {
+  margin: 12px 0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.toolResultBlockSuccess {
+  background: rgba(16, 185, 129, 0.02);
+  border: 1px solid rgba(16, 185, 129, 0.12);
+}
+
+.toolResultBlockError {
+  background: rgba(239, 68, 68, 0.02);
+  border: 1px solid rgba(239, 68, 68, 0.12);
+}
+
+.toolResultHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toolResultHeaderSuccess {
+  background: rgba(16, 185, 129, 0.04);
+}
+
+.toolResultHeaderError {
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.toolResultIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.toolResultIconSuccess {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+}
+
+.toolResultIconError {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+}
+
+.toolResultInfo {
+  display: flex;
+  flex-direction: column;
+}
+
+.toolResultName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.toolResultLabel {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.toolResultRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolResultBadge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.toolResultBadgeSuccess {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.12);
+  color: #34d399;
+}
+
+.toolResultBadgeError {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.12);
+  color: #f87171;
+}
+
+.toolResultChevron {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+}
+
+.toolResultBody {
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.toolResultBodySuccess {
+  border-top: 1px solid rgba(16, 185, 129, 0.12);
+}
+
+.toolResultBodyError {
+  border-top: 1px solid rgba(239, 68, 68, 0.12);
+}
+
+.toolResultPre {
+  margin: 0;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 150px;
+  overflow: auto;
+  cursor: pointer;
+}
+
+.toolResultPreExpanded {
+  max-height: 400px;
+  cursor: text;
+}
+
+.toolResultPreSuccess {
+  color: #a7f3d0;
+}
+
+.toolResultPreError {
+  color: #fca5a5;
+}
+
+/* Preview indicator */
+.previewIndicator {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: var(--accent-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.8;
+}
+
+/* Options buttons */
+.optionsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.optionButton {
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.optionButton:hover {
+  background: var(--bg-tertiary);
+}
+
+/* Pin indicator */
+.pinIndicator {
+  font-size: 11px;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+/* Attachments container */
+.attachmentsContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.attachmentsContainerNoText {
+  margin-bottom: 0;
+}
+
+/* Action bar */
+.actionBar {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.actionBar:hover,
+.message-content:hover .actionBar {
+  opacity: 1;
+}
+
+.actionButton {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.actionButton:hover {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.actionButtonCopied {
+  color: var(--accent);
+}
+
+/* Streaming cursor */
+.streamingCursor {
+  display: inline-block;
+  width: 6px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 2px;
+  margin-left: 2px;
+  animation: blink 1s step-end infinite;
+  vertical-align: middle;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}

@@ -1,12 +1,18 @@
 import asyncio
+import json
 import random
+import logging
 from typing import AsyncGenerator
 
 from app.core.llm_client import llm_client
 from app.core.prompt_engine import prompt_engine
 
+logger = logging.getLogger("base_agent")
+
 # Maximum characters for conversation history context (~4000 tokens ≈ 12000 chars)
 _MAX_HISTORY_CHARS = 12000
+# Maximum tool call rounds per reply (prevent infinite loops)
+_MAX_TOOL_ROUNDS = 5
 
 
 class BaseAgent:
@@ -16,23 +22,174 @@ class BaseAgent:
     role: str = ""
     style: str = ""
     system_prompt: str = ""
+    description: str = ""
+    # Runtime tools enabled for this agent (None = all enabled tools)
+    enabled_tools: list[str] | None = None
 
     async def stream_reply(self, message: str, context: list = None,
-                           history: list = None, attachments: list = None) -> AsyncGenerator[str, None]:
+                           history: list = None, conversation_id: str = None) -> AsyncGenerator[str, None]:
         if llm_client.is_configured() and self.system_prompt:
-            messages = self._build_messages(message, context, history, attachments)
+            messages = self._build_messages(message, context, history)
             # Structured layered prompt injection
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
-            prompt_context = {"task_type": task_type}
+            prompt_context = {"task_type": task_type, "conversation_id": conversation_id}
             full_prompt = prompt_engine.build(self, prompt_context)
-            async for chunk in llm_client.chat_stream(messages, full_prompt):
-                yield chunk
+
+            # Inject tool descriptions into system prompt
+            tools_prompt = self._get_tools_prompt()
+            if tools_prompt:
+                full_prompt = full_prompt + tools_prompt
+
+            # Stream with tool call interception loop
+            round_count = 0
+            while True:
+                accumulated = ""
+                try:
+                    llm_gen = llm_client.chat_stream(messages, full_prompt, self.enabled_tools)
+                except TypeError:
+                    llm_gen = llm_client.chat_stream(messages, full_prompt)
+                async for chunk in llm_gen:
+                    accumulated += chunk
+                    yield chunk
+
+                # Check if output contains tool_call tags
+                from app.tools.registry import parse_tool_calls, execute_tool_call
+                tool_calls = parse_tool_calls(accumulated)
+
+                if conversation_id:
+                    from app.core.event_stream import event_stream_manager, ThoughtEvent, ActionCallEvent
+                    if tool_calls:
+                        tool_name, params, start_pos, end_pos = tool_calls[0]
+                        thought_text = accumulated[:start_pos]
+                        if thought_text.strip():
+                            event_stream_manager.append_event(conversation_id, ThoughtEvent(agent_id=self.agent_id, content=thought_text))
+                        event_stream_manager.append_event(conversation_id, ActionCallEvent(tool_name=tool_name, params=params))
+                    else:
+                        event_stream_manager.append_event(conversation_id, ThoughtEvent(agent_id=self.agent_id, content=accumulated))
+
+                if not tool_calls or round_count >= _MAX_TOOL_ROUNDS:
+                    break  # No tool calls or max rounds reached
+
+                round_count += 1
+                # Execute the first tool call found
+                tool_name, params, start_pos, end_pos = tool_calls[0]
+
+                # Inject conversation_id for ACI and file/browser tools
+                if tool_name in ("file_read", "file_write", "file_list", "browser_action", "file_view_windowed", "file_edit_line", "run_stateful_command", "e2b_python_interpreter") and conversation_id:
+                    params.setdefault("conversation_id", conversation_id)
+
+                logger.info(f"Agent '{self.agent_id}' calling tool: {tool_name}({params})")
+                result = await execute_tool_call(tool_name, params)
+
+                # Format tool result for display
+                result_text = self._format_tool_result(tool_name, result)
+                yield f"\n\n> 🔧 **工具调用**: `{tool_name}`\n{result_text}\n\n"
+
+                # Add assistant output + tool result to messages for next round
+                if conversation_id:
+                    from app.core.event_stream import event_stream_manager, ObservationEvent
+                    obs_output = result.data if result.success else result.error
+                    obs_images = []
+                    if result.success and isinstance(result.data, dict):
+                        if "images" in result.data:
+                            obs_images = result.data["images"]
+                        elif "screenshot_base64" in result.data:
+                            obs_images = [result.data["screenshot_base64"]]
+                        elif "screenshot" in result.data:
+                            obs_images = [result.data["screenshot"]]
+                    event_stream_manager.append_event(
+                        conversation_id,
+                        ObservationEvent(tool_name=tool_name, success=result.success, output=obs_output, images=obs_images)
+                    )
+                    messages = event_stream_manager.compile_to_messages(conversation_id)
+                else:
+                    messages.append({"role": "assistant", "content": accumulated})
+                    messages.append({"role": "user", "content": f"[工具结果: {tool_name}]\n{json.dumps(result.data if result.success else {'error': result.error}, ensure_ascii=False, indent=2)}\n\n请基于以上工具结果继续回复用户。"})
         else:
             reply = self._generate_reply(message, context)
             for char in reply:
                 delay = random.uniform(0.04, 0.10)
                 await asyncio.sleep(delay)
                 yield char
+
+    def _get_tools_prompt(self) -> str:
+        """Get tools prompt block for this agent."""
+        try:
+            from app.tools.registry import get_tools_prompt
+            return get_tools_prompt(self.enabled_tools)
+        except Exception as e:
+            logger.warning(f"Failed to get tools prompt: {e}")
+            return ""
+
+    @staticmethod
+    def _format_tool_result(tool_name: str, result) -> str:
+        """Format a ToolResult for inline display in chat."""
+        if not result.success:
+            return f"> ❌ 错误: {result.error}"
+        data = result.data
+        if tool_name == "web_search" and isinstance(data, dict):
+            items = data.get("results", [])
+            if not items:
+                return "> 未找到相关结果"
+            lines = []
+            for i, item in enumerate(items[:5], 1):
+                lines.append(f"> {i}. **{item['title']}**\n>    {item['snippet'][:100]}")
+            return "\n".join(lines)
+        elif tool_name == "http_request" and isinstance(data, dict):
+            status = data.get("status_code", "?")
+            body = data.get("body", "")[:500]
+            return f"> 状态码: {status}\n> ```\n> {body}\n> ```"
+        elif tool_name == "file_read" and isinstance(data, dict):
+            content = data.get("content", "")[:500]
+            return f"> ```\n{content}\n> ```"
+        elif tool_name == "safe_python_executor" and isinstance(data, dict):
+            stdout = data.get("stdout", "")
+            ret = data.get("result", None)
+            lines = []
+            if stdout:
+                lines.append(f"> **标准输出 (stdout)**:\n> ```\n> {stdout.strip()}\n> ```")
+            if ret is not None:
+                lines.append(f"> **返回值 (return)**: `{ret}`")
+            if not lines:
+                lines.append("> (执行成功，无任何输出与返回值)")
+            return "\n".join(lines)
+        elif tool_name == "browser_action" and isinstance(data, dict):
+            msg = data.get("message", "")
+            prefix = ""
+            if data.get("vision_used"):
+                prefix = "> ✨ **[👁️ 视觉定位成功]** 实时激活多模态视觉定位主循环，百分比视口绝对坐标转换精确触发！\n"
+            elif data.get("failover_used"):
+                prefix = "> 🛡️ **[🩹 模糊匹配自愈已启动]** 视觉调用降级，自动激活 DOM 节点与自然语言局部自愈网络安全触达！\n"
+            return prefix + "\n".join(f"> {line}" for line in msg.split("\n"))
+        elif tool_name == "file_view_windowed" and isinstance(data, dict):
+            msg = data.get("message", "")
+            return "\n".join(f"> {line}" for line in msg.split("\n"))
+        elif tool_name == "file_edit_line" and isinstance(data, dict):
+            msg = data.get("message", "")
+            return f"> {msg}"
+        elif tool_name == "run_stateful_command" and isinstance(data, dict):
+            output = data.get("output", "")[:1000]
+            return f"> **有状态命令执行输出**:\n> ```\n" + "\n".join(f"> {line}" for line in output.split("\n")) + "\n> ```"
+        elif tool_name == "e2b_python_interpreter" and isinstance(data, dict):
+            stdout = data.get("stdout", "")
+            stderr = data.get("stderr", "")
+            images = data.get("images", [])
+            lines = []
+            if stdout:
+                lines.append(f"> **标准输出 (stdout)**:\n> ```\n> {stdout.strip()}\n> ```")
+            if stderr:
+                lines.append(f"> ❌ **错误输出 (stderr)**:\n> ```\n> {stderr.strip()}\n> ```")
+            if images:
+                lines.append("> ✨ **[📊 E2B 代码解释器绘图成功]** 已自动拦截并捕捉科学计算可视化成果：")
+                for img in images:
+                    lines.append(f"> ![Generated Visualization](data:image/png;base64,{img})")
+            if not lines:
+                lines.append("> (执行成功，无任何文本输出)")
+            return "\n".join(lines)
+        elif tool_name in ("file_write", "file_list") and isinstance(data, dict):
+            return f"> {json.dumps(data, ensure_ascii=False, indent=2)}"
+        else:
+            return f"> {json.dumps(data, ensure_ascii=False)[:500]}"
 
     def _build_messages(self, message: str, context: list = None,
                         history: list = None, attachments: list = None) -> list[dict]:
@@ -68,12 +225,8 @@ class BaseAgent:
                     messages.append({"role": role, "content": text})
 
         # Avoid duplicating the current user message when history already includes it
-        # (main.py saves the user message before fetching history, so the last entry
-        # may already be the same message — appending again breaks Anthropic's
-        # user/assistant alternation rule).
         if not (messages and messages[-1].get("role") == "user"
                 and messages[-1].get("content") == message):
-            # 附件文件内容注入：将 extracted_text 追加到用户消息中
             enhanced_message = message
             if attachments:
                 file_contexts = []
@@ -85,7 +238,6 @@ class BaseAgent:
                         )
                 if file_contexts:
                     enhanced_message = message + "\n\n" + "\n\n".join(file_contexts)
-
             messages.append({"role": "user", "content": enhanced_message})
         return messages
 

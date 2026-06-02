@@ -40,10 +40,15 @@ async def opencode_stream(
             stderr=asyncio.subprocess.PIPE,
         )
 
-        # Stream stdout line by line
+        # Stream stdout line by line with timeout
         buffer = ""
         while True:
-            line = await proc.stdout.readline()
+            try:
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=120)
+            except asyncio.TimeoutError:
+                proc.kill()
+                yield "\n[OpenCode 执行超时（超过 120 秒），进程已被终止]"
+                break
             if not line:
                 break
             text = line.decode("utf-8", errors="replace")

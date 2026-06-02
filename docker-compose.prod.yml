@@ -1,0 +1,29 @@
+# Production overrides -- use with:
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  backend:
+    restart: always
+    environment:
+      - AGENTHUB_API_SECRET=${AGENTHUB_API_SECRET:?Error: Set AGENTHUB_API_SECRET in .env}
+      - AGENTHUB_ENCRYPT_KEY=${AGENTHUB_ENCRYPT_KEY:?Error: Set AGENTHUB_ENCRYPT_KEY in .env}
+      - AGENTHUB_REDIS_URL=redis://:${REDIS_PASSWORD:?Error: Set REDIS_PASSWORD in .env}@redis:6379/0
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+
+  redis:
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?Error: Set REDIS_PASSWORD in .env}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+    ports: []  # Don't expose Redis port in production
+
+  frontend:
+    ports:
+      - "0.0.0.0:3000:80"  # Only expose frontend in production
+    restart: always

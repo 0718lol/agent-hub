@@ -5,32 +5,42 @@ class WSClient {
     this.reconnectTimer = null
     this.pendingMessages = []
     this.currentConvId = null
-    this.intentionalClose = false
+    this.reconnectAttempts = 0
+    this.maxReconnectDelay = 30000 // Maximum 30 seconds
+    this.baseReconnectDelay = 1000 // Start at 1 second
   }
 
   connect(conversationId) {
     this.currentConvId = conversationId
-    this.intentionalClose = false
     clearTimeout(this.reconnectTimer)
 
     if (this.ws) {
-      this.intentionalClose = true
-      this.ws.close()
+      const oldWs = this.ws
+      oldWs.onclose = null // Prevents the old socket close from triggering a stale reconnection
+      oldWs.close()
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${protocol}//${window.location.host}/ws/${conversationId}`
-    this.ws = new WebSocket(url)
+    let url = `${protocol}//${window.location.host}/ws/${conversationId}`
+    
+    const ws = new WebSocket(url)
+    this.ws = ws
 
-    this.ws.onopen = () => {
-      // Flush any messages queued while connecting
+    ws.onopen = () => {
+      if (this.ws !== ws) return // Safe guard against stale connections
+      const authToken = localStorage.getItem('agenthub_api_secret')
+      if (authToken) {
+        ws.send(JSON.stringify({ type: 'auth', token: authToken }))
+      }
+      this.reconnectAttempts = 0
       while (this.pendingMessages.length > 0) {
         const msg = this.pendingMessages.shift()
-        this.ws.send(msg)
+        ws.send(msg)
       }
     }
 
-    this.ws.onmessage = (event) => {
+    ws.onmessage = (event) => {
+      if (this.ws !== ws) return // Safe guard against stale connections
       try {
         const data = JSON.parse(event.data)
         this.handlers.forEach((fn) => fn(data))
@@ -39,15 +49,27 @@ class WSClient {
       }
     }
 
-    this.ws.onclose = () => {
-      if (!this.intentionalClose && this.currentConvId === conversationId) {
-        this.reconnectTimer = setTimeout(() => this.connect(conversationId), 3000)
-      }
+    ws.onclose = () => {
+      if (this.ws !== ws) return // Safe guard against stale connections
+      const delay = this._calculateReconnectDelay()
+      this.reconnectAttempts++
+      this.reconnectTimer = setTimeout(() => this.connect(conversationId), delay)
     }
 
-    this.ws.onerror = (err) => {
+    ws.onerror = (err) => {
+      if (this.ws !== ws) return // Safe guard against stale connections
       console.error('WS error:', err)
     }
+  }
+
+  /**
+   * Calculate reconnect delay with exponential backoff + jitter.
+   * delay = min(base * 2^attempts + random jitter, maxDelay)
+   */
+  _calculateReconnectDelay() {
+    const exponentialDelay = this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts)
+    const jitter = Math.random() * 1000 // Random jitter 0-1000ms
+    return Math.min(exponentialDelay + jitter, this.maxReconnectDelay)
   }
 
   send(data) {
@@ -94,10 +116,12 @@ class WSClient {
 
   disconnect() {
     clearTimeout(this.reconnectTimer)
-    this.intentionalClose = true
+    this.reconnectAttempts = 0
     this.pendingMessages = []
     if (this.ws) {
-      this.ws.close()
+      const oldWs = this.ws
+      oldWs.onclose = null
+      oldWs.close()
       this.ws = null
     }
   }

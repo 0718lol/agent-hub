@@ -27,11 +27,14 @@ from app.core.llm_client import llm_client
 
 class QualityGate:
     def __init__(self, enabled: bool = True, max_retries: int = 1,
-                 use_llm_judge: bool = False, best_of_n: int = 1):
+                 use_llm_judge: bool = False, best_of_n: int = 1,
+                 max_concurrent_generations: int = 3):
         self.enabled = enabled
         self.max_retries = max_retries
         self.use_llm_judge = use_llm_judge
         self.best_of_n = best_of_n  # 1 = disabled, 3 = generate 3 candidates pick best
+        # Semaphore to limit concurrent LLM generation calls and protect API quota
+        self._generation_semaphore = asyncio.Semaphore(max_concurrent_generations)
 
     def evaluate(self, text: str, agent_id: str = "") -> QualityReport:
         """Run rule-based evaluation on output text. Fast and deterministic."""
@@ -42,10 +45,36 @@ class QualityGate:
         code_blocks = re.findall(r'```(\w*)\n(.*?)```', text, re.DOTALL)
 
         if code_blocks:
-            # Evaluate the largest code block
-            lang, code = max(code_blocks, key=lambda x: len(x[1]))
-            output_type = self._lang_to_type(lang) or detect_output_type(code, agent_id)
-            return run_rules(code, output_type)
+            reports = []
+            for lang, code in code_blocks:
+                if not code.strip():
+                    continue
+                output_type = self._lang_to_type(lang) or detect_output_type(code, agent_id)
+                r = run_rules(code, output_type)
+                reports.append(r)
+            
+            if not reports:
+                return QualityReport(output_type="general", score=1.0, passed=True)
+            
+            # Find the worst report by score
+            worst_report = min(reports, key=lambda r: r.score)
+            
+            # Combine all results, suggestions, and calculate overall passed
+            all_results = []
+            all_suggestions = []
+            for r in reports:
+                all_results.extend(r.results)
+                all_suggestions.extend(r.suggestions)
+            
+            all_passed = all(r.passed for r in reports)
+            
+            return QualityReport(
+                output_type=worst_report.output_type,
+                score=worst_report.score,
+                passed=all_passed,
+                results=all_results,
+                suggestions=all_suggestions
+            )
         else:
             # Evaluate the full text as document/general
             output_type = detect_output_type(text, agent_id)
@@ -86,8 +115,9 @@ class QualityGate:
                 suggestions = [s.strip() for s in issues_match.group(1).strip().split('\n') if s.strip()]
                 report.suggestions = suggestions[:5]
 
-        except Exception:
-            pass  # LLM judge failure is non-fatal, keep rule-based result
+        except Exception as e:
+            import logging
+            logging.getLogger("quality_gate").warning(f"LLM judge failed: {e}", exc_info=True)
 
         return report
 
@@ -137,9 +167,29 @@ class QualityGate:
         if self.use_llm_judge and llm_client.is_configured():
             code_blocks = re.findall(r'```(\w*)\n(.*?)```', current_output, re.DOTALL)
             if code_blocks:
-                lang, code = max(code_blocks, key=lambda x: len(x[1]))
-                output_type = self._lang_to_type(lang) or detect_output_type(code, agent_id)
-                report = await self.evaluate_with_llm_judge(code, output_type)
+                reports = []
+                for lang, code in code_blocks:
+                    if not code.strip():
+                        continue
+                    output_type = self._lang_to_type(lang) or detect_output_type(code, agent_id)
+                    r = await self.evaluate_with_llm_judge(code, output_type)
+                    reports.append(r)
+                
+                if reports:
+                    worst_report = min(reports, key=lambda r: r.score)
+                    all_results = []
+                    all_suggestions = []
+                    for r in reports:
+                        all_results.extend(r.results)
+                        all_suggestions.extend(r.suggestions)
+                    all_passed = all(r.passed for r in reports)
+                    report = QualityReport(
+                        output_type=worst_report.output_type,
+                        score=worst_report.score,
+                        passed=all_passed,
+                        results=all_results,
+                        suggestions=all_suggestions
+                    )
 
         return current_output, report
 
@@ -173,10 +223,11 @@ class QualityGate:
 
         # Parallel generation of N candidates
         async def _generate_one(index: int) -> tuple[int, str]:
-            text = ""
-            async for chunk in agent.stream_reply(message, history=history):
-                text += chunk
-            return index, text
+            async with self._generation_semaphore:
+                text = ""
+                async for chunk in agent.stream_reply(message, history=history):
+                    text += chunk
+                return index, text
 
         if on_progress:
             await on_progress(-1, f"并行生成 {n} 个候选方案...")

@@ -48,6 +48,8 @@ export const useCanvasStore = create((set) => ({
     set({ isDeploying: false, deployStatus: 'success', deployedUrl: url }),
   failDeploy: () =>
     set({ isDeploying: false, deployStatus: 'failed' }),
+  resetDeploy: () =>
+    set({ isDeploying: false, deployStatus: 'idle', deployLogs: [], deployedUrl: '' }),
 
   tasks: [
     { id: 1, title: '设计页面 UI', assignee: 'agent_designer', status: 'todo' },
@@ -59,7 +61,7 @@ export const useCanvasStore = create((set) => ({
   moveTask: (taskId, newStatus) =>
     set((state) => ({ tasks: state.tasks.map((t) => t.id === taskId ? { ...t, status: newStatus } : t) })),
   addTask: (task) =>
-    set((state) => ({ tasks: [...state.tasks, { ...task, id: Date.now() }] })),
+    set((state) => ({ tasks: [...state.tasks, { ...task, id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2) }] })),
   updateTaskByAgent: (agentId, status) =>
     set((state) => ({ tasks: state.tasks.map((t) => t.assignee === agentId ? { ...t, status } : t) })),
 
@@ -82,4 +84,27 @@ export const useCanvasStore = create((set) => ({
   ],
   setNodeStatus: (nodeId, status) =>
     set((state) => ({ dagNodes: state.dagNodes.map((n) => n.id === nodeId ? { ...n, status } : n) })),
+
+  // Fetch DAG topology from backend agents list
+  fetchDAGFromBackend: async () => {
+    try {
+      const resp = await fetch('/api/health')
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data = await resp.json()
+      if (!data.agents || data.agents.length === 0) return
+      const agentIds = data.agents
+      // Build DAG nodes from backend agents
+      const newNodes = [
+        { id: 'user', label: '用户', iconKey: 'user', x: 200, y: 30, status: 'idle' },
+        ...agentIds.map((id, i) => ({
+          id, label: id.replace('agent_', '').toUpperCase(), iconKey: id,
+          x: 60 + (i % 5) * 100, y: 130 + Math.floor(i / 5) * 120, status: 'idle'
+        }))
+      ]
+      const newEdges = agentIds.map((id) => ({ from: 'agent_pm', to: id }))
+      set({ dagNodes: newNodes, dagEdges: newEdges })
+    } catch (e) {
+      console.warn('Failed to fetch DAG from backend:', e)
+    }
+  },
 }))
