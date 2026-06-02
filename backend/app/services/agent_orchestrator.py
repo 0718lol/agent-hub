@@ -481,7 +481,7 @@ async def run_target_agent_flow(conversation_id: str, agent, text: str):
                 await asyncio.gather(*[
                     stream_agent_reply(conversation_id, a, text, stop_event, context=pm_response)
                     for a in agents_to_run
-                ])
+                ], return_exceptions=True)
     finally:
         _stop_events.pop(conversation_id, None)
         await manager.broadcast(conversation_id, {

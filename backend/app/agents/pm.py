@@ -30,6 +30,8 @@ class PMAgent(BaseAgent):
     SPECIFIC_KEYWORDS = [
         "登录", "注册", "todo", "待办", "博客", "商城", "电商", "聊天", "后台",
         "管理", "dashboard", "仪表盘", "api", "接口", "数据库", "表单",
+        "应用", "系统", "网站", "页面", "工具", "平台", "查询", "天气",
+        "游戏", "教育", "视频", "音乐", "社交", "论坛", "地图", "支付",
     ]
 
     def _is_vague(self, message: str) -> bool:
@@ -37,7 +39,7 @@ class PMAgent(BaseAgent):
         has_vague = any(kw in msg for kw in self.VAGUE_KEYWORDS)
         has_specific = any(kw in msg for kw in self.SPECIFIC_KEYWORDS)
         # Only truly vague if it's vague AND has no specific keywords AND is very short
-        return has_vague and not has_specific and len(message) < 15
+        return has_vague and not has_specific and len(message) < 8
 
     def _detect_category(self, message: str) -> str:
         msg = message.lower()

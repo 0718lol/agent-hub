@@ -7,10 +7,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save_message
 from app.core.config import settings
-from app.core.llm_client import llm_client
 from app.core.logging_config import get_logger
 from app.core.websocket import manager
-from app.routers.harness_handler import handle_verdict, try_intercept_with_harness
+from app.routers.harness_handler import handle_verdict
 from app.services.agent_orchestrator import (
     _stop_events,
     get_agents,
@@ -164,15 +163,6 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             prev_event = _stop_events.get(conversation_id)
             if prev_event and not prev_event.is_set():
                 prev_event.set()
-
-            # harness 拦截：复杂任务进入辩论沙盒
-            if sender == "user":
-                intercepted = await try_intercept_with_harness(
-                    conversation_id, text, llm_client, manager
-                )
-                if intercepted:
-                    continue
-
             current_agents = get_agents()
             if target_agent and target_agent in current_agents:
                 task = asyncio.create_task(

@@ -28,7 +28,6 @@ def ws_app():
     - redis_manager.check_connection  -> False  (skip Redis, use local broadcast)
     - async_save_message              -> no-op
     - async_get_pending_hil_checkpoint -> None   (no HIL recovery)
-    - try_intercept_with_harness      -> False   (no harness interception)
     - run_user_message_flow           -> no-op
     - run_target_agent_flow           -> no-op
     - get_agents                      -> empty dict
@@ -51,11 +50,6 @@ def ws_app():
             "app.routers.ws.async_get_pending_hil_checkpoint",
             new_callable=AsyncMock,
             return_value=None,
-        ),
-        patch(
-            "app.routers.ws.try_intercept_with_harness",
-            new_callable=AsyncMock,
-            return_value=False,
         ),
         patch("app.routers.ws.run_user_message_flow", new_callable=AsyncMock),
         patch("app.routers.ws.run_target_agent_flow", new_callable=AsyncMock),
