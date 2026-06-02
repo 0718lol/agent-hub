@@ -1,5 +1,6 @@
-﻿import React from 'react'
+import React from 'react'
 import ToggleSwitch from './ToggleSwitch'
+import styles from './SettingsPanel.module.css'
 
 export default function LLMTab({
   isDark, saving, configured, provider, setProvider, apiKey, setApiKey,
@@ -10,92 +11,45 @@ export default function LLMTab({
   setHighlightPresets, handleSave, handleDisconnect,
   getProviderDisplayName,
 }) {
-  const labelStyle = {
-    fontSize: 13,
-    color: 'var(--text-muted)',
-    marginBottom: 6,
-    display: 'block',
-    fontWeight: 500,
-  }
-
-  const inputStyle = {
-    width: '100%',
-    padding: '10px 14px',
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    color: 'var(--text-primary)',
-    fontSize: 13,
-    outline: 'none',
-    fontFamily: 'inherit',
-  }
-
-  const btnStyle = {
-    width: '100%',
-    padding: '12px',
-    borderRadius: 10,
-    background: '#4f46e5',
-    border: 'none',
-    color: 'white',
-    fontSize: 14,
-    fontWeight: 600,
-    cursor: 'pointer',
-    opacity: saving ? 0.6 : 1,
-    transition: 'all 0.2s',
-  }
-
   return (
     <>
       {/* Status banner */}
-      <div style={{
-        padding: '10px 14px', borderRadius: 8, marginBottom: 20,
+      <div className={styles.statusBanner} style={{
         background: configured ? (isDark ? 'rgba(34,197,94,0.12)' : '#ecfdf5') : (isDark ? 'rgba(245,158,11,0.12)' : '#fffbeb'),
         border: `1px solid ${configured ? (isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0') : (isDark ? 'rgba(245,158,11,0.25)' : '#fde68a')}`,
-        fontSize: 13, color: configured ? 'var(--text-primary)' : (isDark ? '#fbbf24' : '#d97706'),
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+        color: configured ? 'var(--text-primary)' : (isDark ? '#fbbf24' : '#d97706'),
       }}>
-        <span style={{ flex: 1, minWidth: 0 }}>
+        <span className={styles.statusText}>
           {configured
             ? `✅ 已连接 ${getProviderDisplayName(activeProvider, activeModel)}`
             : '⚠️ 未配置 — Agent 使用 Mock 回复'}
         </span>
         {configured && (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-            <button onClick={handleDisconnect} disabled={saving} style={{
-              padding: '4px 10px', borderRadius: 6, fontSize: 11,
-              background: 'var(--bg-secondary)', border: `1px solid ${isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0'}`,
-              color: '#059669', cursor: 'pointer', fontWeight: 500,
-              whiteSpace: 'nowrap',
+          <div className={styles.statusActions}>
+            <button onClick={handleDisconnect} disabled={saving} className={styles.disconnectBtn} style={{
+              border: `1px solid ${isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0'}`,
             }}>断开接入</button>
             <button onClick={() => {
               setHighlightPresets(true)
               presetsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
               setTimeout(() => setHighlightPresets(false), 1500)
-            }} style={{
-              padding: '4px 10px', borderRadius: 6, fontSize: 11,
-              background: '#059669', border: '1px solid #059669',
-              color: 'white', cursor: 'pointer', fontWeight: 500,
-              whiteSpace: 'nowrap',
-            }}>切换 LLM</button>
+            }} className={styles.switchBtn}>切换 LLM</button>
           </div>
         )}
       </div>
 
       {/* Presets */}
-      <div ref={presetsRef} style={{
-        marginBottom: 20, padding: highlightPresets ? '8px' : 0,
+      <div ref={presetsRef} className={styles.presetsContainer} style={{
+        padding: highlightPresets ? '8px' : 0,
         borderRadius: 8,
         background: highlightPresets ? (isDark ? 'rgba(34,197,94,0.12)' : '#ecfdf5') : 'transparent',
         border: highlightPresets ? `1px solid ${isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0'}` : '1px solid transparent',
-        transition: 'all 0.3s',
       }}>
-        <label style={labelStyle}>快速选择</label>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <label className={styles.label}>快速选择</label>
+        <div className={styles.presetGroup}>
           {presets.map((p) => (
-            <button key={p.label} onClick={() => applyPreset(p)} style={{
-              padding: '6px 12px', borderRadius: 6, fontSize: 12,
+            <button key={p.label} onClick={() => applyPreset(p)} className={styles.presetBtn} style={{
               background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff', border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`,
-              color: '#4f46e5', cursor: 'pointer',
             }}>{p.label}</button>
           ))}
         </div>
@@ -103,21 +57,15 @@ export default function LLMTab({
 
       {/* Provider */}
       <div style={{ marginBottom: 16 }}>
-        <label style={labelStyle}>接口格式</label>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <label className={styles.label}>接口格式</label>
+        <div className={styles.providerGroup}>
           {['openai', 'anthropic', 'ollama'].map((p) => (
             <button key={p} onClick={() => {
               setProvider(p);
               if (p === 'ollama') {
                 setBaseUrl('http://127.0.0.1:11434/v1');
               }
-            }} style={{
-              flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
-              background: provider === p ? '#4f46e5' : 'var(--bg-secondary)',
-              border: `1px solid ${provider === p ? '#4f46e5' : 'var(--border)'}`,
-              color: provider === p ? 'white' : 'var(--text-muted)',
-              cursor: 'pointer', fontWeight: provider === p ? 600 : 400,
-            }}>
+            }} className={provider === p ? styles.optionBtnActive : styles.optionBtnInactive}>
               {p === 'openai' ? 'OpenAI 兼容' : p === 'anthropic' ? 'Anthropic' : 'Ollama 本地'}
             </button>
           ))}
@@ -125,19 +73,20 @@ export default function LLMTab({
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <label style={labelStyle}>API 地址</label>
+        <label className={styles.label}>API 地址</label>
         <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder="https://api.example.com/v1" style={inputStyle} />
+          placeholder="https://api.example.com/v1" className={styles.inputSecondary} />
       </div>
       <div style={{ marginBottom: 16 }}>
-        <label style={labelStyle}>模型名称</label>
+        <label className={styles.label}>模型名称</label>
         {provider === 'ollama' ? (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {ollamaModels.length > 0 ? (
               <select
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                style={{ ...inputStyle, flex: 1 }}
+                className={styles.inputSecondary}
+                style={{ flex: 1 }}
               >
                 {ollamaModels.map((m) => (
                   <option key={m} value={m}>
@@ -150,23 +99,17 @@ export default function LLMTab({
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 placeholder="例如: deepseek-r1:7b"
-                style={{ ...inputStyle, flex: 1 }}
+                className={styles.inputSecondary}
+                style={{ flex: 1 }}
               />
             )}
             <button
               onClick={(e) => { e.preventDefault(); fetchOllamaModels(); }}
               disabled={ollamaLoading}
+              className={styles.ollamaRefreshBtn}
               style={{
-                padding: '10px 14px',
                 background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff',
                 border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`,
-                color: '#4f46e5',
-                borderRadius: 8,
-                cursor: 'pointer',
-                fontSize: 12,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4
               }}
             >
               {ollamaLoading ? '🔄' : '🔄 刷新'}
@@ -174,42 +117,42 @@ export default function LLMTab({
           </div>
         ) : (
           <input value={model} onChange={(e) => setModel(e.target.value)}
-            placeholder="model-name" style={inputStyle} />
+            placeholder="model-name" className={styles.inputSecondary} />
         )}
         {provider === 'ollama' && ollamaError && (
-          <div style={{ marginTop: 6, fontSize: 11, color: isDark ? '#fbbf24' : '#d97706' }}>
+          <div className={styles.warningInline} style={{ color: isDark ? '#fbbf24' : '#d97706' }}>
             ⚠️ {ollamaError}
           </div>
         )}
       </div>
       {provider !== 'ollama' && (
         <div style={{ marginBottom: 16 }}>
-          <label style={labelStyle}>API Key</label>
+          <label className={styles.label}>API Key</label>
           <input value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-            type="password" placeholder="sk-..." style={inputStyle} />
+            type="password" placeholder="sk-..." className={styles.inputSecondary} />
         </div>
       )}
 
       {/* Temperature & Max Tokens */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-        <div style={{ flex: 1 }}>
-          <label style={labelStyle}>Temperature: {temperature}</label>
+      <div className={styles.sliderRow}>
+        <div className={styles.sliderCol}>
+          <label className={styles.label}>Temperature: {temperature}</label>
           <input type="range" min="0" max="1" step="0.1" value={temperature}
             onChange={(e) => setTemperature(parseFloat(e.target.value))}
             style={{ width: '100%', accentColor: '#4f46e5' }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)' }}>
+          <div className={styles.sliderLabels}>
             <span>精确</span><span>创意</span>
           </div>
         </div>
-        <div style={{ flex: 1 }}>
-          <label style={labelStyle}>Max Tokens</label>
+        <div className={styles.sliderCol}>
+          <label className={styles.label}>Max Tokens</label>
           <input type="number" value={maxTokens}
             onChange={(e) => setMaxTokens(parseInt(e.target.value) || 4096)}
-            style={inputStyle} />
+            className={styles.inputSecondary} />
         </div>
       </div>
 
-      <button onClick={handleSave} disabled={saving} style={btnStyle}>
+      <button onClick={handleSave} disabled={saving} className={styles.saveBtn} style={{ opacity: saving ? 0.6 : 1 }}>
         {saving ? '保存中...' : '保存配置'}
       </button>
     </>

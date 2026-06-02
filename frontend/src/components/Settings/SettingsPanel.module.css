@@ -178,3 +178,542 @@
   border-radius: 8px;
   font-size: 13px;
 }
+/* ==================== Shared ==================== */
+
+.inputSecondary {
+  composes: input;
+  background: var(--bg-secondary);
+}
+
+.saveBtn {
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  background: #4f46e5;
+  border: none;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tabInfoBox {
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 13px;
+}
+
+.optionBtnActive {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: #4f46e5;
+  border: 1px solid #4f46e5;
+  color: white;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.optionBtnInactive {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-weight: 400;
+}
+
+.card {
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
+.smallBtn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+}
+
+.actionBtn {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.emptyText {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 16px 0;
+  font-size: 12px;
+}
+
+.scrollList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 25vh;
+  overflow-y: auto;
+}
+/* ==================== PromptLayersTab ==================== */
+
+.promptInfoBox {
+  composes: tabInfoBox;
+  padding: 12px 14px;
+  font-size: 12px;
+  color: #4f46e5;
+}
+
+.layerRow {
+  composes: row;
+  margin-bottom: 10px;
+}
+
+.layerRowDisabled {
+  composes: layerRow;
+  opacity: 0.5;
+}
+
+.layerBody {
+  flex: 1;
+}
+
+.layerName {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.levelBadge {
+  font-size: 11px;
+  color: var(--accent);
+  margin-right: 6px;
+}
+
+.conditionTag {
+  font-size: 10px;
+  margin-left: 6px;
+}
+
+.layerPreview {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* ==================== QualityGateTab ==================== */
+
+.qualityInfoBox {
+  composes: tabInfoBox;
+  font-size: 12px;
+  color: #4f46e5;
+}
+
+.toggleRow {
+  composes: row;
+}
+
+.toggleTitle {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.toggleDesc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.warningText {
+  margin-top: 6px;
+  font-size: 11px;
+}
+/* ==================== SecurityTab ==================== */
+
+.securityCard {
+  composes: card;
+  margin-bottom: 20px;
+}
+
+.sectionTitle {
+  composes: label;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.tokenInputRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.toggleVisibilityBtn {
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.helpText {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.btnRow {
+  display: flex;
+  gap: 10px;
+}
+
+.securityNote {
+  composes: card;
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+/* ==================== KnowledgeBaseTab ==================== */
+
+.kbInfoBox {
+  composes: tabInfoBox;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.kbRefreshBtn {
+  composes: smallBtn;
+  background: #16a34a;
+  color: white;
+}
+
+.uploadArea {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.uploadText {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.docItem {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.docName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.docMeta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.deleteBtn {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.searchCard {
+  composes: card;
+}
+
+.searchResults {
+  margin-top: 12px;
+  max-height: 20vh;
+  overflow-y: auto;
+}
+
+.searchResult {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.resultMeta {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+/* ==================== RuntimeToolsTab ==================== */
+
+.toolItem {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.toolName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.toolDesc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.toolActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.statusBadge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.toggleToolBtn {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.testCard {
+  composes: card;
+}
+
+.testResult {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  max-height: 25vh;
+  overflow-y: auto;
+}
+
+.resultTitle {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.resultPre {
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  max-height: 20vh;
+  overflow: auto;
+}
+
+/* ==================== CronTasksTab ==================== */
+
+.cronInfoBox {
+  composes: tabInfoBox;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cronRefreshBtn {
+  composes: smallBtn;
+  background: #4f46e5;
+  color: white;
+}
+
+.taskItem {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--bg-secondary);
+}
+
+.taskHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.taskAgent {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.taskInterval {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.taskPrompt {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.taskActions {
+  display: flex;
+  gap: 6px;
+}
+
+.createForm {
+  composes: card;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.formRow {
+  display: flex;
+  gap: 10px;
+}
+
+.formCol {
+  flex: 1;
+}
+
+.formLabel {
+  composes: label;
+  font-size: 11px;
+}
+/* ==================== LLMTab ==================== */
+
+.statusBanner {
+  composes: tabInfoBox;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.statusText {
+  flex: 1;
+  min-width: 0;
+}
+
+.statusActions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.disconnectBtn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: var(--bg-secondary);
+  color: #059669;
+  cursor: pointer;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.switchBtn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: #059669;
+  border: 1px solid #059669;
+  color: white;
+  cursor: pointer;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.presetsContainer {
+  margin-bottom: 20px;
+  transition: all 0.3s;
+}
+
+.presetGroup {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.presetBtn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #4f46e5;
+  cursor: pointer;
+}
+
+.providerGroup {
+  display: flex;
+  gap: 8px;
+}
+
+.sliderRow {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.sliderCol {
+  flex: 1;
+}
+
+.sliderLabels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ollamaRefreshBtn {
+  padding: 10px 14px;
+  color: #4f46e5;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.warningInline {
+  margin-top: 6px;
+  font-size: 11px;
+}

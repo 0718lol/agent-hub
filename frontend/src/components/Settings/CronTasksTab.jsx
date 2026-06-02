@@ -1,4 +1,5 @@
-﻿import React from 'react'
+import React from 'react'
+import styles from './SettingsPanel.module.css'
 
 export default function CronTasksTab({
   isDark, saving, cronLoading, cronTasks, fetchCronTasks,
@@ -6,87 +7,45 @@ export default function CronTasksTab({
   selectedAgentForCron, setSelectedAgentForCron, cronInterval, setCronInterval,
   cronPrompt, setCronPrompt, handleAddCronTask,
 }) {
-  const labelStyle = {
-    fontSize: 13,
-    color: 'var(--text-muted)',
-    marginBottom: 6,
-    display: 'block',
-    fontWeight: 500,
-  }
-
-  const inputStyle = {
-    width: '100%',
-    padding: '10px 14px',
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    color: 'var(--text-primary)',
-    fontSize: 13,
-    outline: 'none',
-    fontFamily: 'inherit',
-  }
-
-  const btnStyle = {
-    width: '100%',
-    padding: '12px',
-    borderRadius: 10,
-    background: '#4f46e5',
-    border: 'none',
-    color: 'white',
-    fontSize: 14,
-    fontWeight: 600,
-    cursor: 'pointer',
-    opacity: saving ? 0.6 : 1,
-    transition: 'all 0.2s',
-  }
-
   return (
     <>
-      <div style={{
-        padding: '10px 14px', borderRadius: 8, marginBottom: 20,
+      <div className={styles.cronInfoBox} style={{
         background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff', border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`,
-        fontSize: 13, color: isDark ? '#a5b4fc' : '#4338ca', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        color: isDark ? '#a5b4fc' : '#4338ca',
       }}>
         <span>Always-on 离线常驻自治 — 网页关闭后 Agent 仍能后台自主开发</span>
-        <button onClick={fetchCronTasks} disabled={cronLoading} style={{
-          padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-          background: '#4f46e5', color: 'white', border: 'none', cursor: 'pointer',
-          opacity: cronLoading ? 0.6 : 1,
-        }}>{cronLoading ? '...' : '刷新'}</button>
+        <button onClick={fetchCronTasks} disabled={cronLoading} className={styles.cronRefreshBtn}
+          style={{ opacity: cronLoading ? 0.6 : 1 }}>{cronLoading ? '...' : '刷新'}</button>
       </div>
 
       {/* Task List */}
       <div style={{ marginBottom: 20 }}>
-        <label style={labelStyle}>当前后台自治作业</label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '25vh', overflowY: 'auto' }}>
+        <label className={styles.label}>当前后台自治作业</label>
+        <div className={styles.scrollList}>
           {cronTasks.length === 0 ? (
-            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px 0', fontSize: 12 }}>
+            <div className={styles.emptyText}>
               暂无活动中的后台自治作业
             </div>
           ) : (
             cronTasks.map((t) => (
-              <div key={t.id} style={{
-                padding: '10px 14px', borderRadius: 10, background: 'var(--bg-secondary)',
+              <div key={t.id} className={styles.taskItem} style={{
                 border: `1px solid ${t.status === 'running' ? '#a78bfa' : t.status === 'active' ? (isDark ? 'rgba(34,197,94,0.25)' : '#a7f3d0') : (isDark ? 'rgba(245,158,11,0.25)' : '#fde68a')}`,
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <div className={styles.taskHeader}>
+                  <span className={styles.taskAgent}>
                     {t.status === 'running' ? '🔵' : t.status === 'active' ? '🟢' : '🟡'} {t.agent_id}
                   </span>
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>每 {t.interval_seconds}s</span>
+                  <span className={styles.taskInterval}>每 {t.interval_seconds}s</span>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>{t.task_prompt.slice(0, 60)}...</div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button onClick={() => handleToggleCronTask(t.id, t.status)} disabled={saving} style={{
-                    padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
+                <div className={styles.taskPrompt}>{t.task_prompt.slice(0, 60)}...</div>
+                <div className={styles.taskActions}>
+                  <button onClick={() => handleToggleCronTask(t.id, t.status)} disabled={saving} className={styles.actionBtn} style={{
                     background: isDark ? 'rgba(255,255,255,0.06)' : '#f3f4f6', border: `1px solid ${isDark ? 'rgba(255,255,255,0.15)' : '#d1d5db'}`, color: isDark ? '#e5e7eb' : '#374151',
                   }}>{t.status === 'active' ? '暂停' : '恢复'}</button>
-                  <button onClick={() => handleRunCronTaskNow(t.id)} disabled={saving || t.status === 'running'} style={{
-                    padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
+                  <button onClick={() => handleRunCronTaskNow(t.id)} disabled={saving || t.status === 'running'} className={styles.actionBtn} style={{
                     background: isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff', border: `1px solid ${isDark ? 'rgba(99,102,241,0.25)' : '#c7d2fe'}`, color: isDark ? '#a5b4fc' : '#4338ca',
                   }}>立即执行</button>
-                  <button onClick={() => handleDeleteCronTask(t.id)} disabled={saving} style={{
-                    padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
+                  <button onClick={() => handleDeleteCronTask(t.id)} disabled={saving} className={styles.actionBtn} style={{
                     background: isDark ? 'rgba(239,68,68,0.12)' : '#fef2f2', border: `1px solid ${isDark ? 'rgba(239,68,68,0.25)' : '#fecaca'}`, color: isDark ? '#f87171' : '#dc2626',
                   }}>删除</button>
                 </div>
@@ -97,13 +56,13 @@ export default function CronTasksTab({
       </div>
 
       {/* Create Form */}
-      <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
-        <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>创建新离线自治任务</label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ ...labelStyle, fontSize: 11 }}>执行 Agent</label>
-              <select value={selectedAgentForCron} onChange={(e) => setSelectedAgentForCron(e.target.value)} style={inputStyle}>
+      <div className={styles.createForm}>
+        <label className={styles.sectionTitle}>创建新离线自治任务</label>
+        <div className={styles.formGroup}>
+          <div className={styles.formRow}>
+            <div className={styles.formCol}>
+              <label className={styles.formLabel}>执行 Agent</label>
+              <select value={selectedAgentForCron} onChange={(e) => setSelectedAgentForCron(e.target.value)} className={styles.inputSecondary}>
                 <option value="agent_pm">PM 小助手</option>
                 <option value="agent_frontend">前端工程师</option>
                 <option value="agent_backend">后端工程师</option>
@@ -112,9 +71,9 @@ export default function CronTasksTab({
                 <option value="agent_designer">设计顾问</option>
               </select>
             </div>
-            <div style={{ flex: 1 }}>
-              <label style={{ ...labelStyle, fontSize: 11 }}>自治周期</label>
-              <select value={cronInterval} onChange={(e) => setCronInterval(parseInt(e.target.value))} style={inputStyle}>
+            <div className={styles.formCol}>
+              <label className={styles.formLabel}>自治周期</label>
+              <select value={cronInterval} onChange={(e) => setCronInterval(parseInt(e.target.value))} className={styles.inputSecondary}>
                 <option value={60}>每分钟 (自测)</option>
                 <option value={300}>每 5 分钟</option>
                 <option value={1800}>每 30 分钟</option>
@@ -124,16 +83,17 @@ export default function CronTasksTab({
             </div>
           </div>
           <div>
-            <label style={{ ...labelStyle, fontSize: 11 }}>自治 Prompt 指令</label>
+            <label className={styles.formLabel}>自治 Prompt 指令</label>
             <textarea
               value={cronPrompt}
               onChange={(e) => setCronPrompt(e.target.value)}
               rows={3}
-              style={{ ...inputStyle, resize: 'vertical', lineHeight: '1.5' }}
+              className={styles.inputSecondary}
+              style={{ resize: 'vertical', lineHeight: '1.5' }}
               placeholder="输入分配给 Agent 的后台离线自治开发/检测指令..."
             />
           </div>
-          <button onClick={handleAddCronTask} disabled={saving || !cronPrompt.trim()} style={btnStyle}>
+          <button onClick={handleAddCronTask} disabled={saving || !cronPrompt.trim()} className={styles.saveBtn} style={{ opacity: saving ? 0.6 : 1 }}>
             {saving ? '正在处理...' : '创建常驻离线自治任务'}
           </button>
         </div>
