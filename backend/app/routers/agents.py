@@ -53,6 +53,12 @@ async def list_agents():
     return all_agents
 
 
+# 必须放在 /agents/{agent_id} 前面，否则被参数化路由吞掉
+@router.get("/agents/custom")
+async def list_custom_agents_route():
+    return await async_get_custom_agents()
+
+
 @router.get("/agents/{agent_id}")
 async def get_agent(agent_id: str):
     for agent in AGENTS_META:

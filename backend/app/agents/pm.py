@@ -19,6 +19,10 @@ class PMAgent(BaseAgent):
         "\n- 任务分配后，必须在末尾输出分配标记：[assign:agent_frontend] [assign:agent_backend] 等，让系统自动启动对应 agent。"
         "\n- 根据任务内容选择合适的 agent：前端页面→agent_frontend，后端接口→agent_backend，测试→agent_tester，部署→agent_devops，设计→agent_designer，海报/宣传图/网页交互设计→同时分配给设计 agent_designer 和前端 agent_frontend，以便设计视觉方案并由前端生成高精度的交互预览与代码。"
         "\n- 绝对不要输出 [clarify:...] 标记。永远不要问问题。"
+        "\n\n【唯一例外 — ask_user 工具】遇到影响整个技术方案走向的关键分歧（如：用户说'做个 App'但没说平台；'做商城'但没说品类），可以用一次 ask_user 问一个关键问题："
+        "\n  [ask_user:简短问题?|选项A::一句话说明|*推荐项加星::说明|选项C::说明]"
+        "\n  最多 4 个选项，description 不能含 `|` 或 `]`，一次回复最多一个 ask_user。"
+        "\n  若用户消息以 [ask_user_reply] 开头，是对上一个 ask_user 的回答，直接基于答案拆任务，不要重复提问。"
     )
 
     VAGUE_KEYWORDS = ["做个", "搞个", "写个", "弄个", "开发一个", "做一个", "来个", "整一个"]
@@ -27,33 +31,6 @@ class PMAgent(BaseAgent):
         "登录", "注册", "todo", "待办", "博客", "商城", "电商", "聊天", "后台",
         "管理", "dashboard", "仪表盘", "api", "接口", "数据库", "表单",
     ]
-
-    CLARIFICATION_TEMPLATES = {
-        "app": [
-            "这个应用的目标用户是谁？（个人使用 / 团队协作 / 面向公众）",
-            "需要哪些核心功能？请列出 3-5 个最重要的",
-            "对技术栈有偏好吗？（React / Vue / 小程序 / 原生 App）",
-            "有参考产品吗？类似哪个已有的应用",
-        ],
-        "web": [
-            "是纯前端展示还是需要后端数据存储？",
-            "需要用户登录注册功能吗？",
-            "主要页面有哪些？（首页 / 列表 / 详情 / 个人中心）",
-            "对 UI 风格有偏好吗？（简约 / 科技感 / 商务风）",
-        ],
-        "api": [
-            "需要管理什么数据？（用户 / 商品 / 内容 / 订单）",
-            "需要哪些 CRUD 操作？",
-            "数据量大概多大？需要分页吗？",
-            "需要权限控制吗？（管理员 / 普通用户）",
-        ],
-        "default": [
-            "能再具体描述一下你想要的功能吗？",
-            "这个项目的主要使用场景是什么？",
-            "有没有参考的竞品或原型？",
-            "预期的交付时间是多久？",
-        ],
-    }
 
     def _is_vague(self, message: str) -> bool:
         msg = message.lower()
@@ -72,10 +49,10 @@ class PMAgent(BaseAgent):
             return "api"
         return "default"
 
-    def _generate_reply(self, message: str, context: list = None) -> str:
+    def _generate_reply(self, message: str, context: list | None = None) -> str:
         msg = message.lower()
 
-        if message.startswith("[clarified]"):
+        if message.startswith("[clarified]") or message.startswith("[ask_user_reply]"):
             return self._handle_clarified(message)
 
         if any(kw in msg for kw in ["需求", "做一个", "开发", "项目", "帮我"]):
@@ -93,18 +70,16 @@ class PMAgent(BaseAgent):
 
     def _ask_clarification(self, message: str) -> str:
         category = self._detect_category(message)
-        questions = self.CLARIFICATION_TEMPLATES[category]
-        questions_str = "|".join(questions)
-
-        return (
-            f"我理解你想「{message[:20].strip()}...」，但在开始之前，我想先确认几个关键点，"
-            f"这样出的方案会更准确：\n\n"
-            f"[clarify:{questions_str}]\n\n"
-            f"回答完上面的问题后，我会为你生成详细的需求规格和任务拆解。"
-        )
+        templates = {
+            "app": "做什么平台?|*Web 应用::浏览器访问，开发最快|小程序::微信生态，用户基础大|移动 App::iOS/Android 原生体验",
+            "web": "需要后端吗?|*纯前端展示::静态页面，快速上线|前后端分离::需要数据存储和用户系统|全栈一体::后端渲染，SEO 友好",
+            "api": "管理什么数据?|*用户系统::注册登录权限|商品订单::电商核心数据|内容管理::文章评论媒体",
+            "default": "能说得更具体吗?|*告诉我核心功能::最重要的 1-2 个功能点|参考哪个产品::类似某个已有产品|描述使用场景::谁在什么情况下用",
+        }
+        return f"[ask_user:{templates[category]}]"
 
     def _handle_clarified(self, message: str) -> str:
-        answers_text = message.replace("[clarified]", "").strip()
+        answers_text = message.replace("[clarified]", "").replace("[ask_user_reply]", "").strip()
         return (
             "太好了，需求已经明确了！根据你的回答，我整理如下：\n\n"
             "---\n\n"

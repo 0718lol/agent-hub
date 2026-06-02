@@ -29,7 +29,7 @@ class PromptLayer:
     enabled: bool = True
     condition: Callable = None  # Optional: (context_dict) -> bool
 
-    def render(self, variables: dict = None) -> str:
+    def render(self, variables: dict | None = None) -> str:
         """Render layer content with template variables."""
         if not self.enabled:
             return ""
@@ -39,7 +39,7 @@ class PromptLayer:
                 text = text.replace(f"{{{key}}}", str(val))
         return text
 
-    def should_inject(self, context: dict = None) -> bool:
+    def should_inject(self, context: dict | None = None) -> bool:
         """Check if this layer should be injected given the context."""
         if not self.enabled:
             return False
@@ -146,7 +146,7 @@ class PromptEngine:
         # Per-agent layer overrides: agent_id -> list[PromptLayer]
         self.agent_overrides: dict[str, list[PromptLayer]] = {}
 
-    def build(self, agent, context: dict = None) -> str:
+    def build(self, agent, context: dict | None = None) -> str:
         """
         Build the final system prompt for an agent.
 
@@ -177,7 +177,7 @@ class PromptEngine:
         # Build each layer
         sections = []
 
-        for layer in sorted(layers, key=lambda l: l.level):
+        for layer in sorted(layers, key=lambda layer_item: layer_item.level):
             if not layer.should_inject(context):
                 continue
 
@@ -247,7 +247,7 @@ class PromptEngine:
                 "has_condition": layer.condition is not None,
                 "content_preview": layer.content[:80] + "..." if len(layer.content) > 80 else layer.content,
             }
-            for layer in sorted(self.global_layers, key=lambda l: l.level)
+            for layer in sorted(self.global_layers, key=lambda layer_item: layer_item.level)
         ]
 
     def detect_task_type(self, message: str, agent_id: str = "") -> str:

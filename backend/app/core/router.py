@@ -119,14 +119,13 @@ class SmartRouter:
                     )
 
             # L3 Tier: Design & Creative -> local if available, else cloud
-            if agent_id in ("agent_designer", "agent_devops"):
-                if check_port_alive("127.0.0.1", 11434):
-                    return ModelRoute(
-                        provider="ollama",
-                        base_url="http://127.0.0.1:11434/v1",
-                        model="qwen2.5:7b" if not llm_client.provider == "ollama" else llm_client.model,
-                        api_key="local"
-                    )
+            if agent_id in ("agent_designer", "agent_devops") and check_port_alive("127.0.0.1", 11434):
+                return ModelRoute(
+                    provider="ollama",
+                    base_url="http://127.0.0.1:11434/v1",
+                    model="qwen2.5:7b" if llm_client.provider != "ollama" else llm_client.model,
+                    api_key="local"
+                )
 
         # Fallback to globally configured model (Self-healing fallback)
         return global_route

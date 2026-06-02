@@ -7,6 +7,8 @@ dist/
 .vite/
 *.egg-info/
 *.db
+*.db-shm
+*.db-wal
 llm_config.json
 
 venv/
@@ -16,15 +18,17 @@ backend/venv/
 # 比赛资料（不参与 GitHub 上传）
 资料/
 
-# Harness eval outputs (CLI 跑出来的临时产物)
-backend/harness_*.json
+# 本地运行产物
+backend/backend.log
+.claude/settings.local.json
+
 backend/harness_*.html
 backend/report.html
 
 # Editor configs
 .vscode/
 .idea/
-
+/.claude/
 # Personal scratch
 xmz/
 
@@ -37,3 +41,8 @@ agenthub_export/
 # 所有日志文件
 *.log
 backend/*.log
+
+# 本地工具脚本
+backend/fix_quotes.py
+backend/0.1.0
+backend/gen_test.py

@@ -116,7 +116,7 @@ class StateGraph:
     def add_conditional_edge(self, from_node: str, router_func: Callable[[dict], str]):
         self.conditional_edges[from_node] = router_func
 
-    def add_guard(self, node_name: str, guard_func: Callable[[dict], bool], error_fallback_node: str = None):
+    def add_guard(self, node_name: str, guard_func: Callable[[dict], bool], error_fallback_node: str | None = None):
         if node_name not in self.guards:
             self.guards[node_name] = []
         self.guards[node_name].append((guard_func, error_fallback_node))

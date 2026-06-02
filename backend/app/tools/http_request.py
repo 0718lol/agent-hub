@@ -20,7 +20,7 @@ _MAX_REDIRECTS = 5
 _BLOCKED_HOSTS = frozenset({
     "localhost",
     "127.0.0.1",
-    "0.0.0.0",
+    "0.0.0.0",  # nosec B104 — SSRF blocklist entry, not a bind address
     "metadata.google.internal",
     "169.254.169.254",
     "[::1]",

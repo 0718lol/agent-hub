@@ -17,7 +17,7 @@ class TesterAgent(BaseAgent):
         "\n- 语气可以带点挑衅，比如'这里有个边界情况你没处理'。"
     )
 
-    def _generate_reply(self, message: str, context: list = None) -> str:
+    def _generate_reply(self, message: str, context: list | None = None) -> str:
         msg = message.lower()
         if any(kw in msg for kw in ["测试", "用例", "验证"]):
             return self._test_reply()

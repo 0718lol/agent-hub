@@ -3,7 +3,7 @@ import { create } from 'zustand'
 /**
  * 上传队列 Zustand Store — 管理上传进度、队列和已上传文件列表
  */
-export const useUploadStore = create((set, get) => ({
+export const useUploadStore = create((set, _get) => ({
   // 上传队列：{ id, file, progress, status, result }
   queue: [],
 

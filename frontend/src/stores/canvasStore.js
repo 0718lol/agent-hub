@@ -10,7 +10,7 @@ export const useCanvasStore = create((set) => ({
   slidePanelTab: 'code',
   slidePanelWidth: (() => {
     try { const v = localStorage.getItem('agent-hub-slide-panel-width'); return v ? parseInt(v) : 380 }
-    catch { return 380 }
+    catch (_e) { return 380 }
   })(),
   toggleSlidePanel: (content) => set((s) => {
     if (s.slidePanelOpen && s.slidePanelContent === content) {
@@ -20,7 +20,7 @@ export const useCanvasStore = create((set) => ({
   }),
   setSlidePanelTab: (tab) => set({ slidePanelTab: tab }),
   setSlidePanelWidth: (width) => {
-    try { localStorage.setItem('agent-hub-slide-panel-width', String(width)) } catch {}
+    try { localStorage.setItem('agent-hub-slide-panel-width', String(width)) } catch (_e) { /* ignore */ }
     set({ slidePanelWidth: width })
   },
 

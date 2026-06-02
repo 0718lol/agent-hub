@@ -117,7 +117,7 @@ class RAGEngine:
     def __init__(self):
         self._enabled = True
 
-    def add_document(self, doc_id: str, text: str, metadata: dict = None) -> int:
+    def add_document(self, doc_id: str, text: str, metadata: dict | None = None) -> int:
         """
         将文档分块并写入向量库。
         返回写入的块数。
@@ -200,7 +200,7 @@ class RAGEngine:
                 distances = results["distances"][0] if results.get("distances") else [0] * len(docs)
                 metadatas = results["metadatas"][0] if results.get("metadatas") else [{}] * len(docs)
 
-                for doc, dist, meta in zip(docs, distances, metadatas):
+                for doc, dist, meta in zip(docs, distances, metadatas, strict=False):
                     hits.append({
                         "text": doc,
                         "score": round(1 - dist, 4),  # cosine distance -> similarity

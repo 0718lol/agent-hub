@@ -1,0 +1,1108 @@
+{
+  "timestamp": "2026-05-24T21:38:19.350070",
+  "total_cases": 30,
+  "passed": 29,
+  "failed": 1,
+  "average_score": 82.54,
+  "cases": [
+    {
+      "tool_name": "alignment_judge",
+      "input_summary": "高对齐 — 实现完全匹配需求",
+      "total_score": 100.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=aligned, got=aligned"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['coverage', 'tech_match', 'deviation', 'deviation_notes']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=37"
+        }
+      ],
+      "signals": {
+        "coverage": 40,
+        "tech_match": 30,
+        "deviation": 30,
+        "deviation_notes": "无"
+      }
+    },
+    {
+      "tool_name": "alignment_judge",
+      "input_summary": "技术栈偏离 — 用了错误的框架",
+      "total_score": 84.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=misaligned, got=misaligned"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 20.0,
+          "detail": "score=40.0, dist_from_mid=0.20"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['coverage', 'tech_match', 'deviation', 'deviation_notes']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=30"
+        }
+      ],
+      "signals": {
+        "coverage": 35,
+        "tech_match": 0,
+        "deviation": 5,
+        "deviation_notes": "代码使用了 Vue 框架，而用户指定的是 React"
+      }
+    },
+    {
+      "tool_name": "alignment_judge",
+      "input_summary": "功能缺失 — 只实现了一半需求",
+      "total_score": 82.8,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=misaligned, got=misaligned"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 14.0,
+          "detail": "score=43.0, dist_from_mid=0.14"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['coverage', 'tech_match', 'deviation', 'deviation_notes']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=22"
+        }
+      ],
+      "signals": {
+        "coverage": 10,
+        "tech_match": 28,
+        "deviation": 5,
+        "deviation_notes": "代码方案未实现邮箱格式校验、密码强度校验和发送欢迎邮件功能，这些是需求中的核心部分。"
+      }
+    },
+    {
+      "tool_name": "alignment_judge",
+      "input_summary": "完全实现 — 复杂需求",
+      "total_score": 93.6,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=aligned, got=aligned"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 68.0,
+          "detail": "score=84.0, dist_from_mid=0.68"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['coverage', 'tech_match', 'deviation', 'deviation_notes']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=30"
+        }
+      ],
+      "signals": {
+        "coverage": 34,
+        "tech_match": 30,
+        "deviation": 20,
+        "deviation_notes": "路由参数名从 'id' 改为 'user_id'，但功能等价。"
+      }
+    },
+    {
+      "tool_name": "complexity_judge",
+      "input_summary": "极简任务 — 应得低分",
+      "total_score": 100.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=simple, got=simple"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['depth', 'diversity', 'difficulty', 'risk']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=93"
+        }
+      ],
+      "signals": {
+        "depth": 0,
+        "diversity": 0,
+        "difficulty": 0,
+        "risk": 0
+      }
+    },
+    {
+      "tool_name": "complexity_judge",
+      "input_summary": "简单问候",
+      "total_score": 100.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=simple, got=simple"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['depth', 'diversity', 'difficulty', 'risk']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=21"
+        }
+      ],
+      "signals": {
+        "depth": 0,
+        "diversity": 0,
+        "difficulty": 0,
+        "risk": 0
+      }
+    },
+    {
+      "tool_name": "complexity_judge",
+      "input_summary": "中等任务 — 单一技术点",
+      "total_score": 88.4,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=simple, got=simple"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 42.0,
+          "detail": "score=29.0, dist_from_mid=0.42"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['depth', 'diversity', 'difficulty', 'risk']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=29"
+        }
+      ],
+      "signals": {
+        "depth": 8,
+        "diversity": 10,
+        "difficulty": 8,
+        "risk": 3
+      }
+    },
+    {
+      "tool_name": "complexity_judge",
+      "input_summary": "复杂任务 — 分布式系统",
+      "total_score": 90.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=complex, got=complex"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 50.0,
+          "detail": "score=75.0, dist_from_mid=0.50"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['depth', 'diversity', 'difficulty', 'risk']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=33"
+        }
+      ],
+      "signals": {
+        "depth": 25,
+        "diversity": 20,
+        "difficulty": 18,
+        "risk": 12
+      }
+    },
+    {
+      "tool_name": "complexity_judge",
+      "input_summary": "复杂任务 — 全栈应用",
+      "total_score": 94.8,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=complex, got=complex"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 74.0,
+          "detail": "score=87.0, dist_from_mid=0.74"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['depth', 'diversity', 'difficulty', 'risk']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=58"
+        }
+      ],
+      "signals": {
+        "depth": 25,
+        "diversity": 28,
+        "difficulty": 22,
+        "risk": 12
+      }
+    },
+    {
+      "tool_name": "complexity_judge",
+      "input_summary": "中等复杂 — 单 Agent 实现",
+      "total_score": 50.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 0.0,
+          "detail": "expected=simple, got=complex"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 50.0,
+          "detail": "score=75.0, dist_from_mid=0.50"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['depth', 'diversity', 'difficulty', 'risk']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=28"
+        }
+      ],
+      "signals": {
+        "depth": 20,
+        "diversity": 25,
+        "difficulty": 18,
+        "risk": 12
+      }
+    },
+    {
+      "tool_name": "complexity_judge",
+      "input_summary": "高风险任务",
+      "total_score": 95.6,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=complex, got=complex"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 78.0,
+          "detail": "score=89.0, dist_from_mid=0.78"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['depth', 'diversity', 'difficulty', 'risk']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=48"
+        }
+      ],
+      "signals": {
+        "depth": 28,
+        "diversity": 25,
+        "difficulty": 22,
+        "risk": 14
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "简单问候 — 应直接回答",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "天气查询 — 简单任务",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "闲聊 — 简单任务",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "React vs Vue 选型 — 需要辩论",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "分布式系统设计 — 复杂任务",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "数据库选型对比 — 含关键词触发",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "简单代码查询 — 不需要辩论",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "架构方案对比 — 需要辩论",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "简单翻译请求",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "技术选型含 trade-off — 需要辩论",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "简单数学计算",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "前端框架方案实现 — 复杂任务",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "LLM必经 — 无关键词但需架构设计",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "LLM必经 — 无关键词的简单问答",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=direct_answer, got=direct_answer"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=7"
+        }
+      ],
+      "signals": {
+        "needs_interaction": false
+      }
+    },
+    {
+      "tool_name": "interaction_judge",
+      "input_summary": "LLM必经 — 含技术决策但无对比关键词",
+      "total_score": 77.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=needs_interaction, got=needs_interaction"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 25,
+          "detail": "1 signals: ['needs_interaction']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 60.0,
+          "detail": "reason_len=6"
+        }
+      ],
+      "signals": {
+        "needs_interaction": true
+      }
+    },
+    {
+      "tool_name": "quality_judge",
+      "input_summary": "高质量代码 — 应通过",
+      "total_score": 98.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=pass, got=pass"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 90.0,
+          "detail": "score=95.0, dist_from_mid=0.90"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['logic', 'robustness', 'architecture', 'syntax_passed']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=162"
+        }
+      ],
+      "signals": {
+        "logic": 40,
+        "robustness": 25,
+        "architecture": 30,
+        "syntax_passed": true,
+        "syntax_error": null
+      }
+    },
+    {
+      "tool_name": "quality_judge",
+      "input_summary": "语法错误代码 — 应失败",
+      "total_score": 100.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=fail, got=fail"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=0.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "5 signals: ['logic', 'robustness', 'architecture', 'syntax_passed', 'syntax_error']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=239"
+        }
+      ],
+      "signals": {
+        "logic": 0,
+        "robustness": 0,
+        "architecture": 0,
+        "syntax_passed": false,
+        "syntax_error": "语法错误 (第 1 行): expected ':'"
+      }
+    },
+    {
+      "tool_name": "quality_judge",
+      "input_summary": "无边界处理 — 中等质量",
+      "total_score": 44.0,
+      "passed": false,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 0.0,
+          "detail": "expected=fail, got=pass"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 20.0,
+          "detail": "score=60.0, dist_from_mid=0.20"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['logic', 'robustness', 'architecture', 'syntax_passed']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=251"
+        }
+      ],
+      "signals": {
+        "logic": 35,
+        "robustness": 5,
+        "architecture": 20,
+        "syntax_passed": true,
+        "syntax_error": null
+      }
+    },
+    {
+      "tool_name": "quality_judge",
+      "input_summary": "完整带异常处理的实现",
+      "total_score": 100.0,
+      "passed": true,
+      "dimensions": [
+        {
+          "name": "correctness",
+          "weight": 0.4,
+          "score": 100.0,
+          "detail": "expected=pass, got=pass"
+        },
+        {
+          "name": "confidence",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "score=100.0, dist_from_mid=1.00"
+        },
+        {
+          "name": "signals",
+          "weight": 0.2,
+          "score": 100,
+          "detail": "4 signals: ['logic', 'robustness', 'architecture', 'syntax_passed']"
+        },
+        {
+          "name": "semantic",
+          "weight": 0.2,
+          "score": 100.0,
+          "detail": "reason_len=96"
+        }
+      ],
+      "signals": {
+        "logic": 40,
+        "robustness": 30,
+        "architecture": 30,
+        "syntax_passed": true,
+        "syntax_error": null
+      }
+    }
+  ]
+}

@@ -20,7 +20,16 @@
       "Bash(python -m uvicorn app.main:app --port 8000)",
       "Bash(python -c ' *)",
       "Bash(python *)",
-      "Bash(taskkill //PID 27560 //F)"
+      "Bash(taskkill //PID 27560 //F)",
+      "WebSearch",
+      "mcp__ide__getDiagnostics",
+      "Bash(echo \"exit=$?\")",
+      "Bash(taskkill //F //PID 40000)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git commit -m 'feat: virtual office overlap fix + work bubbles + pet expressions + double-click office *)",
+      "Bash(xargs grep -l \"POST.*chat\\\\|send.*message\")",
+      "Bash(xargs grep -l \"websocket\\\\|WebSocket\")"
     ]
   }
 }

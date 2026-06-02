@@ -1,8 +1,12 @@
 """Unit tests for the runtime tool system."""
 
 import pytest
+
 from app.tools.registry import (
-    TOOL_REGISTRY, parse_tool_calls, execute_tool_call, get_tools_prompt,
+    TOOL_REGISTRY,
+    execute_tool_call,
+    get_tools_prompt,
+    parse_tool_calls,
 )
 
 

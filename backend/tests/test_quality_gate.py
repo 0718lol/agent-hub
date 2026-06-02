@@ -1,29 +1,24 @@
-# -*- coding: utf-8 -*-
 """Unit tests for quality_gate.evaluate and quality_standards rules.
 
 Pure logic tests: no LLM calls, no database, no network.
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.core.quality_gate import QualityGate
 from app.core.quality_standards import (
+    _check_code_not_empty,
+    _check_doc_has_structure,
+    _check_html_structure,
+    _check_no_fluff,
+    _check_no_placeholder,
+    _check_python_has_error_handling,
     detect_output_type,
     run_rules,
-    QualityReport,
-    RuleResult,
-    _check_no_placeholder,
-    _check_html_structure,
-    _check_html_responsive,
-    _check_html_has_style,
-    _check_code_not_empty,
-    _check_python_has_error_handling,
-    _check_doc_has_structure,
-    _check_no_fluff,
 )
-from app.core.quality_gate import QualityGate
 
 
 class TestCheckNoPlaceholder:

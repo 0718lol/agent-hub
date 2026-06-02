@@ -1,4 +1,5 @@
 ﻿import asyncio
+import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -63,10 +64,8 @@ class DaemonScheduler:
             self._running = False
             if self._task:
                 self._task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self._task
-                except asyncio.CancelledError:
-                    pass
             if self._manager:
                 try:
                     self._manager.shutdown()
@@ -171,7 +170,7 @@ class DaemonScheduler:
 
             # 1. 时间预算安全阀：使用 asyncio.wait_for 强制限制最大运行时间
             try:
-                assigned_agents, full_text = await asyncio.wait_for(
+                _assigned_agents, full_text = await asyncio.wait_for(
                     _stream_agent_reply(
                         conversation_id=conversation_id,
                         agent=agent,
@@ -182,7 +181,7 @@ class DaemonScheduler:
                 )
             except TimeoutError:
                 stop_event.set()  # 终止底层大模型流
-                raise TimeoutError(f"后台任务执行超出安全时长限制 ({MAX_EXECUTION_TIME_SECONDS}秒)，安全熔断阀已自动介入拦截！")
+                raise TimeoutError(f"后台任务执行超出安全时长限制 ({MAX_EXECUTION_TIME_SECONDS}秒)，安全熔断阀已自动介入拦截！") from None
 
             # 2. 文本长度/Token预算安全阀
             if len(full_text) > MAX_OUTPUT_CHARACTERS:

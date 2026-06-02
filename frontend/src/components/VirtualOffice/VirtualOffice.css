@@ -1,0 +1,183 @@
+/* VirtualOffice — 全屏 2D 场景，矢量家具 + 现代扁平配色 */
+
+.virtual-office-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  display: flex;
+  animation: vo-fade-in 0.2s ease-out;
+}
+
+@keyframes vo-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.virtual-office-panel {
+  flex: 1;
+  width: 100vw;
+  height: 100vh;
+  background: #fafaf9;
+  display: flex;
+  flex-direction: column;
+  animation: vo-pop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  overflow: hidden;
+}
+
+@keyframes vo-pop-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.vo-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 24px;
+  border-bottom: 1px solid #e7e5e4;
+  background: #fafaf9;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.vo-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1c1917;
+}
+
+.vo-stats {
+  font-size: 13px;
+  color: #78716c;
+  margin-left: auto;
+}
+
+.vo-stats b {
+  color: #6366f1;
+  font-weight: 700;
+  margin: 0 4px;
+  font-size: 14px;
+}
+
+.vo-close {
+  background: none;
+  border: none;
+  font-size: 26px;
+  line-height: 1;
+  color: #78716c;
+  cursor: pointer;
+  padding: 0 8px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.vo-close:hover {
+  color: #1c1917;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* ---- 主舞台 ---- */
+.vo-stage {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ---- Marvis 风：白色主调，无明显墙地分割 ---- */
+.vo-wall {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f5f4 60%, #e7e5e4 100%);
+}
+
+.vo-wall::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(99, 102, 241, 0.04) 0%, transparent 50%),
+    radial-gradient(circle at 80% 70%, rgba(236, 72, 153, 0.03) 0%, transparent 50%);
+}
+
+.vo-floor {
+  display: none;
+}
+
+.vo-floor-shadow {
+  display: none;
+}
+
+/* ---- 暗色主题 ---- */
+[data-theme="dark"] .virtual-office-panel {
+  background: #0c0a09;
+}
+
+[data-theme="dark"] .vo-header,
+[data-theme="dark"] .vo-footer {
+  background: #1c1917;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .vo-title { color: #fafaf9; }
+[data-theme="dark"] .vo-stats,
+[data-theme="dark"] .vo-close,
+[data-theme="dark"] .vo-hint { color: #a8a29e; }
+[data-theme="dark"] .vo-close:hover { background: rgba(255, 255, 255, 0.06); color: #fafaf9; }
+
+[data-theme="dark"] .vo-wall {
+  background: linear-gradient(180deg, #1c1917 0%, #0c0a09 100%);
+}
+
+/* ---- 家具 ---- */
+.vo-furniture-piece {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  z-index: 2;
+  transition: transform 0.4s ease;
+}
+
+.vo-furniture-piece svg {
+  display: block;
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.08)) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.06));
+}
+
+/* ---- office-slot ---- */
+.office-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.office-slot-label {
+  font-size: 10px;
+  color: #78716c;
+  opacity: 0;
+  margin-top: 2px;
+}
+
+.office-slot:hover .office-slot-label {
+  opacity: 1;
+}
+
+.office-slot-highlight {
+  filter: drop-shadow(0 0 10px #6366f1);
+}
+
+/* ---- 底部 ---- */
+.vo-footer {
+  padding: 10px 24px;
+  border-top: 1px solid #e7e5e4;
+  background: #fafaf9;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.vo-hint {
+  font-size: 12px;
+  color: #78716c;
+}

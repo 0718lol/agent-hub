@@ -40,7 +40,7 @@ class TraceSpan(BaseModel):
     output_data: Any | None = None
     metadata: dict = Field(default_factory=dict)
 
-    def finish(self, output_data: Any = None, status: str = "success", metadata: dict = None):
+    def finish(self, output_data: Any = None, status: str = "success", metadata: dict | None = None):
         self.end_time = time.time()
         self.duration_ms = int((self.end_time - self.start_time) * 1000)
         self.status = status

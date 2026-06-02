@@ -115,7 +115,7 @@ async def _remove_custom_agent(agent_id: str):
 
 async def stream_agent_reply(
     conversation_id: str, agent, user_text: str,
-    stop_event: asyncio.Event = None, context: str = "",
+    stop_event: asyncio.Event | None = None, context: str = "",
 ) -> tuple[list[str], str]:
     """Stream agent reply. Returns (assigned_agent_ids, response_text)."""
     full_text = ""
@@ -164,7 +164,7 @@ async def stream_agent_reply(
                     "stream": True,
                 })
 
-            best_output, best_report, candidates_summary = await quality_gate.best_of_n_generate(
+            best_output, _best_report, candidates_summary = await quality_gate.best_of_n_generate(
                 agent, effective_text,
                 agent_id=agent.agent_id,
                 history=history,

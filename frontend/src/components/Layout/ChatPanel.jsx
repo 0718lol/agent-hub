@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
-import { MessageSquare, Code2, GitBranch, LayoutList, Menu, X, Search } from 'lucide-react'
+import { MessageSquare, Code2, GitBranch, LayoutList, Menu, X, Search, Building2 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -169,6 +169,10 @@ export default function ChatPanel({ onToggleSidebar }) {
       }
       if (data.type === 'read') { markRead(activeId); return }
       if (data.type === 'message') {
+        // User messages are added locally in handleSend; the backend echoes them
+        // back over WS, which would otherwise duplicate every user bubble.
+        if (data.sender === 'user') return
+
         // 跳过服务器回显的用户消息（handleSend 已本地添加）
         if (data.sender === 'user') return
 
@@ -247,10 +251,6 @@ export default function ChatPanel({ onToggleSidebar }) {
 
   const handleStop = () => {
     wsClient.send({ type: 'stop', conversation_id: activeId })
-    if (generationTimeoutRef.current) {
-      clearTimeout(generationTimeoutRef.current)
-      generationTimeoutRef.current = null
-    }
   }
 
   const handleClearHistory = async () => {
@@ -259,6 +259,9 @@ export default function ChatPanel({ onToggleSidebar }) {
     try {
       await fetch(`/api/conversations/${activeId}/messages`, { method: 'DELETE' })
       clearMessages(activeId)
+      useCanvasStore.getState().setPreviewHtml('')
+      useCanvasStore.getState().setGeneratedCode('text', '')
+      setGenerating(activeId, false)
     } catch (err) {
       console.error('Clear history failed:', err)
       window.alert('清空失败，请稍后再试。')
@@ -284,6 +287,7 @@ export default function ChatPanel({ onToggleSidebar }) {
         taskOpen={taskPopup}
         dagOpen={dagPopup}
         onClearHistory={handleClearHistory}
+        onToggleOffice={() => window.dispatchEvent(new Event('agenthub:toggle-office'))}
       />
 
       <TabBar />

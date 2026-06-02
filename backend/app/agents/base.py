@@ -26,8 +26,8 @@ class BaseAgent:
     # Runtime tools enabled for this agent (None = all enabled tools)
     enabled_tools: list[str] | None = None
 
-    async def stream_reply(self, message: str, context: list = None,
-                           history: list = None, conversation_id: str = None) -> AsyncGenerator[str, None]:
+    async def stream_reply(self, message: str, context: list | None = None,
+                           history: list | None = None, conversation_id: str | None = None) -> AsyncGenerator[str, None]:
         if llm_client.is_configured() and self.system_prompt:
             messages = self._build_messages(message, context, history)
             # Structured layered prompt injection
@@ -59,7 +59,7 @@ class BaseAgent:
                 if conversation_id:
                     from app.core.event_stream import ActionCallEvent, ThoughtEvent, event_stream_manager
                     if tool_calls:
-                        tool_name, params, start_pos, end_pos = tool_calls[0]
+                        tool_name, params, start_pos, _end_pos = tool_calls[0]
                         thought_text = accumulated[:start_pos]
                         if thought_text.strip():
                             event_stream_manager.append_event(conversation_id, ThoughtEvent(agent_id=self.agent_id, content=thought_text))
@@ -72,7 +72,7 @@ class BaseAgent:
 
                 round_count += 1
                 # Execute the first tool call found
-                tool_name, params, start_pos, end_pos = tool_calls[0]
+                tool_name, params, start_pos, _end_pos = tool_calls[0]
 
                 # Inject conversation_id for ACI and file/browser tools
                 if tool_name in ("file_read", "file_write", "file_list", "browser_action", "file_view_windowed", "file_edit_line", "run_stateful_command", "e2b_python_interpreter") and conversation_id:
@@ -191,8 +191,8 @@ class BaseAgent:
         else:
             return f"> {json.dumps(data, ensure_ascii=False)[:500]}"
 
-    def _build_messages(self, message: str, context: list = None,
-                        history: list = None, attachments: list = None) -> list[dict]:
+    def _build_messages(self, message: str, context: list | None = None,
+                        history: list | None = None, attachments: list | None = None) -> list[dict]:
         messages = []
         total_chars = 0
 
@@ -224,10 +224,24 @@ class BaseAgent:
                 if text:
                     messages.append({"role": role, "content": text})
 
-        messages.append({"role": "user", "content": message})
+        # Avoid duplicating the current user message when history already includes it
+        if not (messages and messages[-1].get("role") == "user"
+                and messages[-1].get("content") == message):
+            enhanced_message = message
+            if attachments:
+                file_contexts = []
+                for att in attachments:
+                    extracted = att.get("extracted_text", "")
+                    if extracted:
+                        file_contexts.append(
+                            f"[文件: {att.get('original_name', 'unknown')}]\n{extracted[:2000]}"
+                        )
+                if file_contexts:
+                    enhanced_message = message + "\n\n" + "\n\n".join(file_contexts)
+            messages.append({"role": "user", "content": enhanced_message})
         return messages
 
-    def _generate_reply(self, message: str, context: list = None) -> str:
+    def _generate_reply(self, message: str, context: list | None = None) -> str:
         return f"[{self.name}] 收到你的消息了！"
 
     def to_dict(self) -> dict:

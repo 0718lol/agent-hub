@@ -120,7 +120,7 @@ class QualityGate:
 
     async def evaluate_and_improve(
         self, agent, message: str, raw_output: str,
-        agent_id: str = "", history: list = None,
+        agent_id: str = "", history: list | None = None,
     ) -> tuple[str, QualityReport]:
         """
         Evaluate output. If failed, retry with quality feedback.
@@ -192,8 +192,8 @@ class QualityGate:
 
     async def best_of_n_generate(
         self, agent, message: str, agent_id: str = "",
-        history: list = None, n: int = None,
-        on_progress: callable = None,
+        history: list | None = None, n: int | None = None,
+        on_progress: object | None = None,
     ) -> tuple[str, QualityReport, list[dict]]:
         """
         Generate N candidates in parallel, evaluate each, return the best.

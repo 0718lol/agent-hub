@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     app_name: str = "AgentHub"
     debug: bool = True
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # nosec B104 — intentional server bind address, overridable via AGENTHUB_HOST env var
     port: int = 8000
 
     # CORS whitelist

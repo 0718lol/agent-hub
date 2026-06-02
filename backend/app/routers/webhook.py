@@ -38,10 +38,8 @@ async def slack_webhook_callback(request: Request):
                 payload = json.loads(payload_str)
 
         if not payload:
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 payload = json.loads(body_str)
-            except json.JSONDecodeError:
-                pass
 
         if not payload:
             return {"success": False, "error": "Invalid form-data or JSON payload"}

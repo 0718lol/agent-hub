@@ -70,7 +70,7 @@ class SafePythonExecutorTool(AgentTool):
                 raise RuntimeError(res.error)
             return res.data
 
-        async def http_request(url: str, method: str = "GET", headers: dict = None, json_data: dict = None) -> dict:
+        async def http_request(url: str, method: str = "GET", headers: dict | None = None, json_data: dict | None = None) -> dict:
             p = {
                 "url": url,
                 "method": method,

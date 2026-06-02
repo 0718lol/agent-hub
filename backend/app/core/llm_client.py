@@ -43,7 +43,7 @@ class ContextOptimizer:
         # Step 2: AST/Outline-based semantic code folding for extremely long code blocks (> 100 lines)
         # Identify fenced code blocks like ```python ... ``` or ```javascript ... ```
         code_blocks = re.findall(r'(```(\w*)\n(.*?)```)', content, re.DOTALL)
-        for full_block, lang, code in code_blocks:
+        for _full_block, _lang, code in code_blocks:
             lines = code.split("\n")
             if len(lines) > 100:
                 # We perform an outline fold: keeping imports, class definitions, and def (function) signatures,
@@ -224,7 +224,7 @@ class CircuitBreaker:
 
     async def record_success(self):
         async with self._lock:
-            state, failed_attempts, last_state_change = await self._get_state_from_redis()
+            state, _failed_attempts, _last_state_change = await self._get_state_from_redis()
             if state != "CLOSED":
                 logger.info(f"CircuitBreaker [{self.name}] recovered! {state} -> CLOSED")
             await self._set_state_to_redis("CLOSED", 0, time.time())
@@ -298,7 +298,7 @@ class ResilienceManager:
             self.breakers[provider] = CircuitBreaker(provider)
         return self.breakers[provider]
 
-    async def execute_failover(self, client_instance, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+    async def execute_failover(self, client_instance, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
         provider = client_instance.provider
         backup_cfg = get_backup_provider_config(provider)
 
@@ -345,7 +345,7 @@ class ResilienceManager:
         else:
             yield "❌ [所有 LLM 服务（主模型、备份云服务、本地 Ollama）均不可用或已被熔断。请在冷却期过后重试。]"
 
-    async def execute_with_retry(self, client_instance, stream_func, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+    async def execute_with_retry(self, client_instance, stream_func, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
         provider = client_instance.provider
         model = client_instance.model
         breaker = self.get_breaker(provider)
@@ -422,9 +422,8 @@ class ResilienceManager:
                 logger.error(f"LLM attempt {attempt + 1} failed for {provider}: {type(e).__name__}: {e}")
 
                 retriable = True
-                if isinstance(e, LLMAPIError):
-                    if e.status_code != 429 and e.status_code < 500:
-                        retriable = False
+                if isinstance(e, LLMAPIError) and e.status_code != 429 and e.status_code < 500:
+                    retriable = False
 
                 if not retriable:
                     await breaker.record_failure()
@@ -481,7 +480,7 @@ class LLMClient:
         self.max_tokens: int = 8192
 
     def configure(self, provider: str, api_key: str, base_url: str, model: str,
-                  temperature: float = None, max_tokens: int = None):
+                  temperature: float | None = None, max_tokens: int | None = None):
         self.provider = provider
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -509,7 +508,7 @@ class LLMClient:
         except (ConnectionRefusedError, TimeoutError, OSError):
             return False
 
-    async def _openai_stream_fallback_ollama(self, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+    async def _openai_stream_fallback_ollama(self, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
         original_provider = self.provider
         original_base_url = self.base_url
         original_model = self.model
@@ -531,7 +530,7 @@ class LLMClient:
             self.model = original_model
             self.api_key = original_api_key
 
-    async def _stream_fallback_provider(self, backup_config: dict, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+    async def _stream_fallback_provider(self, backup_config: dict, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
         original_provider = self.provider
         original_base_url = self.base_url
         original_model = self.model
@@ -562,7 +561,7 @@ class LLMClient:
             self.temperature = original_temp
             self.max_tokens = original_tokens
 
-    async def chat_stream(self, messages: list[dict], system: str = "", enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(self, messages: list[dict], system: str = "", enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
         optimized_messages = ContextOptimizer.optimize_messages(messages)
 
         try:
@@ -586,7 +585,7 @@ class LLMClient:
         except Exception as e:
             yield f"\n[LLM 调用出错: {type(e).__name__}: {str(e)[:200]}]"
 
-    def _get_api_tools(self, enabled_tools: list[str] = None) -> list[dict]:
+    def _get_api_tools(self, enabled_tools: list[str] | None = None) -> list[dict]:
         """Convert AgentTools dynamically into standard API tools definition format."""
         try:
             from app.tools.registry import TOOL_REGISTRY
@@ -609,7 +608,7 @@ class LLMClient:
         except Exception:
             return []
 
-    async def _openai_stream(self, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+    async def _openai_stream(self, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
         url = f"{self.base_url}/chat/completions"
         if not url.startswith("http"):
             url = f"https://{url}"
@@ -640,8 +639,7 @@ class LLMClient:
         active_tool_calls: dict[int, dict[str, Any]] = {}
 
         try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+            async with httpx.AsyncClient(timeout=180.0) as client, client.stream("POST", url, json=payload, headers=headers) as resp:
                     if resp.status_code != 200:
                         body = await resp.aread()
                         err_msg = body.decode('utf-8', errors='replace')[:300]
@@ -689,11 +687,11 @@ class LLMClient:
                             continue
         finally:
             # 3. Ensure proper tag enclosure at the end of generator stream safely
-            for index, call_info in active_tool_calls.items():
+            for _index, _call_info in active_tool_calls.items():
                 yield '[/tool_call]'
             active_tool_calls.clear()
 
-    async def _anthropic_stream(self, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+    async def _anthropic_stream(self, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
         url = f"{self.base_url}/messages"
         if not url.startswith("http"):
             url = f"https://{url}"
@@ -735,8 +733,7 @@ class LLMClient:
         active_tool_calls: dict[int, dict[str, Any]] = {}
 
         try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+            async with httpx.AsyncClient(timeout=180.0) as client, client.stream("POST", url, json=payload, headers=headers) as resp:
                     if resp.status_code != 200:
                         body = await resp.aread()
                         err_msg = body.decode('utf-8', errors='replace')[:300]
@@ -775,11 +772,11 @@ class LLMClient:
                         except (json.JSONDecodeError, KeyError):
                             continue
         finally:
-            for index, call_info in active_tool_calls.items():
+            for _index, _call_info in active_tool_calls.items():
                 yield '[/tool_call]'
             active_tool_calls.clear()
 
-    async def _claude_code_stream(self, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+    async def _claude_code_stream(self, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
         from app.core.claude_code_client import claude_code_stream
         async for chunk in claude_code_stream(
             messages=messages,
@@ -789,7 +786,7 @@ class LLMClient:
         ):
             yield chunk
 
-    async def _opencode_stream(self, messages: list[dict], system: str, enabled_tools: list[str] = None) -> AsyncGenerator[str, None]:
+    async def _opencode_stream(self, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
         from app.core.opencode_client import opencode_stream
         async for chunk in opencode_stream(
             messages=messages,

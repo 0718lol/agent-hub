@@ -6,6 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save_message
 from app.core.config import settings
+from app.core.llm_client import llm_client
 from app.core.logging_config import get_logger
 from app.core.websocket import manager
 from app.routers.harness_handler import handle_verdict
@@ -25,7 +26,7 @@ logger = get_logger("ws")
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
-def create_tracked_task(coro, name: str = None) -> asyncio.Task:
+def create_tracked_task(coro, name: str | None = None) -> asyncio.Task:
     """Create and strongly reference a background asyncio task to prevent GC."""
     task = asyncio.create_task(coro, name=name)
     _BACKGROUND_TASKS.add(task)
@@ -98,10 +99,8 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                     if fut is None:
                         pass  # Entry removed during await, fall through
                     elif not fut.done():
-                        try:
+                        with contextlib.suppress(asyncio.InvalidStateError):
                             fut.set_result(reply_text)
-                        except asyncio.InvalidStateError:
-                            pass
                 else:
                     # Recovery path: trigger asynchronous recovery task
                     create_tracked_task(resume_graph_from_checkpoint(conversation_id, reply_text), name=f"resume_graph_{conversation_id}")
@@ -141,6 +140,14 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 await handle_verdict(conversation_id, msg, manager)
                 continue
 
+            # 过滤无意义消息：太短、纯数字、纯标点
+            if sender == "user":
+                stripped = text.strip()
+                if len(stripped) < 2:
+                    continue
+                if stripped.isdigit() or all(c in "!@#$%^&*()_+-=[]{}|;:',.<>?/~`" for c in stripped):
+                    continue
+
             await async_save_message(conversation_id, sender, content, streaming=False)
 
             await manager.broadcast(conversation_id, {
@@ -156,6 +163,14 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             prev_event = _stop_events.get(conversation_id)
             if prev_event and not prev_event.is_set():
                 prev_event.set()
+
+            # harness 拦截：复杂任务进入辩论沙盒
+            if sender == "user":
+                intercepted = await try_intercept_with_harness(
+                    conversation_id, text, llm_client, manager
+                )
+                if intercepted:
+                    continue
 
             current_agents = get_agents()
             if target_agent and target_agent in current_agents:

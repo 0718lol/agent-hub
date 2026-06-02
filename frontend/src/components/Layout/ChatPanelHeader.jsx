@@ -1,11 +1,11 @@
 import React, { useState, memo } from 'react'
-import { Code2, GitBranch, LayoutList, Menu, Search, PanelRightClose, MoreHorizontal, Share2 } from 'lucide-react'
+import { Code2, GitBranch, LayoutList, Menu, Search, PanelRightClose, MoreHorizontal, Share2, Building2 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
 import IconAvatar from '../IconAvatar'
 
-const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar, onToggleTask, onToggleDag, taskOpen, dagOpen }) {
+const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar, onToggleTask, onToggleDag, taskOpen, dagOpen, onToggleOffice, onClearHistory }) {
   const conv = useChatStore((s) => s.conversations.find((c) => c.id === convId))
   const agents = useAgentStore((s) => s.agents)
   const typingAgents = useChatStore((s) => s.typingAgents)
@@ -70,6 +70,16 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
       <div className="chat-header-right">
         {typingAgentIds.length > 0 && !activeTypingAgent && (
           <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
+        )}
+        {onToggleOffice && (
+          <button
+            className="header-icon-btn"
+            onClick={onToggleOffice}
+            title="虚拟办公室"
+          >
+            <Building2 size={20} />
+            <span className="icon-tooltip">虚拟办公室</span>
+          </button>
         )}
         <button
           className="header-icon-btn"

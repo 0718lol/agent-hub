@@ -1,0 +1,178 @@
+/* DesktopPet — 浮动小宠物的容器/面板样式
+   AgentCharacter 本体的样式见 AgentCharacter.css */
+
+.pet-mini-chat-wrap {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 2;
+}
+
+.pet-mini-chat {
+  width: 240px;
+  background: var(--bg-secondary, #ffffff);
+  border: 1px solid var(--border, #e5e5ea);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+  animation: pet-pop-in 0.18s ease-out;
+}
+
+@keyframes pet-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.pet-mini-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-tertiary, #f5f5f7);
+  border-bottom: 1px solid var(--border, #e5e5ea);
+}
+
+.pet-mini-chat-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-secondary, #86868b);
+  padding: 0 4px;
+}
+
+.pet-mini-chat-close:hover {
+  color: var(--text-primary, #1d1d1f);
+}
+
+.pet-mini-chat-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  background: transparent;
+  color: var(--text-primary, #1d1d1f);
+  box-sizing: border-box;
+}
+
+.pet-mini-chat-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 10px;
+  gap: 8px;
+}
+
+.pet-mini-chat-hint {
+  font-size: 10px;
+  color: var(--text-secondary, #86868b);
+}
+
+.pet-mini-chat-send {
+  padding: 4px 12px;
+  font-size: 11px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent, #6366f1);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.pet-mini-chat-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pet-mini-chat-send:not(:disabled):hover {
+  opacity: 0.9;
+}
+
+/* ---- 右键菜单 ---- */
+.pet-context-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 140px;
+  padding: 4px;
+  background: var(--bg-secondary, #ffffff);
+  border: 1px solid var(--border, #e5e5ea);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  z-index: 2;
+  animation: pet-pop-in 0.15s ease-out;
+}
+
+.pet-context-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary, #1d1d1f);
+}
+
+.pet-context-menu button:hover {
+  background: var(--bg-tertiary, #f5f5f7);
+}
+
+/* ---- 隐藏后的召唤按钮 ---- */
+.pet-show-btn {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border, #e5e5ea);
+  background: var(--bg-secondary, #ffffff);
+  font-size: 20px;
+  cursor: pointer;
+  z-index: 9998;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  transition: transform 0.2s;
+}
+
+.pet-show-btn:hover {
+  transform: scale(1.1);
+}
+
+/* ---- 暗色主题 ---- */
+[data-theme="dark"] .pet-mini-chat {
+  background: rgba(30, 30, 40, 0.98);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .pet-mini-chat-header {
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .pet-context-menu {
+  background: rgba(30, 30, 40, 0.98);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .pet-context-menu button {
+  color: #f8fafc;
+}
+
+[data-theme="dark"] .pet-context-menu button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .pet-show-btn {
+  background: rgba(30, 30, 40, 0.95);
+  border-color: rgba(255, 255, 255, 0.1);
+}

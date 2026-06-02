@@ -1,0 +1,559 @@
+/* AgentCharacter — 通用角色渲染层
+   桌宠和虚拟办公室共用，仅通过 props 区分行为
+   位置 / 尺寸 / 是否可拖 都由外层容器控制 */
+
+.ac-root {
+  position: absolute;
+  user-select: none;
+  cursor: pointer;
+  pointer-events: auto;
+  transform-origin: center bottom;
+  transition: transform 0.3s ease;
+  --ac-theme: var(--accent, #6366f1);
+}
+
+.ac-sprite {
+  display: block;
+  overflow: visible;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.08));
+}
+
+/* ---- 默认 idle 动作：呼吸 + 偶尔眨眼 ---- */
+.ac-body {
+  transform-origin: 50% 100%;
+  animation: ac-breath 2.4s ease-in-out infinite;
+}
+
+.ac-head {
+  transform-origin: 50% 100%;
+  animation: ac-head-breath 2.4s ease-in-out infinite;
+}
+
+.ac-antenna {
+  transform-origin: 50px 18px;
+  animation: ac-antenna-sway 4s ease-in-out infinite;
+}
+
+.ac-eye {
+  transform-origin: center;
+  animation: ac-blink 5s ease-in-out infinite;
+}
+
+.ac-eye-right {
+  animation-delay: 0.05s;
+}
+
+@keyframes ac-breath {
+  0%, 100% { transform: scaleY(1); }
+  50%      { transform: scaleY(1.015); }
+}
+
+@keyframes ac-head-breath {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-1.5px); }
+}
+
+@keyframes ac-antenna-sway {
+  0%, 100% { transform: rotate(-6deg); }
+  50%      { transform: rotate(6deg); }
+}
+
+@keyframes ac-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  94%, 98%      { transform: scaleY(0.1); }
+}
+
+/* ---- work：敲键盘 + 眯眼专注 + 嘴巴抿成一条线 ---- */
+.ac-work .ac-arm-left {
+  transform-origin: 18px 65px;
+  animation: ac-arm-type 0.4s ease-in-out infinite;
+}
+
+.ac-work .ac-arm-right {
+  transform-origin: 82px 65px;
+  animation: ac-arm-type 0.4s ease-in-out infinite;
+  animation-delay: 0.2s;
+}
+
+.ac-work .ac-mouth {
+  d: path("M 44 52 L 56 52");
+}
+
+.ac-work .ac-eye {
+  animation: ac-eye-focus 1.6s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.ac-work .ac-eye-right {
+  animation-delay: 0.05s;
+}
+
+@keyframes ac-arm-type {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  50%      { transform: rotate(-8deg) translateY(-3px); }
+}
+
+@keyframes ac-eye-focus {
+  0%, 100% { transform: scaleY(0.45); }
+  50%      { transform: scaleY(0.35); }
+}
+
+/* ---- talk：嘴巴明显张开 + 微微点头 ---- */
+.ac-talk .ac-mouth {
+  animation: ac-mouth-talk 0.32s ease-in-out infinite;
+}
+
+.ac-talk .ac-head {
+  animation: ac-head-nod 0.7s ease-in-out infinite;
+}
+
+.ac-talk .ac-eye {
+  animation: ac-eye-bright 1.2s ease-in-out infinite;
+}
+
+@keyframes ac-mouth-talk {
+  0%, 100% { d: path("M 44 52 Q 50 55 56 52"); }
+  35%      { d: path("M 42 50 Q 50 60 58 50"); }
+  70%      { d: path("M 43 51 Q 50 57 57 51"); }
+}
+
+@keyframes ac-head-nod {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2px); }
+}
+
+@keyframes ac-eye-bright {
+  0%, 100% { transform: scaleY(1); }
+  50%      { transform: scaleY(1.15); }
+}
+
+/* ---- sleep：眼睛闭起来，整体下沉 ---- */
+.ac-sleep .ac-eye {
+  animation: none;
+  transform: scaleY(0.1);
+}
+
+.ac-sleep .ac-mouth {
+  d: path("M 44 52 L 56 52");
+}
+
+.ac-sleep .ac-body,
+.ac-sleep .ac-head {
+  animation-duration: 4s;
+}
+
+.ac-zzz {
+  animation: ac-zzz-float 2s ease-in-out infinite;
+}
+
+@keyframes ac-zzz-float {
+  0%   { transform: translate(0, 0); opacity: 0; }
+  30%  { opacity: 1; }
+  100% { transform: translate(8px, -10px); opacity: 0; }
+}
+
+/* ---- 俯视模式：顶视图小人动画 ---- */
+.ac-topdown .ac-body {
+  animation: ac-topdown-breathe 3s ease-in-out infinite;
+}
+
+@keyframes ac-topdown-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.02); }
+}
+
+/* walk：腿交替 + 身体轻微左右摆 */
+.ac-topdown.ac-walk .ac-leg-left {
+  animation: ac-topdown-walk-leg-l 0.6s ease-in-out infinite;
+}
+
+.ac-topdown.ac-walk .ac-leg-right {
+  animation: ac-topdown-walk-leg-r 0.6s ease-in-out infinite;
+}
+
+.ac-topdown.ac-walk .ac-body {
+  animation: ac-topdown-walk-body 0.6s ease-in-out infinite;
+}
+
+@keyframes ac-topdown-walk-leg-l {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+
+@keyframes ac-topdown-walk-leg-r {
+  0%, 100% { transform: translateY(-3px); }
+  50%      { transform: translateY(0); }
+}
+
+@keyframes ac-topdown-walk-body {
+  0%, 100% { transform: translateX(-1px); }
+  50%      { transform: translateX(1px); }
+}
+
+/* work：身体微动 + 手臂轻微摆动 */
+.ac-topdown.ac-work .ac-arm-left,
+.ac-topdown.ac-work .ac-arm-right {
+  animation: ac-topdown-work-arm 1.2s ease-in-out infinite;
+}
+
+@keyframes ac-topdown-work-arm {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(0.95) translateY(-1px); }
+}
+
+/* sleep：身体缩小 + 眼睛闭上 */
+.ac-topdown.ac-sleep .ac-eye {
+  animation: none;
+  transform: scaleY(0.2);
+}
+
+.ac-topdown.ac-sleep .ac-body {
+  animation: ac-topdown-sleep 4s ease-in-out infinite;
+}
+
+@keyframes ac-topdown-sleep {
+  0%, 100% { transform: scale(0.98); }
+  50%      { transform: scale(1); }
+}
+
+/* coffee：手臂举杯 */
+.ac-topdown.ac-coffee .ac-arm-right {
+  animation: ac-topdown-coffee 2s ease-in-out infinite;
+}
+
+@keyframes ac-topdown-coffee {
+  0%, 100% { transform: translateY(0); }
+  40%, 60% { transform: translateY(-4px); }
+}
+
+/* gym：身体上下 + 手臂扩张 */
+.ac-topdown.ac-gym .ac-body {
+  animation: ac-topdown-gym-body 0.8s ease-in-out infinite;
+}
+
+.ac-topdown.ac-gym .ac-arm-left,
+.ac-topdown.ac-gym .ac-arm-right {
+  animation: ac-topdown-gym-arm 0.8s ease-in-out infinite;
+}
+
+@keyframes ac-topdown-gym-body {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(0.96) translateY(2px); }
+}
+
+@keyframes ac-topdown-gym-arm {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.15); }
+}
+
+/* wave：右手放大 */
+.ac-topdown.ac-wave .ac-arm-right {
+  animation: ac-topdown-wave 0.5s ease-in-out infinite;
+}
+
+@keyframes ac-topdown-wave {
+  0%, 100% { transform: scale(1.2) translateX(2px); }
+  50%      { transform: scale(1.3) translateX(4px); }
+}
+
+/* jump：整体上下弹跳 */
+.ac-topdown.ac-jump {
+  animation: ac-topdown-jump 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+}
+
+@keyframes ac-topdown-jump {
+  0%, 100% { transform: scale(var(--ac-scale, 1)) translateY(0); }
+  35%      { transform: scale(var(--ac-scale, 1)) translateY(-8px); }
+  70%      { transform: scale(var(--ac-scale, 1)) translateY(1px); }
+}
+
+/* stretch：身体拉伸 + 手臂扩张 */
+.ac-topdown.ac-stretch .ac-body {
+  animation: ac-topdown-stretch-body 2s ease-in-out infinite;
+}
+
+.ac-topdown.ac-stretch .ac-arm-left,
+.ac-topdown.ac-stretch .ac-arm-right {
+  animation: ac-topdown-stretch-arm 2s ease-in-out infinite;
+}
+
+@keyframes ac-topdown-stretch-body {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scaleY(1.08); }
+}
+
+@keyframes ac-topdown-stretch-arm {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.3); }
+}
+
+/* happy：身体轻微摇摆 + 眼睛放大 */
+.ac-topdown.ac-happy .ac-eye {
+  transform: scale(1.2);
+  animation: none;
+}
+
+.ac-topdown.ac-happy .ac-mouth {
+  d: path("M 42 38 Q 50 46 58 38");
+}
+
+.ac-topdown.ac-happy {
+  animation: ac-topdown-happy 0.6s ease-in-out infinite;
+}
+
+@keyframes ac-topdown-happy {
+  0%, 100% { transform: scale(var(--ac-scale, 1)) rotate(-2deg); }
+  50%      { transform: scale(var(--ac-scale, 1)) rotate(2deg); }
+}
+
+/* ---- 原有正面视图动画保留（非 topdown 时生效） ---- */
+.ac-walk {
+  animation: ac-walk-sway 0.6s ease-in-out infinite;
+}
+
+@keyframes ac-walk-sway {
+  0%, 100% { transform: scale(var(--ac-scale, 1)) rotate(-2deg); }
+  50%      { transform: scale(var(--ac-scale, 1)) rotate(2deg); }
+}
+
+/* ---- coffee：举杯 + 喝水点头 ---- */
+.ac-coffee .ac-arm-right {
+  transform-origin: 82px 80px;
+  animation: ac-coffee-drink 2s ease-in-out infinite;
+}
+
+.ac-coffee .ac-head {
+  animation: ac-head-tilt 2s ease-in-out infinite;
+}
+
+@keyframes ac-coffee-drink {
+  0%, 100% { transform: rotate(0deg); }
+  40%      { transform: rotate(-55deg) translateY(-8px); }
+  60%      { transform: rotate(-55deg) translateY(-8px); }
+}
+
+@keyframes ac-head-tilt {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50%      { transform: translateY(-1px) rotate(-8deg); }
+}
+
+/* ---- gym：上下深蹲 + 双臂屈伸 ---- */
+.ac-gym {
+  animation: ac-squat 0.8s ease-in-out infinite;
+}
+
+.ac-gym .ac-arm-left,
+.ac-gym .ac-arm-right {
+  animation: ac-arm-pump 0.8s ease-in-out infinite;
+}
+
+.ac-gym .ac-arm-left { transform-origin: 18px 87px; }
+.ac-gym .ac-arm-right { transform-origin: 82px 87px; }
+
+@keyframes ac-squat {
+  0%, 100% { transform: scale(var(--ac-scale, 1)) scaleY(1) translateY(0); }
+  50%      { transform: scale(var(--ac-scale, 1)) scaleY(0.88) translateY(6px); }
+}
+
+@keyframes ac-arm-pump {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(-30deg) translateY(-6px); }
+}
+
+/* ---- wave：举手挥动打招呼 ---- */
+.ac-wave .ac-arm-right {
+  transform-origin: 82px 87px;
+  animation: ac-arm-wave 0.5s ease-in-out infinite;
+}
+
+.ac-wave .ac-mouth {
+  d: path("M 42 50 Q 50 58 58 50");
+}
+
+@keyframes ac-arm-wave {
+  0%, 100% { transform: rotate(-95deg) translateY(-22px); }
+  50%      { transform: rotate(-115deg) translateY(-22px); }
+}
+
+/* ---- jump：原地兴奋跳跃 ---- */
+.ac-jump {
+  animation: ac-jump-up 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+}
+
+.ac-jump .ac-mouth {
+  d: path("M 42 50 Q 50 60 58 50");
+}
+
+@keyframes ac-jump-up {
+  0%, 100% { transform: scale(var(--ac-scale, 1)) translateY(0); }
+  35%      { transform: scale(var(--ac-scale, 1)) translateY(-16px) scaleY(1.06); }
+  70%      { transform: scale(var(--ac-scale, 1)) translateY(2px) scaleY(0.96); }
+}
+
+/* ---- stretch：伸懒腰，双臂上举 ---- */
+.ac-stretch .ac-arm-left {
+  transform-origin: 18px 87px;
+  animation: ac-stretch-arm-l 2s ease-in-out infinite;
+}
+
+.ac-stretch .ac-arm-right {
+  transform-origin: 82px 87px;
+  animation: ac-stretch-arm-r 2s ease-in-out infinite;
+}
+
+.ac-stretch .ac-head {
+  animation: ac-stretch-head 2s ease-in-out infinite;
+}
+
+@keyframes ac-stretch-arm-l {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(-160deg) translateY(-18px); }
+}
+
+@keyframes ac-stretch-arm-r {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(160deg) translateY(-18px); }
+}
+
+@keyframes ac-stretch-head {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+
+/* ---- happy：hover 反应：眼睛变大、嘴笑、轻微抖动 ---- */
+.ac-happy .ac-mouth {
+  d: path("M 40 50 Q 50 62 60 50");
+  stroke-width: 2.5;
+}
+
+.ac-happy .ac-eye {
+  transform: scale(1.15);
+  animation: none;
+}
+
+.ac-happy {
+  animation: ac-happy-wiggle 0.6s ease-in-out infinite;
+}
+
+@keyframes ac-happy-wiggle {
+  0%, 100% { transform: scale(var(--ac-scale, 1)) rotate(-1.5deg); }
+  50%      { transform: scale(var(--ac-scale, 1)) rotate(1.5deg); }
+}
+
+/* ---- mood-tag: 桌宠的随机表情贴纸（爱心/星星/音符），从头顶冒出来 ---- */
+.ac-mood-tag {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 16px;
+  animation: ac-mood-float 1.6s ease-out forwards;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
+}
+
+@keyframes ac-mood-float {
+  0%   { opacity: 0; transform: translateY(0) scale(0.6); }
+  20%  { opacity: 1; transform: translateY(-6px) scale(1.1); }
+  100% { opacity: 0; transform: translateY(-26px) scale(0.9); }
+}
+
+/* ---- 头顶气泡 ---- */
+.ac-bubble {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 220px;
+  padding: 8px 12px;
+  background: var(--bg-secondary, #ffffff);
+  color: var(--text-primary, #1d1d1f);
+  border: 1px solid var(--border, #e5e5ea);
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  animation: ac-bubble-in 0.25s ease-out;
+  z-index: 1;
+}
+
+.ac-bubble::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--bg-secondary, #ffffff);
+}
+
+.ac-bubble-text {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes ac-bubble-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ---- 右下角的 emoji 头像徽章（标识哪个 agent） ---- */
+.ac-avatar-badge {
+  position: absolute;
+  bottom: -4px;
+  right: -6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--bg-secondary, #ffffff);
+  border: 2px solid var(--ac-theme);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+/* ---- 名牌（hover 显示） ---- */
+.ac-nameplate {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 10px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+
+.ac-root:hover .ac-nameplate {
+  opacity: 1;
+}
+
+/* ---- hover 弹起 ---- */
+.ac-root:hover {
+  transform: scale(calc(var(--ac-scale, 1) * 1.05));
+}
+
+/* ---- 暗色主题适配 ---- */
+[data-theme="dark"] .ac-bubble {
+  background: rgba(30, 30, 40, 0.95);
+  color: #f8fafc;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .ac-bubble::after {
+  border-top-color: rgba(30, 30, 40, 0.95);
+}
+
+[data-theme="dark"] .ac-avatar-badge {
+  background: #2a2a35;
+}

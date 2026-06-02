@@ -3,14 +3,14 @@
 Pure logic tests: no database, no network.
 """
 
-import sys
-import os
 import json
+import os
+import sys
 
 # Ensure the backend app package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.core.crud import _safe_json_loads, _MAX_JSON_PARSE_SIZE
+from app.core.crud import _MAX_JSON_PARSE_SIZE, _safe_json_loads
 
 
 class TestSafeJsonLoadsNormal:

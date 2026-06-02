@@ -205,7 +205,7 @@ class SafeASTInterpreter:
             ast.In: lambda a, b: a in b,
             ast.NotIn: lambda a, b: a not in b
         }
-        for op, comparator in zip(node.ops, node.comparators):
+        for op, comparator in zip(node.ops, node.comparators, strict=False):
             right = await self.visit(comparator)
             op_type = type(op)
             if op_type not in ops:
@@ -323,7 +323,7 @@ class SafeASTInterpreter:
         values = []
         for v in node.values:
             values.append(await self.visit(v))
-        return dict(zip(keys, values))
+        return dict(zip(keys, values, strict=False))
 
     async def visit_Set(self, node: ast.Set) -> Any:
         res = set()

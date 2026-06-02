@@ -185,7 +185,7 @@ class DockerSandbox(BaseSandbox):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+            _stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
             return proc.returncode == 0
         except Exception:
             return False
@@ -220,13 +220,7 @@ class DockerSandbox(BaseSandbox):
         # --memory 128m: Memory limit cap (protect host from memory exhaustion)
         # --cpus 0.5: CPU allocation limit (protect host from CPU starvation)
         # -i: keep stdin open for code injection
-        docker_cmd = [
-            "docker", "run", "-i", "--rm",
-            "--network", "none",
-            "--memory", "128m",
-            "--cpus", "0.5",
-            img
-        ] + cmd_runner
+        docker_cmd = ["docker", "run", "-i", "--rm", "--network", "none", "--memory", "128m", "--cpus", "0.5", img, *cmd_runner]
 
         try:
             proc = await asyncio.create_subprocess_exec(

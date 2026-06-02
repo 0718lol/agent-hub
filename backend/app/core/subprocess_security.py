@@ -50,9 +50,9 @@ if sys.platform == "win32":
         ]
 else:
     # Stand-in classes for non-Windows compilation safety
-    class IO_COUNTERS: pass
-    class JOBOBJECT_BASIC_LIMIT_INFORMATION: pass
-    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION_STRUCT: pass
+    class IO_COUNTERS: pass  # noqa: E701
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION: pass  # noqa: E701
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION_STRUCT: pass  # noqa: E701
 
 _windows_job_handles = set()
 _windows_job_handles_map: dict = {}  # pid -> h_job mapping for cleanup

@@ -1,5 +1,5 @@
 import styles from './MessageBubble.module.css'
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Copy, RefreshCw, Reply, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -12,9 +12,39 @@ import MockupCard from './MockupCard'
 import ClarificationCard from './ClarificationCard'
 import AskUserCard from './AskUserCard'
 import FileAttachmentCard from './FileAttachmentCard'
+import IconAvatar from '../IconAvatar'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import { wsClient } from '../../utils/websocket'
-import IconAvatar from '../IconAvatar'
+
+const MD_COMPONENTS = {
+  p: ({ children }) => <div style={{ margin: '0.2em 0', lineHeight: 1.55 }}>{children}</div>,
+  ul: ({ children }) => <ul style={{ margin: '0.3em 0', paddingLeft: 20 }}>{children}</ul>,
+  ol: ({ children }) => <ol style={{ margin: '0.3em 0', paddingLeft: 22 }}>{children}</ol>,
+  li: ({ children }) => <li style={{ margin: '0.1em 0', lineHeight: 1.5 }}>{children}</li>,
+  h1: ({ children }) => <div style={{ fontSize: 16, margin: '0.45em 0 0.25em', fontWeight: 700 }}>{children}</div>,
+  h2: ({ children }) => <div style={{ fontSize: 15, margin: '0.45em 0 0.25em', fontWeight: 700 }}>{children}</div>,
+  h3: ({ children }) => <div style={{ fontSize: 14, margin: '0.4em 0 0.2em', fontWeight: 600 }}>{children}</div>,
+  strong: ({ children }) => <strong style={{ fontWeight: 700, color: '#f8fafc' }}>{children}</strong>,
+  em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
+  code: ({ children }) => (
+    <code style={{
+      background: 'rgba(99,102,241,0.16)', color: '#a5b4fc',
+      padding: '1px 6px', borderRadius: 4,
+      fontSize: '0.9em', fontFamily: 'Consolas, Monaco, monospace',
+    }}>{children}</code>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote style={{
+      borderLeft: '3px solid rgba(99,102,241,0.45)',
+      paddingLeft: 10, margin: '0.45em 0',
+      color: '#94a3b8',
+    }}>{children}</blockquote>
+  ),
+  a: ({ children, href }) => (
+    <a href={href} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc', textDecoration: 'underline' }}>{children}</a>
+  ),
+  hr: () => <hr style={{ border: 'none', borderTop: '1px solid rgba(255,255,255,0.08)', margin: '0.6em 0' }} />,
+}
 
 const TOOL_ICONS = {
   web_search: Globe,
@@ -385,8 +415,7 @@ export default function MessageBubble({ message, isPinned }) {
         )
       }
 
-      // 普通文本 → Markdown 渲染
-      return <span key={i}>{renderMarkdown(part)}</span>
+      return <ReactMarkdown key={i} components={MD_COMPONENTS}>{part}</ReactMarkdown>
     })
   }
 

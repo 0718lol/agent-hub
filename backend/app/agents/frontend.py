@@ -668,7 +668,7 @@ class FrontendAgent(BaseAgent):
         "\n回复要活泼有趣，适当用 emoji。"
     )
 
-    def _generate_reply(self, message: str, context: list = None) -> str:
+    def _generate_reply(self, message: str, context: list | None = None) -> str:
         msg = message.lower()
         if any(kw in msg for kw in ["游戏", "game", "雷霆", "战机", "射击", "飞机", "打飞机", "shooter", "thunder"]):
             return self._game_reply()

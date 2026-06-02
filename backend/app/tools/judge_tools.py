@@ -82,7 +82,7 @@ class ComplexityJudgeTool:
                 if match:
                     result = json.loads(match.group())
                 else:
-                    raise ValueError(f"Cannot parse JSON: {response_text[:200]}")
+                    raise ValueError(f"Cannot parse JSON: {response_text[:200]}") from None
 
             score = max(0, min(100, result.get("score", 50)))
             return JudgeResult(
@@ -199,7 +199,7 @@ class AlignmentJudgeTool:
                 if match:
                     result = json.loads(match.group())
                 else:
-                    raise ValueError(f"Cannot parse JSON: {response_text[:200]}")
+                    raise ValueError(f"Cannot parse JSON: {response_text[:200]}") from None
 
             score = max(0, min(100, result.get("score", 50)))
             return JudgeResult(

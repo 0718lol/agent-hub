@@ -57,7 +57,7 @@ async def register_mcp_server(body: MCPServerRegister):
     # Cross-validation: block dangerous arg patterns for python/node interpreters
     # Prevent: python -c "import os; os.system(...)" or node -e "require('child_process')..."
     if cmd_base in ("python", "node", "npx", "uvx"):
-        for i, arg in enumerate(body.args):
+        for _, arg in enumerate(body.args):
             for pattern in _DANGEROUS_ARG_PATTERNS:
                 if pattern.match(arg):
                     return {"status": "error", "message": f"Dangerous arg pattern '{arg}' not allowed for '{cmd_base}'"}

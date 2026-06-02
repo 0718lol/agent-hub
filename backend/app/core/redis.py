@@ -38,9 +38,8 @@ class RedisManager:
         now = time.time()
 
         # Return cached status if TTL has not expired
-        if self._is_connected is not None:
-            if now - self._last_probe_time < self._probe_ttl:
-                return self._is_connected
+        if self._is_connected is not None and now - self._last_probe_time < self._probe_ttl:
+            return self._is_connected
 
         self._last_probe_time = now
         try:

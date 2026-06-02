@@ -22,7 +22,7 @@ class BackendAgent(BaseAgent):
         "\n  一次回复最多一个 ask_user；如果用户已经说清需求就不要用。"
     )
 
-    def _generate_reply(self, message: str, context: list = None) -> str:
+    def _generate_reply(self, message: str, context: list | None = None) -> str:
         msg = message.lower()
         if any(kw in msg for kw in ["api", "接口", "数据库", "后端"]):
             return self._api_reply()

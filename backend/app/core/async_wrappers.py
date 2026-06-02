@@ -113,7 +113,7 @@ async def async_delete_memory_item(conversation_id, key):
     return await asyncio.to_thread(delete_memory_item, conversation_id, key)
 
 
-async def async_search_messages(query: str, conversation_id: str = None, limit: int = 50):
+async def async_search_messages(query: str, conversation_id: str | None = None, limit: int = 50):
     return await asyncio.to_thread(search_messages, query, conversation_id, limit)
 
 

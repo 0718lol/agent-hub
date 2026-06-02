@@ -30,11 +30,11 @@ export default function AskUserCard({ question, options, onAnswer }) {
       <div style={{
         margin: '8px 0',
         padding: 14,
-        background: 'rgba(16, 185, 129, 0.08)',
-        border: '1px solid rgba(16, 185, 129, 0.2)',
+        background: 'rgba(16, 185, 129, 0.15)',
+        border: '1px solid rgba(16, 185, 129, 0.3)',
         borderRadius: 10,
         fontSize: 13,
-        color: '#10b981',
+        color: 'var(--text-primary)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           ✓ 已选择：<strong>{selected}</strong>
@@ -47,14 +47,14 @@ export default function AskUserCard({ question, options, onAnswer }) {
     <div style={{
       margin: '8px 0',
       padding: 16,
-      background: 'rgba(168, 85, 247, 0.06)',
-      border: '1px solid rgba(168, 85, 247, 0.18)',
+      background: 'var(--bg-secondary)',
+      border: '1px solid var(--border)',
       borderRadius: 10,
     }}>
       <div style={{
-        fontSize: 13,
+        fontSize: 14,
         fontWeight: 600,
-        color: '#a855f7',
+        color: 'var(--text-primary)',
         marginBottom: 12,
         display: 'flex',
         alignItems: 'center',
@@ -72,13 +72,13 @@ export default function AskUserCard({ question, options, onAnswer }) {
             style={{
               padding: '10px 12px',
               background: opt.recommended
-                ? 'rgba(168, 85, 247, 0.12)'
-                : 'rgba(255,255,255,0.04)',
+                ? 'rgba(168, 85, 247, 0.15)'
+                : 'var(--bg-tertiary)',
               border: opt.recommended
-                ? '1px solid rgba(168, 85, 247, 0.35)'
-                : '1px solid rgba(255,255,255,0.08)',
+                ? '1px solid rgba(168, 85, 247, 0.4)'
+                : '1px solid var(--border)',
               borderRadius: 8,
-              color: '#f8fafc',
+              color: 'var(--text-primary)',
               fontSize: 13,
               textAlign: 'left',
               cursor: 'pointer',
@@ -89,16 +89,16 @@ export default function AskUserCard({ question, options, onAnswer }) {
               fontFamily: 'inherit',
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.background = 'rgba(168, 85, 247, 0.18)'
+              e.currentTarget.style.background = 'rgba(168, 85, 247, 0.2)'
               e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.5)'
             }}
             onMouseOut={(e) => {
               e.currentTarget.style.background = opt.recommended
-                ? 'rgba(168, 85, 247, 0.12)'
-                : 'rgba(255,255,255,0.04)'
+                ? 'rgba(168, 85, 247, 0.15)'
+                : 'var(--bg-tertiary)'
               e.currentTarget.style.borderColor = opt.recommended
-                ? 'rgba(168, 85, 247, 0.35)'
-                : 'rgba(255,255,255,0.08)'
+                ? 'rgba(168, 85, 247, 0.4)'
+                : 'var(--border)'
             }}
           >
             <div style={{
@@ -115,7 +115,7 @@ export default function AskUserCard({ question, options, onAnswer }) {
                   fontWeight: 500,
                   padding: '2px 6px',
                   background: 'rgba(168, 85, 247, 0.25)',
-                  color: '#c4b5fd',
+                  color: 'var(--text-primary)',
                   borderRadius: 4,
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -127,7 +127,7 @@ export default function AskUserCard({ question, options, onAnswer }) {
               )}
             </div>
             {opt.description && (
-              <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.4 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
                 {opt.description}
               </div>
             )}
@@ -143,15 +143,15 @@ export default function AskUserCard({ question, options, onAnswer }) {
             padding: '8px 12px',
             width: '100%',
             background: 'transparent',
-            border: '1px dashed rgba(255,255,255,0.15)',
+            border: '1px dashed var(--border)',
             borderRadius: 8,
-            color: '#94a3b8',
+            color: 'var(--text-secondary)',
             fontSize: 12,
             cursor: 'pointer',
             fontFamily: 'inherit',
           }}
           onMouseOver={(e) => { e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.4)' }}
-          onMouseOut={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
+          onMouseOut={(e) => { e.currentTarget.style.borderColor = 'var(--border)' }}
         >
           ✎ Other（自定义回答）
         </button>
@@ -166,10 +166,10 @@ export default function AskUserCard({ question, options, onAnswer }) {
             style={{
               flex: 1,
               padding: '8px 12px',
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(168, 85, 247, 0.3)',
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--border)',
               borderRadius: 6,
-              color: '#f8fafc',
+              color: 'var(--text-primary)',
               fontSize: 13,
               outline: 'none',
               fontFamily: 'inherit',

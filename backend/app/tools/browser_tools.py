@@ -15,12 +15,12 @@ logger = logging.getLogger("tool_browser_tools")
 DOM_MINIMIZER_JS = """
 () => {
     const interactiveSelectors = [
-        'a', 'button', 'input', 'select', 'textarea', 
+        'a', 'button', 'input', 'select', 'textarea',
         '[role="button"]', '[role="link"]', '[role="textbox"]',
         '[role="checkbox"]', '[role="combobox"]', '[role="listbox"]',
         '[onclick]', '[cursor="pointer"]'
     ];
-    
+
     // Clean up previous highlights/badges if any
     const oldBadges = document.querySelectorAll('.cyberbrowser-badge');
     oldBadges.forEach(b => b.remove());
@@ -35,17 +35,17 @@ DOM_MINIMIZER_JS = """
         if (rect.width === 0 || rect.height === 0) return;
         const style = window.getComputedStyle(el);
         if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
-        
+
         const id = idCounter++;
-        
+
         // Get text/label description
         let text = el.innerText || el.placeholder || el.getAttribute('aria-label') || el.value || '';
         text = text.trim().substring(0, 100);
-        
+
         // Compute center coordinates
         const x = rect.left + rect.width / 2;
         const y = rect.top + rect.height / 2;
-        
+
         results.push({
             id: id,
             tagName: el.tagName.toLowerCase(),
@@ -56,7 +56,7 @@ DOM_MINIMIZER_JS = """
             width: rect.width,
             height: rect.height
         });
-        
+
         // Draw small visual number badges for multimodal LLM screenshots!
         const badge = document.createElement('div');
         badge.className = 'cyberbrowser-badge';
@@ -76,7 +76,7 @@ DOM_MINIMIZER_JS = """
         badge.style.pointerEvents = 'none';
         document.body.appendChild(badge);
     });
-    
+
     return results;
 }
 """
@@ -383,7 +383,7 @@ class BrowserActionTool(AgentTool):
         best_score = -1
         query_words = set(visual_description.lower().split())
 
-        for el_id, el in cache.items():
+        for _el_id, el in cache.items():
             text = (el.get("text") or "").lower()
             role = (el.get("role") or "").lower()
             tag = (el.get("tagName") or "").lower()
@@ -404,7 +404,7 @@ class BrowserActionTool(AgentTool):
 
         if best_el is None:
             # Fallback to the first interactive element as emergency safety net
-            first_key = list(cache.keys())[0]
+            first_key = next(iter(cache.keys()))
             best_el = cache[first_key]
 
         return best_el["x"], best_el["y"], best_el["text"]

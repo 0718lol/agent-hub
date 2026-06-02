@@ -8,7 +8,7 @@ from app.core.database import clear_event_items, get_event_items, save_event_ite
 class BaseEvent:
     event_type = "base"
 
-    def __init__(self, timestamp: float = None):
+    def __init__(self, timestamp: float | None = None):
         self.timestamp = timestamp or time.time()
 
     def to_dict(self) -> dict:
@@ -22,7 +22,7 @@ class BaseEvent:
 class MessageEvent(BaseEvent):
     event_type = "message"
 
-    def __init__(self, sender: str, content: Any, timestamp: float = None):
+    def __init__(self, sender: str, content: Any, timestamp: float | None = None):
         super().__init__(timestamp)
         self.sender = sender
         self.content = content
@@ -40,7 +40,7 @@ class MessageEvent(BaseEvent):
 class ThoughtEvent(BaseEvent):
     event_type = "thought"
 
-    def __init__(self, agent_id: str, content: str, timestamp: float = None):
+    def __init__(self, agent_id: str, content: str, timestamp: float | None = None):
         super().__init__(timestamp)
         self.agent_id = agent_id
         self.content = content
@@ -58,7 +58,7 @@ class ThoughtEvent(BaseEvent):
 class ActionCallEvent(BaseEvent):
     event_type = "action_call"
 
-    def __init__(self, tool_name: str, params: dict, call_id: str = "", timestamp: float = None):
+    def __init__(self, tool_name: str, params: dict, call_id: str = "", timestamp: float | None = None):
         super().__init__(timestamp)
         self.tool_name = tool_name
         self.params = params
@@ -82,7 +82,7 @@ class ActionCallEvent(BaseEvent):
 class ObservationEvent(BaseEvent):
     event_type = "observation"
 
-    def __init__(self, tool_name: str, success: bool, output: Any, images: list = None, timestamp: float = None):
+    def __init__(self, tool_name: str, success: bool, output: Any, images: list | None = None, timestamp: float | None = None):
         super().__init__(timestamp)
         self.tool_name = tool_name
         self.success = success

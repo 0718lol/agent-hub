@@ -110,7 +110,7 @@ class StatefulTerminalManager:
     async def close_all(self):
         """Cleanly stops all persistent shell processes on program exit."""
         logger.info("[StatefulTerminalManager] Cleaning up all stateful terminal processes...")
-        for conversation_id, terminal in list(self.sessions.items()):
+        for _conversation_id, terminal in list(self.sessions.items()):
             try:
                 await terminal.stop()
             except Exception as e:

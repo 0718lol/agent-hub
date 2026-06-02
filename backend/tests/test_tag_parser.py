@@ -3,8 +3,8 @@
 Pure logic tests: no LLM, no database, no network.
 """
 
-import sys
 import os
+import sys
 
 # Ensure the backend app package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -51,32 +51,32 @@ class TestParseCreateAgentTagEscapes:
 
     def test_json_with_closing_brace_in_string(self):
         buf = '[create_agent:{"name":"test}name","role":"dev"}]'
-        config, remaining = parse_create_agent_tag(buf)
+        config, _remaining = parse_create_agent_tag(buf)
         assert config is not None
         assert config["name"] == "test}name"
 
     def test_json_with_escaped_quote_in_string(self):
         buf = r'[create_agent:{"name":"say \"hello\"","role":"dev"}]'
-        config, remaining = parse_create_agent_tag(buf)
+        config, _remaining = parse_create_agent_tag(buf)
         assert config is not None
         assert config["name"] == 'say "hello"'
 
     def test_json_with_nested_objects(self):
         inner = '{"tools": {"read": true, "write": false}}'
         buf = f'[create_agent:{{"name":"a","config":{inner}}}]'
-        config, remaining = parse_create_agent_tag(buf)
+        config, _remaining = parse_create_agent_tag(buf)
         assert config is not None
         assert config["config"]["tools"]["read"] is True
 
     def test_json_with_nested_arrays(self):
         buf = '[create_agent:{"tags":["a","b","c"]}]'
-        config, remaining = parse_create_agent_tag(buf)
+        config, _remaining = parse_create_agent_tag(buf)
         assert config is not None
         assert config["tags"] == ["a", "b", "c"]
 
     def test_json_with_multiple_closing_braces_in_string(self):
         buf = '[create_agent:{"name":"a}b}c","x":1}]'
-        config, remaining = parse_create_agent_tag(buf)
+        config, _remaining = parse_create_agent_tag(buf)
         assert config is not None
         assert config["name"] == "a}b}c"
         assert config["x"] == 1
@@ -105,7 +105,7 @@ class TestParseCreateAgentTagIncomplete:
 
     def test_tag_with_invalid_json(self):
         buf = '[create_agent:not-json-at-all]'
-        config, remaining = parse_create_agent_tag(buf)
+        config, _remaining = parse_create_agent_tag(buf)
         assert config is None
 
     def test_partial_json_truncated(self):
@@ -120,19 +120,19 @@ class TestParseCreateAgentTagEdgeCases:
 
     def test_whitespace_around_json(self):
         buf = '[create_agent:  {"name":"x"}  ]'
-        config, remaining = parse_create_agent_tag(buf)
+        config, _remaining = parse_create_agent_tag(buf)
         assert config is not None
         assert config["name"] == "x"
 
     def test_deeply_nested_json(self):
         buf = '[create_agent:{"a":{"b":{"c":{"d":"deep"}}}}]'
-        config, remaining = parse_create_agent_tag(buf)
+        config, _remaining = parse_create_agent_tag(buf)
         assert config is not None
         assert config["a"]["b"]["c"]["d"] == "deep"
 
     def test_json_with_unicode(self):
         buf = '[create_agent:{"name":"中文名称","role":"dev"}]'
-        config, remaining = parse_create_agent_tag(buf)
+        config, _remaining = parse_create_agent_tag(buf)
         assert config is not None
         assert config["name"] == "中文名称"
 
@@ -145,6 +145,6 @@ class TestParseCreateAgentTagEdgeCases:
     def test_escaped_backslash_before_quote(self):
         # JSON: {"path": "C:\\Users"}
         buf = '[create_agent:{"path":"C:\\\\Users"}]'
-        config, remaining = parse_create_agent_tag(buf)
+        config, _remaining = parse_create_agent_tag(buf)
         assert config is not None
         assert config["path"] == "C:\\Users"

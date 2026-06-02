@@ -13,7 +13,7 @@ MCP_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "m
 class MCPClient:
     """Standard Model Context Protocol stdio client with async JSON-RPC 2.0 communication."""
 
-    def __init__(self, name: str, command: str, args: list[str] = None, env: dict = None):
+    def __init__(self, name: str, command: str, args: list[str] | None = None, env: dict | None = None):
         self.name = name
         self.command = command
         self.args = args or []
@@ -86,7 +86,7 @@ class MCPClient:
         except Exception as e:
             _logger.debug(f"MCP server {self.name} stderr reader stopped: {e}")
 
-    async def send_request(self, method: str, params: dict = None) -> dict:
+    async def send_request(self, method: str, params: dict | None = None) -> dict:
         if not self.is_connected or not self.process:
             return {"error": {"message": "MCP Server not running"}}
 
@@ -242,7 +242,7 @@ class SystemMCPServer:
         except Exception:
             return False
 
-    async def call_tool(self, tool_name: str, arguments: dict, conversation_id: str = None) -> dict:
+    async def call_tool(self, tool_name: str, arguments: dict, conversation_id: str | None = None) -> dict:
         if not conversation_id:
             return {"isError": True, "content": [{"type": "text", "text": "Error: conversation_id is required to resolve sandboxed paths"}]}
 
@@ -390,7 +390,7 @@ class SystemMCPServer:
                             with open(script_path, "w", encoding="utf-8") as f:
                                 f.write(f"#!/bin/bash\nulimit -t {cpu_limit_secs}\nulimit -v {memory_kb}\ncd \"$(dirname \"$0\")\"\n{cmd}\n")
                             try:
-                                os.chmod(script_path, 0o755)
+                                os.chmod(script_path, 0o700)  # owner-only rwx; avoid world-executable script
                             except Exception as e:
                                 _logger.debug(f"Failed to chmod script (non-critical): {e}")
                             exec_cmd = ["/bin/bash", script_path]
@@ -490,9 +490,9 @@ class MCPManager:
             env = scfg.get("env", {})
             client = MCPClient(sname, cmd, args, env)
             self.servers[sname] = client
-            asyncio.create_task(client.start())
+            _task = asyncio.create_task(client.start())
 
-    async def add_server(self, name: str, command: str, args: list[str] = None, env: dict = None):
+    async def add_server(self, name: str, command: str, args: list[str] | None = None, env: dict | None = None):
         self.load_config()
         if "servers" not in self.config:
             self.config["servers"] = {}
@@ -537,7 +537,7 @@ class MCPManager:
                 print(f"[MCP Manager] Failed listing tools from {sname}: {e}")
         return all_tools
 
-    async def execute_tool(self, namespaced_name: str, arguments: dict, conversation_id: str = None) -> dict:
+    async def execute_tool(self, namespaced_name: str, arguments: dict, conversation_id: str | None = None) -> dict:
         if "__" not in namespaced_name:
             return {"isError": True, "content": [{"type": "text", "text": f"Error: Invalid tool name format '{namespaced_name}'"}]}
 

@@ -15,7 +15,7 @@ PROMPT_LAYER_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."
 async def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
     try:
         conn = asyncio.open_connection(host, port)
-        reader, writer = await asyncio.wait_for(conn, timeout=timeout)
+        _reader, writer = await asyncio.wait_for(conn, timeout=timeout)
         writer.close()
         await writer.wait_closed()
         return True
@@ -120,7 +120,7 @@ async def detect_local_ai_tools() -> list[dict]:
     # We can also check if `@anthropic-ai/claude-code` package or `claude-code-sdk` is installed
     sdk_installed = False
     try:
-        import claude_code_sdk
+        import claude_code_sdk  # noqa: F401
         sdk_installed = True
     except ImportError:
         pass

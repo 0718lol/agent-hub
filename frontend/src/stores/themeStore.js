@@ -6,7 +6,7 @@ function getInitialTheme() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored === 'light' || stored === 'dark') return stored
-  } catch {}
+  } catch (_e) { /* ignore storage errors */ }
   return 'light'
 }
 
@@ -17,7 +17,7 @@ export const useThemeStore = create((set) => ({
       const next = state.theme === 'light' ? 'dark' : 'light'
       try {
         localStorage.setItem(STORAGE_KEY, next)
-      } catch {}
+      } catch (_e) { /* ignore storage errors */ }
       return { theme: next }
     }),
 }))

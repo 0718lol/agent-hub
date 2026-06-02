@@ -3,15 +3,14 @@
 Pure logic tests: no real filesystem writes, no network.
 """
 
-import sys
 import os
-from unittest.mock import patch, MagicMock
+import sys
+from unittest.mock import patch
 
 # Ensure the backend app package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.tools.file_ops import _safe_path
-
 
 # ============================================================
 # _safe_path tests

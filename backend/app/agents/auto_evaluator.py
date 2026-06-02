@@ -149,7 +149,7 @@ async def llm_as_a_judge_scoring(task: str, solution: str, llm_client: Any) -> d
             if json_match:
                 result = json.loads(json_match.group())
             else:
-                raise ValueError(f"无法从响应中提取评分 JSON: {response_text[:200]}")
+                raise ValueError(f"无法从响应中提取评分 JSON: {response_text[:200]}") from None
 
         # 校验必要字段
         if "total_score" not in result or "dimensions" not in result:

@@ -1,9 +1,10 @@
 """AgentHub backend test configuration and fixtures."""
+import asyncio
 import os
 import sys
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-import asyncio
-from unittest.mock import MagicMock, AsyncMock
 
 # Ensure backend is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
