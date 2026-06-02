@@ -7,6 +7,8 @@ dist/
 .vite/
 *.egg-info/
 *.db
+*.db-shm
+*.db-wal
 llm_config.json
 
 venv/
