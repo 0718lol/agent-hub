@@ -1,9 +1,11 @@
 """Tests for config persistence module."""
-import os
 import json
-import pytest
+import os
 import tempfile
-from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config, load_llm_config
+
+import pytest
+
+from app.core.config_persistence import get_hil_settings, load_llm_config, save_hil_settings, save_llm_config
 
 
 @pytest.fixture
@@ -43,6 +45,7 @@ def test_llm_config_save_and_load(temp_config_dir, monkeypatch):
     monkeypatch.setattr(cp, "LLM_CONFIG_PATH", config_path)
 
     from unittest.mock import MagicMock
+
     from app.core.config import Settings
 
     mock_client = MagicMock()

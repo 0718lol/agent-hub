@@ -1,9 +1,10 @@
 """Debate harness end-to-end test (encoding-safe for Windows GBK)."""
 import asyncio
-import websockets
 import json
-import time
 import sys
+import time
+
+import websockets
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
@@ -18,7 +19,7 @@ async def test():
         }
         await ws.send(json.dumps(msg))
         start = time.time()
-        print(f'[0.0s] Sent, waiting for debate...')
+        print('[0.0s] Sent, waiting for debate...')
 
         debate_found = False
         while not debate_found:
@@ -52,7 +53,7 @@ async def test():
                     elapsed = time.time() - start
                     print(f'[{elapsed:.1f}s] WARNING: Normal agent flow started (harness failed?)')
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 elapsed = time.time() - start
                 print(f'[{elapsed:.1f}s] ...waiting...')
                 if elapsed > 300:

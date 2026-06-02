@@ -1,6 +1,7 @@
 """Tests for API health and root endpoints."""
+from httpx import ASGITransport, AsyncClient
+
 import pytest
-from httpx import AsyncClient, ASGITransport
 
 
 @pytest.fixture
@@ -8,7 +9,8 @@ def app():
     """Create a test app instance without full initialization."""
     # We test the routers directly to avoid full DB/LLM init
     from fastapi import FastAPI
-    from app.routers import conversations, quality, webhook, sandbox, benchmark
+
+    from app.routers import benchmark, conversations, quality, sandbox, webhook
 
     app = FastAPI()
     app.include_router(conversations.router, prefix="/api")

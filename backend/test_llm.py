@@ -1,6 +1,5 @@
 import asyncio
 from app.core.llm_client import llm_client
-from app.main import _load_llm_config
 
 print("configured:", llm_client.is_configured())
 print("provider:", llm_client.provider)
