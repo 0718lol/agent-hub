@@ -41,6 +41,7 @@
     "*.min.js",
     "**/*.test.js",
     "**/*.test.jsx",
-    "**/__mocks__/**"
+    "**/__mocks__/**",
+    "**/ErrorBoundary.jsx"
   ]
 }
