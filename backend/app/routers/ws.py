@@ -1,5 +1,6 @@
 ﻿"""WebSocket endpoint for real-time agent communication."""
 import asyncio
+import contextlib
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -9,7 +10,7 @@ from app.core.config import settings
 from app.core.llm_client import llm_client
 from app.core.logging_config import get_logger
 from app.core.websocket import manager
-from app.routers.harness_handler import handle_verdict
+from app.routers.harness_handler import handle_verdict, try_intercept_with_harness
 from app.services.agent_orchestrator import (
     _stop_events,
     get_agents,
