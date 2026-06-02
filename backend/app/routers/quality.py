@@ -1,4 +1,4 @@
-﻿"""Quality gate settings and evaluation endpoints."""
+"""Quality gate settings and evaluation endpoints."""
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
@@ -34,11 +34,16 @@ async def update_quality_settings(s: QualityGateSettings, qg: QualityGate = Depe
     return {"status": "ok", "best_of_n": qg.best_of_n}
 
 
+class EvaluateRequest(BaseModel):
+    text: str
+    agent_id: str = ""
+
+
 @router.post("/quality/evaluate")
-async def evaluate_text(body: dict, qg: QualityGate = Depends(get_quality_gate)):
+async def evaluate_text(body: EvaluateRequest, qg: QualityGate = Depends(get_quality_gate)):
     """Manual quality evaluation endpoint. Body: {"text": "...", "agent_id": "..."}"""
-    text = body.get("text", "")
-    agent_id = body.get("agent_id", "")
+    text = body.text
+    agent_id = body.agent_id
     if not text:
         return {"error": "text is required"}
     report = qg.evaluate(text, agent_id)

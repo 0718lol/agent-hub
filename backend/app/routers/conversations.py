@@ -1,5 +1,6 @@
 """Conversation and message CRUD endpoints."""
 from fastapi import APIRouter, Query
+from fastapi import Query
 
 from app.core.async_wrappers import (
     async_clear_messages,
@@ -17,7 +18,7 @@ async def list_conversations():
 
 
 @router.get("/conversations/{conversation_id}/messages")
-async def list_messages(conversation_id: str, limit: int = 100):
+async def list_messages(conversation_id: str, limit: int = Query(default=100, ge=1, le=500)):
     return await async_get_messages(conversation_id, limit)
 
 

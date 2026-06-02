@@ -23,10 +23,14 @@ async def get_sandbox_commits(conversation_id: str):
         return {"error": str(e), "commits": []}
 
 
+class SandboxRollbackRequest(BaseModel):
+    commit_hash: str
+
+
 @router.post("/sandbox/{conversation_id}/rollback")
-async def rollback_sandbox(conversation_id: str, body: dict):
+async def rollback_sandbox(conversation_id: str, body: SandboxRollbackRequest):
     """Trigger manual Git time-travel rollback for visual sandbox recovery."""
-    commit_hash = body.get("commit_hash")
+    commit_hash = body.commit_hash
     if not commit_hash:
         return {"status": "error", "message": "Missing commit_hash parameter"}
 
