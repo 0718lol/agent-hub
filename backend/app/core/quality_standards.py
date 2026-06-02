@@ -101,7 +101,7 @@ def _check_html_has_style(text: str) -> RuleResult:
 
 
 def _check_code_not_empty(text: str) -> RuleResult:
-    lines = [l.strip() for l in text.strip().split('\n') if l.strip() and not l.strip().startswith(('#', '//'))]
+    lines = [lst.strip() for lst in text.strip().split('\n') if lst.strip() and not lst.strip().startswith(('#', '//'))]
     if len(lines) < 3:
         return RuleResult(False, "code_not_empty",
                           "代码内容过少（有效行 < 3），疑似未完成", "error")
@@ -119,7 +119,7 @@ def _check_python_has_error_handling(text: str) -> RuleResult:
 
 
 def _check_api_has_status_codes(text: str) -> RuleResult:
-    if re.search(r'(status_code|HTTPException|Response|@app\.|@router\.)', text):
+    if re.search(r'(status_code|HTTPException|Response|@app\.|@router\.)', text):  # noqa: SIM102
         if not re.search(r'(400|401|403|404|422|500|HTTPException)', text):
             return RuleResult(False, "api_status_codes",
                               "API 代码缺少错误状态码处理（400/404/500）", "warning")
@@ -238,7 +238,7 @@ STANDARDS = {
 
 def detect_output_type(text: str, agent_id: str = "") -> str:
     """Auto-detect output type from content and agent."""
-    if agent_id in ("agent_frontend", "agent_designer"):
+    if agent_id in ("agent_frontend", "agent_designer"):  # noqa: SIM102
         if re.search(r'<html|<body|<div|<style', text, re.IGNORECASE):
             return "html"
     if agent_id == "agent_backend":

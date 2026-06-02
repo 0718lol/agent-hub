@@ -1,11 +1,14 @@
 ﻿"""Benchmark execution and status endpoints."""
 import asyncio
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from app.core.benchmark import run_benchmark, get_current_run, BENCHMARK_CASES
+
+from app.core.benchmark import BENCHMARK_CASES, get_current_run, run_benchmark
 
 router = APIRouter(tags=["benchmark"])
 from app.core.logging_config import get_logger
+
 logger = get_logger("benchmark")
 
 # Module-level reference to prevent GC of background benchmark task.

@@ -10,12 +10,13 @@ Collects:
   - Structured nested child spans for LLM, Tools, and RAG execution (APM Tracking)
 """
 
-import time
 import contextvars
 import logging
-from dataclasses import dataclass, field
-from typing import Optional, Any, List
+import time
 from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("metrics")
@@ -35,11 +36,11 @@ class TraceSpan(BaseModel):
     end_time: float = 0.0
     duration_ms: int = 0
     status: str = "success"  # success | error
-    input_data: Optional[Any] = None
-    output_data: Optional[Any] = None
+    input_data: Any | None = None
+    output_data: Any | None = None
     metadata: dict = Field(default_factory=dict)
 
-    def finish(self, output_data: Any = None, status: str = "success", metadata: dict = None):
+    def finish(self, output_data: Any = None, status: str = "success", metadata: dict | None = None):
         self.end_time = time.time()
         self.duration_ms = int((self.end_time - self.start_time) * 1000)
         self.status = status
@@ -76,7 +77,7 @@ class TraceStep:
         self.tokens_used = tokens
         self.quality_score = score
         self.detail = detail
-        
+
         # Reset the active step context variable if it matches this step
         if active_step_var.get() == self:
             active_step_var.set(None)
@@ -117,10 +118,10 @@ class TaskTrace:
     def finish(self):
         self.total_duration_ms = int((time.time() - self.start_time) * 1000)
         self.total_tokens = sum(s.tokens_used for s in self.steps)
-        
+
         # Export completed trace data asynchronously in the background
         metrics._export_to_langfuse(self)
-        
+
         # Reset context variable if it matches this trace
         if active_trace_var.get() == self:
             active_trace_var.set(None)
@@ -210,24 +211,23 @@ class MetricsCollector:
     def _export_to_langfuse(self, trace: TaskTrace):
         """Asynchronously export completed trace to Langfuse APM Collector if environment keys are configured."""
         import os
-        import json
         import threading
-        
+
         lf_public = os.environ.get("AGENTHUB_LANGFUSE_PUBLIC_KEY")
         lf_secret = os.environ.get("AGENTHUB_LANGFUSE_SECRET_KEY")
         lf_host = os.environ.get("AGENTHUB_LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
-        
+
         if not (lf_public and lf_secret):
             return
-            
+
         def _post_payload():
             try:
                 import httpx
                 url = f"{lf_host}/api/public/ingestion"
                 auth = (lf_public, lf_secret)
-                
+
                 batch = []
-                
+
                 # 1. Main Trace event
                 batch.append({
                     "id": f"trace-{trace.task_id}",
@@ -243,7 +243,7 @@ class MetricsCollector:
                         }
                     }
                 })
-                
+
                 # 2. Spans for each TraceStep and children spans
                 for step in trace.steps:
                     step_id = f"step-{step.agent_id}-{step.start_time}"
@@ -263,7 +263,7 @@ class MetricsCollector:
                             }
                         }
                     })
-                    
+
                     # Children Spans (LLM / Tool / RAG)
                     for span in step.spans:
                         span_id = f"span-{span.name}-{span.start_time}"
@@ -281,17 +281,17 @@ class MetricsCollector:
                                 "metadata": span.metadata
                             }
                         })
-                        
+
                 payload = {"batch": batch}
                 headers = {"Content-Type": "application/json"}
-                
+
                 with httpx.Client(timeout=10.0) as client:
                     resp = client.post(url, json=payload, auth=auth, headers=headers)
                     if resp.status_code != 200:
                         logger.warning(f"Langfuse APM export failed with status {resp.status_code}: {resp.text}")
             except Exception as ex:
                 logger.warning(f"Failed to post APM trace to Langfuse: {ex}")
-                
+
         thread = threading.Thread(target=_post_payload, daemon=True)
         thread.start()
 

@@ -1,11 +1,13 @@
 """Code sandbox execution and healing endpoints."""
-import re
 import logging
-from fastapi import APIRouter, UploadFile, File
+import re
+
+from fastapi import APIRouter
 from pydantic import BaseModel
-from app.core.sandbox import execute_code
-from app.core.metrics import metrics
+
 from app.core.llm_client import llm_client
+from app.core.metrics import metrics
+from app.core.sandbox import execute_code
 
 logger = logging.getLogger("routers.sandbox")
 router = APIRouter(tags=["sandbox"])

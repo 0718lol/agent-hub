@@ -1,7 +1,7 @@
-import json
 import asyncio
+import json
 import logging
-from typing import Dict, Set, Optional
+
 from fastapi import WebSocket
 
 logger = logging.getLogger("websocket_manager")
@@ -9,9 +9,9 @@ logger = logging.getLogger("websocket_manager")
 
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: Dict[str, Set[WebSocket]] = {}
-        self.locks: Dict[WebSocket, asyncio.Lock] = {}
-        self.pubsub_task: Optional[asyncio.Task] = None
+        self.active_connections: dict[str, set[WebSocket]] = {}
+        self.locks: dict[WebSocket, asyncio.Lock] = {}
+        self.pubsub_task: asyncio.Task | None = None
 
     async def connect(self, websocket: WebSocket, conversation_id: str):
         await websocket.accept()
@@ -36,7 +36,7 @@ class ConnectionManager:
         If Redis is online, publishes to Redis Pub/Sub. Otherwise, broadcasts locally.
         """
         from app.core.redis import redis_manager
-        
+
         if await redis_manager.check_connection():
             try:
                 client = redis_manager.get_client()
@@ -66,7 +66,7 @@ class ConnectionManager:
                             await asyncio.wait_for(connection.send_text(data), timeout=5.0)
                     else:
                         await asyncio.wait_for(connection.send_text(data), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(f"WebSocket send timeout for connection in conv {conversation_id}, removing stale connection")
                     stale_connections.append(connection)
                 except Exception:
@@ -80,11 +80,12 @@ class ConnectionManager:
         """Background listener subscribing to the Redis broadcast channel.
         Processes distributed broadcast events and forwards them locally.
         """
-        from app.core.redis import redis_manager
         from redis.exceptions import ConnectionError, TimeoutError
 
+        from app.core.redis import redis_manager
+
         logger.info("Initializing Redis Pub/Sub WebSocket listener background task...")
-        
+
         while True:
             if not await redis_manager.check_connection():
                 # Redis not online, wait and retry later

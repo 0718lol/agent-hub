@@ -1,15 +1,16 @@
-import sys
-import os
-import json
 import asyncio
+import json
+import os
+import sys
 import traceback
 
 # Setup import path to make 'app' discoverable
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.core.llm_client import llm_client
-from app.tools.judge_tools import QualityJudgeTool, ComplexityJudgeTool, AlignmentJudgeTool
 from app.core.logging_config import get_logger
+from app.tools.judge_tools import AlignmentJudgeTool, ComplexityJudgeTool, QualityJudgeTool
+
 logger = get_logger("mcp_server")
 
 async def handle_request(req: dict) -> dict:
@@ -87,7 +88,7 @@ async def handle_request(req: dict) -> dict:
             config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "llm_config.json"))
             if os.path.exists(config_path):
                 try:
-                    with open(config_path, "r", encoding="utf-8") as f:
+                    with open(config_path, encoding="utf-8") as f:
                         cfg = json.load(f)
                         llm_client.configure(
                             provider=cfg.get("provider", "openai"),
@@ -123,7 +124,7 @@ async def handle_request(req: dict) -> dict:
             # Format JudgeResult to standard MCP content output
             score_text = f"【决策结论】: {res.decision}\n【综合得分】: {res.score}分\n【评审结论】: {res.reason}"
             signals_text = f"\n【维度数据】: {json.dumps(res.signals, ensure_ascii=False, indent=2)}"
-            
+
             return {
                 "jsonrpc": "2.0",
                 "result": {
@@ -145,7 +146,7 @@ async def handle_request(req: dict) -> dict:
                     "content": [
                         {
                             "type": "text",
-                            "text": f"Error executing tool {tool_name}: {type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+                            "text": f"Error executing tool {tool_name}: {type(e).__name__}: {e!s}\n{traceback.format_exc()}"
                         }
                     ]
                 },
@@ -168,7 +169,7 @@ async def main():
         sys.stdout.reconfigure(encoding='utf-8')
     if hasattr(sys.stdin, 'reconfigure'):
         sys.stdin.reconfigure(encoding='utf-8')
-    
+
     # Run standard input reading loop
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader()
@@ -192,7 +193,7 @@ async def main():
                 "jsonrpc": "2.0",
                 "error": {
                     "code": -32603,
-                    "message": f"Internal JSON-RPC parse error: {str(e)}"
+                    "message": f"Internal JSON-RPC parse error: {e!s}"
                 },
                 "id": None
             }

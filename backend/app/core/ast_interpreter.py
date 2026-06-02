@@ -7,12 +7,11 @@ and limiting loop iterations to avoid denial-of-service resource exhaustion.
 """
 
 import ast
-import operator
-import sys
-import io
 import asyncio
-import builtins as _builtins
-from typing import Dict, Any, Callable
+import io
+import operator
+from collections.abc import Callable
+from typing import Any
 
 
 def _make_safe_builtin(fn):
@@ -34,7 +33,7 @@ class ContinueException(Exception):
 class SafeASTInterpreter:
     """A highly secure, zero-dependency asynchronous AST interpreter for Python."""
 
-    def __init__(self, allowed_tools: Dict[str, Callable] = None, max_iterations: int = 1000):
+    def __init__(self, allowed_tools: dict[str, Callable] | None = None, max_iterations: int = 1000):
         self.allowed_tools = allowed_tools or {}
         self.variables = {}
         self.iteration_count = 0
@@ -84,7 +83,7 @@ class SafeASTInterpreter:
                 "success": False,
                 "stdout": self._output_buffer.getvalue(),
                 "result": None,
-                "error": f"{type(e).__name__}: {str(e)}"
+                "error": f"{type(e).__name__}: {e!s}"
             }
         finally:
             self._output_buffer = None
@@ -115,7 +114,7 @@ class SafeASTInterpreter:
             return self.variables[node.id]
         if node.id in self.allowed_tools:
             return self.allowed_tools[node.id]
-        
+
         # Inject standard whitelisted built-in functions/constants
         safe_builtins = {
             "print": self._safe_print,
@@ -206,7 +205,7 @@ class SafeASTInterpreter:
             ast.In: lambda a, b: a in b,
             ast.NotIn: lambda a, b: a not in b
         }
-        for op, comparator in zip(node.ops, node.comparators):
+        for op, comparator in zip(node.ops, node.comparators, strict=False):
             right = await self.visit(comparator)
             op_type = type(op)
             if op_type not in ops:
@@ -275,12 +274,12 @@ class SafeASTInterpreter:
         func = await self.visit(node.func)
         args = [await self.visit(arg) for arg in node.args]
         kwargs = {kw.arg: await self.visit(kw.value) for kw in node.keywords}
-        
+
         # Block calling dangerous private built-in attributes
         func_name = getattr(func, "__name__", "")
         if func_name and func_name.startswith("__"):
             raise PermissionError(f"🔒 安全拦截: 严禁调用私有方法 '{func_name}'！")
-            
+
         if asyncio.iscoroutinefunction(func):
             return await func(*args, **kwargs)
         else:
@@ -324,7 +323,7 @@ class SafeASTInterpreter:
         values = []
         for v in node.values:
             values.append(await self.visit(v))
-        return dict(zip(keys, values))
+        return dict(zip(keys, values, strict=False))
 
     async def visit_Set(self, node: ast.Set) -> Any:
         res = set()

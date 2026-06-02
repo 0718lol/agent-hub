@@ -1,4 +1,3 @@
-import random
 from .base import BaseAgent
 
 
@@ -28,7 +27,7 @@ class DesignerAgent(BaseAgent):
         "\n  一次回复最多一个 ask_user；如果用户已说清风格诉求就不要用。"
     )
 
-    def _generate_reply(self, message: str, context: list = None) -> str:
+    def _generate_reply(self, message: str, context: list | None = None) -> str:
         msg = message.lower()
         if any(kw in msg for kw in ["原型", "mockup", "线框", "草图", "页面设计", "海报", "宣传", "广告"]):
             return self._mockup_reply(msg)

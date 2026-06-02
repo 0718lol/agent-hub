@@ -1,12 +1,11 @@
 """E2B-Style Code Interpreter Tool — safe subprocess-based Python environment with visual plot capture."""
 
+import asyncio
+import logging
 import os
 import re
 import sys
-import asyncio
-import logging
-import shutil
-from typing import Dict, Any
+
 from .registry import AgentTool, ToolResult, register_tool
 
 _logger = logging.getLogger("code_interpreter_tools")
@@ -41,17 +40,17 @@ def prepend_visual_hook(user_code: str) -> str:
         "except Exception:\n"
         "    pass\n"
     )
-    
+
     lines = user_code.splitlines(keepends=True)
     insert_idx = 0
     in_docstring = False
     docstring_char = None
-    
+
     for i, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
             continue
-            
+
         # Handle docstrings
         if not in_docstring:
             if stripped.startswith('"""'):
@@ -70,19 +69,19 @@ def prepend_visual_hook(user_code: str) -> str:
             if stripped.endswith(docstring_char):
                 in_docstring = False
             continue
-            
+
         # Handle __future__ imports
         if stripped.startswith("from __future__"):
             insert_idx = i + 1
             continue
-            
+
         # Ignore comments
         if stripped.startswith("#"):
             continue
-            
+
         # If we reach any other code, stop pushing the insert index
         break
-        
+
     lines.insert(insert_idx, "\n# E2B Visual Telemetry Hook\n" + hook + "\n# End of Hook\n\n")
     return "".join(lines)
 
@@ -131,7 +130,7 @@ class E2BPythonInterpreterTool(AgentTool):
         try:
             with open(script_path, "w", encoding="utf-8") as f:
                 f.write(executable_code)
-        except IOError as ioe:
+        except OSError as ioe:
             return ToolResult(success=False, error=f"写入临时执行文件失败: {ioe}")
 
         # 4. Safely execute code via async subprocess python runner
@@ -148,7 +147,7 @@ class E2BPythonInterpreterTool(AgentTool):
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(), timeout=15.0
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.wait()
                 return ToolResult(
@@ -168,7 +167,7 @@ class E2BPythonInterpreterTool(AgentTool):
         # 5. Extract images and sanitize stdout
         stdout_raw = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
         stderr_raw = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
-        
+
         # Pull out any embedded plots
         images = []
         for match in IMAGE_CAPTURE_RE.finditer(stdout_raw):

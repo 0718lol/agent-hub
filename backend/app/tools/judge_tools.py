@@ -1,11 +1,10 @@
 """Concrete JudgeTool implementations wrapping existing evaluation logic."""
 
-import re
 import json
+import re
 from typing import Any
 
 from app.tools.base import JudgeResult
-
 
 # ============================================================
 # Tool 1: InteractionJudgeTool
@@ -83,7 +82,7 @@ class ComplexityJudgeTool:
                 if match:
                     result = json.loads(match.group())
                 else:
-                    raise ValueError(f"Cannot parse JSON: {response_text[:200]}")
+                    raise ValueError(f"Cannot parse JSON: {response_text[:200]}") from None
 
             score = max(0, min(100, result.get("score", 50)))
             return JudgeResult(
@@ -200,7 +199,7 @@ class AlignmentJudgeTool:
                 if match:
                     result = json.loads(match.group())
                 else:
-                    raise ValueError(f"Cannot parse JSON: {response_text[:200]}")
+                    raise ValueError(f"Cannot parse JSON: {response_text[:200]}") from None
 
             score = max(0, min(100, result.get("score", 50)))
             return JudgeResult(
@@ -239,6 +238,7 @@ class UserInteractionJudgeTool:
 
     async def run(self, input_data: dict, llm_client: Any = None) -> JudgeResult:
         import asyncio
+
         from app.core.websocket import manager
 
         question = input_data.get("question", "请问哪种方案合适？")

@@ -1,8 +1,8 @@
-import logging
 import json
+import logging
 import re
-import asyncio
-from typing import Dict, Any, List, Optional
+from typing import Any
+
 from app.core.websocket import manager
 
 _logger = logging.getLogger("pipeline")
@@ -15,7 +15,7 @@ class StreamContext:
         self.conversation_id: str = conversation_id
         self.agent_id: str = agent_id
         self.manager = websocket_manager
-        self.state: Dict[str, Any] = {}
+        self.state: dict[str, Any] = {}
 
 
 class StreamMiddleware:
@@ -44,7 +44,7 @@ class StreamPipeline:
     """
     def __init__(self, context: StreamContext):
         self.context = context
-        self.middlewares: List[StreamMiddleware] = []
+        self.middlewares: list[StreamMiddleware] = []
 
     def add_middleware(self, middleware: StreamMiddleware) -> "StreamPipeline":
         self.middlewares.append(middleware)

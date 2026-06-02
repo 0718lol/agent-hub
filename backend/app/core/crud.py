@@ -6,22 +6,28 @@ imported from :mod:`app.core.database` (which must be defined before this
 module is first imported).
 """
 import json
-import re
-import os
 import logging
+import re
 
 _crud_logger = logging.getLogger("crud")
-import threading
 import functools
-from datetime import datetime, timezone
-from typing import Optional, List, Any
+import threading
+from datetime import UTC, datetime
+
 from sqlmodel import Session, select
 
 from app.core._engine import engine
-
 from app.core.models import (
-    Conversation, Message, CustomAgent, ProjectMemory, UploadedFile,
-    CronTask, KnowledgeDoc, ProjectEventStream, PendingHil, Artifact,
+    Artifact,
+    Conversation,
+    CronTask,
+    CustomAgent,
+    KnowledgeDoc,
+    Message,
+    PendingHil,
+    ProjectEventStream,
+    ProjectMemory,
+    UploadedFile,
 )
 
 # ============================================================
@@ -111,7 +117,7 @@ def get_conversations():
         return result
 
 
-def search_messages(query: str, conversation_id: str = None, limit: int = 50) -> list[dict]:
+def search_messages(query: str, conversation_id: str | None = None, limit: int = 50) -> list[dict]:
     """Full-text search across message content using FTS5."""
     try:
         from sqlalchemy import text
@@ -254,7 +260,7 @@ def delete_custom_agent(agent_id: str):
 
 @db_write_transaction
 def create_conversation(conv_id: str, conv_type: str, name: str, avatar: str,
-                        agent_id: str = None, agents: list[str] = None, preview: str = ""):
+                        agent_id: str | None = None, agents: list[str] | None = None, preview: str = ""):
     with Session(engine) as session:
         existing = session.get(Conversation, conv_id)
         if not existing:
@@ -315,8 +321,8 @@ def get_all_uploaded_files() -> list[dict]:
 @db_write_transaction
 def save_cron_task(task_id: str, conversation_id: str, agent_id: str,
                    task_prompt: str, interval_seconds: int,
-                   status: str = "active", last_run: str = None,
-                   next_run: str = None):
+                   status: str = "active", last_run: str | None = None,
+                   next_run: str | None = None):
     with Session(engine) as session:
         task = CronTask(
             id=task_id,
@@ -332,7 +338,7 @@ def save_cron_task(task_id: str, conversation_id: str, agent_id: str,
         session.commit()
 
 
-def get_cron_tasks(conversation_id: str = None) -> list[dict]:
+def get_cron_tasks(conversation_id: str | None = None) -> list[dict]:
     with Session(engine) as session:
         if conversation_id:
             statement = select(CronTask).where(
@@ -438,7 +444,7 @@ def save_memory_item(conversation_id: str, key: str, value: str, source: str = "
         if existing:
             existing.value = value
             existing.source = source
-            existing.updated_at = datetime.now(timezone.utc).isoformat()
+            existing.updated_at = datetime.now(UTC).isoformat()
             session.add(existing)
         else:
             item = ProjectMemory(
@@ -619,7 +625,7 @@ def delete_hil_checkpoint(conversation_id: str):
 
 @db_write_transaction
 def save_artifact(conversation_id: str, agent_id: str, language: str,
-                  code: str, name: str = None) -> dict:
+                  code: str, name: str | None = None) -> dict:
     if not name:
         if language.lower() in ("python", "py"):
             class_match = re.search(r"class\s+(\w+)", code)
@@ -669,7 +675,7 @@ def save_artifact(conversation_id: str, agent_id: str, language: str,
         return art.model_dump()
 
 
-def get_artifacts(conversation_id: str = None,
+def get_artifacts(conversation_id: str | None = None,
                   limit: int = 50) -> list[dict]:
     with Session(engine) as session:
         if conversation_id:
@@ -687,12 +693,12 @@ def get_artifacts(conversation_id: str = None,
 @db_write_transaction
 def update_latest_artifact_quality(conversation_id: str, agent_id: str,
                                     score: int, sandbox_status: str,
-                                    sandbox_output: str = None):
+                                    sandbox_output: str | None = None):
     with Session(engine) as session:
         statement = select(Artifact).where(
             Artifact.conversation_id == conversation_id,
             Artifact.agent_id == agent_id,
-            Artifact.quality_score == None,
+            Artifact.quality_score is None,
         )
         results = session.exec(statement).all()
         for art in results:
@@ -703,7 +709,7 @@ def update_latest_artifact_quality(conversation_id: str, agent_id: str,
         session.commit()
 
 
-def get_artifacts_grouped(conversation_id: str = None,
+def get_artifacts_grouped(conversation_id: str | None = None,
                           limit: int = 50) -> list[dict]:
     with Session(engine) as session:
         if conversation_id:

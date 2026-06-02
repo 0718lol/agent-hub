@@ -18,9 +18,9 @@ Output (production JSON):
 Output (development console):
     [info] (abc123) task_completed  duration_ms=150 agent_id=agent_pm
 """
+import logging
 import os
 import sys
-import logging
 import uuid
 from contextvars import ContextVar
 
@@ -36,7 +36,7 @@ def get_request_id() -> str:
     return _request_id_ctx.get()
 
 
-def set_request_id(request_id: str = None) -> str:
+def set_request_id(request_id: str | None = None) -> str:
     """Set the request ID in context. Generates a new one if not provided."""
     rid = request_id or uuid.uuid4().hex[:12]
     _request_id_ctx.set(rid)
@@ -165,7 +165,7 @@ def get_logger(name: str = "app"):
 class RequestIdMiddleware:
     """Pure ASGI middleware that assigns a unique request_id to every HTTP request
     and injects it into the logging context for log correlation.
-    
+
     Uses raw ASGI instead of BaseHTTPMiddleware for better performance
     (avoids per-request coroutine wrapping overhead).
     """

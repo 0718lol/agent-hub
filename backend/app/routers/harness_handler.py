@@ -12,9 +12,9 @@ main.py 只需调用本模块的两个函数，不改动原有逻辑。
 import json
 from typing import Any
 
-from app.agents.harness_engine import evaluate_interaction_need, run_debate_arena, format_debate_response
-from app.core.websocket import ConnectionManager
+from app.agents.harness_engine import evaluate_interaction_need, format_debate_response, run_debate_arena
 from app.core.async_wrappers import async_save_message
+from app.core.websocket import ConnectionManager
 
 
 async def try_intercept_with_harness(

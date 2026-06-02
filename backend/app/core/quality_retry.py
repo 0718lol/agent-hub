@@ -96,8 +96,8 @@ async def evaluate_and_retry(
     raw_output: str,
     llm_client: Any,
     manager: ConnectionManager,
-    stop_event: asyncio.Event = None,
-    history: list = None,
+    stop_event: asyncio.Event | None = None,
+    history: list | None = None,
 ) -> dict:
     """
     对 Agent 输出执行质量评估，失败则触发反思重试。
@@ -313,7 +313,6 @@ Quality Retry — 自动反思与重试 (Self-Reflection & Retry) 机制
 import asyncio
 from typing import Any
 
-from app.agents.auto_evaluator import execute_automated_evaluation
 from app.core.websocket import ConnectionManager
 
 # 硬编码最大重试次数
@@ -323,15 +322,15 @@ MAX_RETRIES = 1
 SKIP_AGENTS = {"agent_pm", "agent_builder"}
 
 
-async def evaluate_and_retry(
+async def evaluate_and_retry( # noqa: F811
     conversation_id: str,
     agent,
     task: str,
     raw_output: str,
     llm_client: Any,
     manager: ConnectionManager,
-    stop_event: asyncio.Event = None,
-    history: list = None,
+    stop_event: asyncio.Event | None = None,
+    history: list | None = None,
 ) -> dict:
     """
     对 Agent 输出执行质量评估，失败则触发反思重试。

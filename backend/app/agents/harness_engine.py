@@ -10,9 +10,7 @@ Harness Engine — 人类在环多 Agent 辩论评估沙盒
 """
 
 import json
-import asyncio
 from typing import Any
-
 
 # ============================================================
 # Prompt 模板
@@ -133,7 +131,7 @@ async def evaluate_interaction_need(user_input: str, llm_client: Any) -> dict:
             if json_match:
                 result = json.loads(json_match.group())
             else:
-                raise ValueError(f"无法从响应中提取 JSON: {response_text[:200]}")
+                raise ValueError(f"无法从响应中提取 JSON: {response_text[:200]}") from None
 
         # 校验返回格式
         if "needs_interaction" not in result:

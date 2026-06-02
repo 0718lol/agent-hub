@@ -1,10 +1,11 @@
 """HTTP request tool -- allows agents to make HTTP calls to APIs."""
 
-import time
 import ipaddress
 import logging
-from urllib.parse import urlparse, urljoin
 import socket
+import time
+from urllib.parse import urljoin, urlparse
+
 from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_http_request")
@@ -19,7 +20,7 @@ _MAX_REDIRECTS = 5
 _BLOCKED_HOSTS = frozenset({
     "localhost",
     "127.0.0.1",
-    "0.0.0.0",
+    "0.0.0.0",  # nosec B104 — SSRF blocklist entry, not a bind address
     "metadata.google.internal",
     "169.254.169.254",
     "[::1]",
@@ -164,7 +165,7 @@ class HttpRequestTool(AgentTool):
             return ToolResult(success=False, error="不支持的 HTTP 方法: " + method)
 
         headers = params.get("headers", {})
-        body = params.get("body", None)
+        body = params.get("body")
         timeout = min(max(int(params.get("timeout", 15)), 1), 60)
 
         start = time.time()

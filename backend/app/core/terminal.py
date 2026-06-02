@@ -1,8 +1,7 @@
 import asyncio
+import logging
 import os
 import sys
-import logging
-from typing import Dict
 
 logger = logging.getLogger("core_terminal")
 
@@ -23,7 +22,7 @@ class StatefulTerminal:
             self.shell = "/bin/sh"
 
         logger.info(f"[StatefulTerminal] Starting stateful shell '{self.shell}' with args {self.args} for session {self.conversation_id} in {self.cwd}")
-        
+
         # Merge stderr into stdout so we capture absolutely everything!
         self.process = await asyncio.create_subprocess_exec(
             self.shell,
@@ -42,7 +41,7 @@ class StatefulTerminal:
             await self.start()
 
         sentinel = "___STATEFUL_TERM_SENTINEL_OK___"
-        
+
         # Build command sequence with sentinel print at the end
         if sys.platform == "win32":
             # PowerShell: execute command, then print sentinel
@@ -63,13 +62,13 @@ class StatefulTerminal:
                 if not line_bytes:
                     break
                 line = line_bytes.decode("utf-8", errors="replace")
-                
+
                 # Check if sentinel is reached
                 if sentinel in line:
                     break
-                
+
                 output_lines.append(line)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"[StatefulTerminal] Command timed out after {timeout} seconds")
             output_lines.append(f"\n⚠️ [Stateful Command timed out after {timeout} seconds]")
 
@@ -92,7 +91,7 @@ class StatefulTerminalManager:
     """Manages active, persistent terminal shell sessions mapped to conversation IDs."""
 
     def __init__(self):
-        self.sessions: Dict[str, StatefulTerminal] = {}
+        self.sessions: dict[str, StatefulTerminal] = {}
 
     async def get_or_create_session(self, conversation_id: str, default_cwd: str) -> StatefulTerminal:
         """Fetch existing stateful shell or start a new persistent session."""
@@ -111,7 +110,7 @@ class StatefulTerminalManager:
     async def close_all(self):
         """Cleanly stops all persistent shell processes on program exit."""
         logger.info("[StatefulTerminalManager] Cleaning up all stateful terminal processes...")
-        for conversation_id, terminal in list(self.sessions.items()):
+        for _conversation_id, terminal in list(self.sessions.items()):
             try:
                 await terminal.stop()
             except Exception as e:

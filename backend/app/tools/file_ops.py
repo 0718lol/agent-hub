@@ -1,8 +1,8 @@
 ﻿"""File operations tool — sandboxed file read/write/list for agents."""
 
-import os
-import time
 import logging
+import os
+
 from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_file_ops")
@@ -79,7 +79,7 @@ class FileReadTool(AgentTool):
             if size > _MAX_READ_SIZE:
                 return ToolResult(success=False, error=f"文件过大 ({size} bytes)，最大 {_MAX_READ_SIZE}")
 
-            with open(safe, "r", encoding="utf-8", errors="replace") as f:
+            with open(safe, encoding="utf-8", errors="replace") as f:
                 content = f.read()
 
             return ToolResult(
@@ -87,7 +87,7 @@ class FileReadTool(AgentTool):
                 data={"content": content, "path": filepath, "size": size},
             )
         except Exception as e:
-            return ToolResult(success=False, error=f"读取失败: {str(e)}")
+            return ToolResult(success=False, error=f"读取失败: {e!s}")
 
 
 class FileWriteTool(AgentTool):
@@ -138,7 +138,7 @@ class FileWriteTool(AgentTool):
                 data={"path": filepath, "size": len(content), "message": f"已写入 {filepath}"},
             )
         except Exception as e:
-            return ToolResult(success=False, error=f"写入失败: {str(e)}")
+            return ToolResult(success=False, error=f"写入失败: {e!s}")
 
 
 class FileListTool(AgentTool):
@@ -197,7 +197,7 @@ class FileListTool(AgentTool):
                 data={"files": tree, "count": len(tree), "root": dirpath},
             )
         except Exception as e:
-            return ToolResult(success=False, error=f"列目录失败: {str(e)}")
+            return ToolResult(success=False, error=f"列目录失败: {e!s}")
 
 
 # Auto-register on import
@@ -252,7 +252,7 @@ class FileViewWindowedTool(AgentTool):
             return ToolResult(success=False, error=f"不是文件: {filepath}")
 
         try:
-            with open(safe, "r", encoding="utf-8", errors="replace") as f:
+            with open(safe, encoding="utf-8", errors="replace") as f:
                 content = f.read()
 
             lines = content.splitlines()
@@ -282,7 +282,7 @@ class FileViewWindowedTool(AgentTool):
             for idx, line in enumerate(sliced_lines, start=start_line):
                 summary_lines.append(f"{idx:5d}: {line}")
             summary_lines.append("------------------------------------------------------------------")
-            
+
             scroll_up = "[Scroll up available]" if start_line > 1 else "[Start of file]"
             scroll_down = "[Scroll down available]" if end_line < total_lines else "[End of file]"
             summary_lines.append(f"{scroll_up} | {scroll_down}")
@@ -300,7 +300,7 @@ class FileViewWindowedTool(AgentTool):
                 }
             )
         except Exception as e:
-            return ToolResult(success=False, error=f"读取失败: {str(e)}")
+            return ToolResult(success=False, error=f"读取失败: {e!s}")
 
 
 class FileEditLineTool(AgentTool):
@@ -352,7 +352,7 @@ class FileEditLineTool(AgentTool):
             return ToolResult(success=False, error=f"文件不存在: {filepath}。行替换编辑器仅适用于编辑已有文件。")
 
         try:
-            with open(safe, "r", encoding="utf-8", errors="replace") as f:
+            with open(safe, encoding="utf-8", errors="replace") as f:
                 content = f.read()
 
             lines = content.splitlines(keepends=True)
@@ -370,7 +370,7 @@ class FileEditLineTool(AgentTool):
             workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
             sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conv_id)
             os.makedirs(sandbox_dir, exist_ok=True)
-            
+
             try:
                 from app.core.git_sandbox import git_checkpoint, git_rollback
                 await git_checkpoint(sandbox_dir, f"Pre-edit-line: {filepath}")
@@ -432,7 +432,7 @@ class FileEditLineTool(AgentTool):
             )
 
         except Exception as e:
-            return ToolResult(success=False, error=f"行级替换失败: {str(e)}")
+            return ToolResult(success=False, error=f"行级替换失败: {e!s}")
 
 
 register_tool(FileViewWindowedTool())

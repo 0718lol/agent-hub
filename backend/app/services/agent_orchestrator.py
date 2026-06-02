@@ -4,23 +4,26 @@ streaming agent replies, and checkpoint recovery.
 Extracted from main.py to keep the app factory focused on HTTP routes
 and middleware while this module owns the real-time agent coordination logic.
 """
+import asyncio
 import json
+import logging
 import re
 import uuid
-import asyncio
-import logging
 from typing import Any
 
-from app.core.websocket import manager
 from app.core.database import (
-    save_message, get_messages, get_pending_hil_checkpoint, resolve_hil_checkpoint,
-    save_artifact, update_latest_artifact_quality,
+    get_messages,
+    get_pending_hil_checkpoint,
+    resolve_hil_checkpoint,
+    save_artifact,
+    save_message,
+    update_latest_artifact_quality,
 )
-from app.core.config import settings
 from app.core.llm_client import llm_client
+from app.core.metrics import metrics
 from app.core.quality_gate import quality_gate
 from app.core.quality_retry import evaluate_and_retry
-from app.core.metrics import metrics
+from app.core.websocket import manager
 from app.services.agent_registry import agent_registry
 
 logger = logging.getLogger("agent_orchestrator")
@@ -112,10 +115,10 @@ async def _remove_custom_agent(agent_id: str):
 
 async def stream_agent_reply(
     conversation_id: str, agent, user_text: str,
-    stop_event: asyncio.Event = None, context: str = "",
+    stop_event: asyncio.Event | None = None, context: str = "",
 ) -> tuple[list[str], str]:
     """Stream agent reply. Returns (assigned_agent_ids, response_text)."""
-    AGENTS = get_agents()
+    get_agents()
     full_text = ""
     raw_text = ""
     buffer = ""
@@ -162,7 +165,7 @@ async def stream_agent_reply(
                     "stream": True,
                 })
 
-            best_output, best_report, candidates_summary = await quality_gate.best_of_n_generate(
+            best_output, _best_report, candidates_summary = await quality_gate.best_of_n_generate(
                 agent, effective_text,
                 agent_id=agent.agent_id,
                 history=history,

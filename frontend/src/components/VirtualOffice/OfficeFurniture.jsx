@@ -236,7 +236,7 @@ export function Treadmill({ width = 180, height = 150 }) {
       <rect x="10" y="24" width="160" height="12" fill="#1f2937" />
       <rect x="18" y="18" width="144" height="14" rx="2" fill="#0f172a" />
       <text x="34" y="29" fill="#22c55e" fontSize="9" fontFamily="monospace" fontWeight="600">5.2 km</text>
-      <text x="84" y="29" fill="#fde047" fontSize="9" fontFamily="monospace">12'30"</text>
+      <text x="84" y="29" fill="#fde047" fontSize="9" fontFamily="monospace">{'12\'30"'}</text>
       <text x="130" y="29" fill="#ef4444" fontSize="9" fontFamily="monospace">142</text>
 
       {/* 扶手 */}

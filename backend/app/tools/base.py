@@ -1,7 +1,7 @@
 """JudgeTool protocol — unified interface for all judgment tools."""
 
 from dataclasses import dataclass, field
-from typing import Protocol, Any
+from typing import Any, Protocol
 
 
 @dataclass

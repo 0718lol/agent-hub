@@ -5,25 +5,25 @@ This is the public entry-point for all database symbols.  It re-exports
 everything from :mod:`models`, :mod:`crud`, and :mod:`async_wrappers`
 so that ``from app.core.database import X`` continues to work unchanged.
 """
-import sqlite3
 import json
-import os
-from sqlalchemy import text
 import logging as _logging
+import os
+import sqlite3
+
+from sqlalchemy import text
 
 _db_logger = _logging.getLogger("database")
-from sqlmodel import SQLModel, Session
+from sqlmodel import Session, SQLModel
 
 # Engine is defined in _engine.py to break the circular dependency
 # between database.py and crud.py.
-from app.core._engine import engine, DB_PATH  # noqa: F401
-
+from app.core._engine import DB_PATH, engine
+from app.core.crud import *  # noqa: F403 -- brings in db_write_transaction
 
 # ============================================================
 # Re-export all public symbols for backward compatibility
 # ============================================================
-from app.core.models import *          # noqa: F401,F403
-from app.core.crud import *            # noqa: F401,F403 -- brings in db_write_transaction
+from app.core.models import *  # noqa: F403
 
 # ============================================================
 # Database Initialization
@@ -56,8 +56,8 @@ def init_db():
         _db_logger.warning(f"Failed to set WAL mode during init_db(): {e}")
 
     try:
-        from alembic.config import Config
         from alembic import command
+        from alembic.config import Config
         alembic_cfg = Config(
             os.path.join(os.path.dirname(__file__), '..', '..', 'alembic.ini')
         )

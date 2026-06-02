@@ -3,9 +3,9 @@ SQLModel table definitions for the AgentHub database.
 
 This module contains ONLY declarative table classes -- no engine, no CRUD, no I/O.
 """
-from datetime import datetime, timezone
-from typing import Optional
-from sqlmodel import SQLModel, Field, UniqueConstraint
+from datetime import UTC, datetime
+
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 
 class Conversation(SQLModel, table=True):
@@ -13,21 +13,21 @@ class Conversation(SQLModel, table=True):
     id: str = Field(primary_key=True)
     type: str
     name: str
-    avatar: Optional[str] = None
-    agent_id: Optional[str] = None
-    agents: Optional[str] = None
-    preview: Optional[str] = None
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    avatar: str | None = None
+    agent_id: str | None = None
+    agents: str | None = None
+    preview: str | None = None
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class Message(SQLModel, table=True):
     __tablename__ = "messages"
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     conversation_id: str = Field(foreign_key="conversations.id")
     sender: str
     content: str
     streaming: int = Field(default=0)
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class CustomAgent(SQLModel, table=True):
@@ -39,18 +39,18 @@ class CustomAgent(SQLModel, table=True):
     style: str = Field(default="")
     system_prompt: str
     tools: str = Field(default="[]")
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class ProjectMemory(SQLModel, table=True):
     __tablename__ = "project_memory"
     __table_args__ = (UniqueConstraint("conversation_id", "key", name="idx_mem_conv_key"),)
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     conversation_id: str = Field(foreign_key="conversations.id")
     key: str
     value: str
     source: str = Field(default="system")
-    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class UploadedFile(SQLModel, table=True):
@@ -62,7 +62,7 @@ class UploadedFile(SQLModel, table=True):
     content_type: str = Field(default="")
     size: int = Field(default=0)
     extracted_text: str = Field(default="")
-    uploaded_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    uploaded_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class CronTask(SQLModel, table=True):
@@ -72,10 +72,10 @@ class CronTask(SQLModel, table=True):
     agent_id: str
     task_prompt: str
     interval_seconds: int
-    last_run: Optional[str] = None
-    next_run: Optional[str] = None
+    last_run: str | None = None
+    next_run: str | None = None
     status: str = Field(default="active")
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class KnowledgeDoc(SQLModel, table=True):
@@ -87,12 +87,12 @@ class KnowledgeDoc(SQLModel, table=True):
     chunk_count: int = Field(default=0)
     char_count: int = Field(default=0)
     status: str = Field(default="ready")
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class ProjectEventStream(SQLModel, table=True):
     __tablename__ = "project_event_stream"
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     conversation_id: str = Field(foreign_key="conversations.id")
     event_type: str
     timestamp: float
@@ -109,19 +109,19 @@ class PendingHil(SQLModel, table=True):
     options: str
     original_prompt: str
     status: str = Field(default="pending")
-    chosen_action: Optional[str] = None
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    chosen_action: str | None = None
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class Artifact(SQLModel, table=True):
     __tablename__ = "artifacts"
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     conversation_id: str = Field(foreign_key="conversations.id")
     agent_id: str
     name: str
     language: str
     code: str
-    quality_score: Optional[int] = Field(default=None)
+    quality_score: int | None = Field(default=None)
     sandbox_status: str = Field(default="untested")
-    sandbox_output: Optional[str] = Field(default=None)
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    sandbox_output: str | None = Field(default=None)
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())

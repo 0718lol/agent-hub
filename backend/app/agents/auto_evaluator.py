@@ -8,12 +8,10 @@ Auto Evaluator — Agent 生成代码的自动化测试与量化打分模块
   4. execute_automated_evaluation — 编排函数，串联以上步骤生成综合报告
 """
 
-import re
 import ast
 import json
-import asyncio
+import re
 from typing import Any
-
 
 # ============================================================
 # 任务 1：代码提取
@@ -151,7 +149,7 @@ async def llm_as_a_judge_scoring(task: str, solution: str, llm_client: Any) -> d
             if json_match:
                 result = json.loads(json_match.group())
             else:
-                raise ValueError(f"无法从响应中提取评分 JSON: {response_text[:200]}")
+                raise ValueError(f"无法从响应中提取评分 JSON: {response_text[:200]}") from None
 
         # 校验必要字段
         if "total_score" not in result or "dimensions" not in result:

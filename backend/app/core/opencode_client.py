@@ -1,5 +1,5 @@
 import asyncio
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 
 async def opencode_stream(
@@ -45,7 +45,7 @@ async def opencode_stream(
         while True:
             try:
                 line = await asyncio.wait_for(proc.stdout.readline(), timeout=120)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 yield "\n[OpenCode 执行超时（超过 120 秒），进程已被终止]"
                 break

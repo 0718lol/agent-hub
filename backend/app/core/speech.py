@@ -10,8 +10,8 @@ Usage:
   text = await stt_client.transcribe(audio_bytes, filename="audio.webm")
 """
 
+
 import httpx
-from typing import Optional
 
 
 class STTClient:
@@ -34,7 +34,7 @@ class STTClient:
         return bool(self.api_key and self.base_url)
 
     async def transcribe(self, audio_bytes: bytes, filename: str = "audio.webm",
-                         language: Optional[str] = None) -> str:
+                         language: str | None = None) -> str:
         """
         Transcribe audio bytes to text.
 

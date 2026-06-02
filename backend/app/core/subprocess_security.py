@@ -1,7 +1,7 @@
-import sys
 import asyncio
 import ctypes
 import logging
+import sys
 
 logger = logging.getLogger("subprocess_security")
 
@@ -15,7 +15,7 @@ JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 # We declare wintypes locally or conditionally to support clean imports on Unix
 if sys.platform == "win32":
     from ctypes import wintypes
-    
+
     class IO_COUNTERS(ctypes.Structure):
         _fields_ = [
             ("ReadOperationCount", ctypes.c_uint64),
@@ -50,9 +50,9 @@ if sys.platform == "win32":
         ]
 else:
     # Stand-in classes for non-Windows compilation safety
-    class IO_COUNTERS: pass
-    class JOBOBJECT_BASIC_LIMIT_INFORMATION: pass
-    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION_STRUCT: pass
+    class IO_COUNTERS: pass  # noqa: E701
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION: pass  # noqa: E701
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION_STRUCT: pass  # noqa: E701
 
 _windows_job_handles = set()
 _windows_job_handles_map: dict = {}  # pid -> h_job mapping for cleanup
@@ -72,12 +72,12 @@ def limit_windows_process(pid: int, memory_limit_bytes: int, cpu_limit_secs: int
 
     try:
         kernel32 = ctypes.windll.kernel32
-        
+
         # 1. Create Job Object container
         h_job = kernel32.CreateJobObjectW(None, None)
         if not h_job:
             return False
-            
+
         # 2. Open process handle with quota and termination access
         PROCESS_SET_QUOTA = 0x0100
         PROCESS_TERMINATE = 0x0001
@@ -85,7 +85,7 @@ def limit_windows_process(pid: int, memory_limit_bytes: int, cpu_limit_secs: int
         if not h_process:
             kernel32.CloseHandle(h_job)
             return False
-            
+
         # 3. Populate Extended Limit structures
         limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION_STRUCT()
 
@@ -102,7 +102,7 @@ def limit_windows_process(pid: int, memory_limit_bytes: int, cpu_limit_secs: int
         # 1 second = 10,000,000 * 100ns
         if cpu_limit_secs > 0:
             limits.BasicLimitInformation.PerProcessUserTimeLimit = cpu_limit_secs * 10_000_000
-        
+
         res = kernel32.SetInformationJobObject(
             h_job,
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
@@ -113,11 +113,11 @@ def limit_windows_process(pid: int, memory_limit_bytes: int, cpu_limit_secs: int
             kernel32.CloseHandle(h_process)
             kernel32.CloseHandle(h_job)
             return False
-            
+
         # 4. Securely assign process to Job Object container
         assigned = kernel32.AssignProcessToJobObject(h_job, h_process)
         kernel32.CloseHandle(h_process)
-        
+
         if assigned:
             _windows_job_handles.add(h_job)
             _windows_job_handles_map[pid] = h_job

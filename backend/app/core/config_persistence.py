@@ -2,9 +2,9 @@
 Shared configuration persistence module.
 Eliminates duplicate LLM/HIL config read/write logic between main.py and routers/settings.py.
 """
-import os
 import json
 import logging
+import os
 
 logger = logging.getLogger("config_persistence")
 
@@ -16,7 +16,7 @@ def get_hil_settings() -> dict:
     """Load HIL (Human-in-the-Loop) settings from disk."""
     try:
         if os.path.exists(HIL_CONFIG_PATH):
-            with open(HIL_CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(HIL_CONFIG_PATH, encoding="utf-8") as f:
                 return json.load(f)
     except Exception as e:
         logger.warning(f"Failed to read HIL config: {e}")
@@ -64,7 +64,7 @@ def load_llm_config(llm_client, settings):
     try:
         cfg = {}
         if os.path.exists(LLM_CONFIG_PATH):
-            with open(LLM_CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(LLM_CONFIG_PATH, encoding="utf-8") as f:
                 cfg = json.load(f)
 
         provider = cfg.get("provider") or settings.llm_provider

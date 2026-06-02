@@ -131,7 +131,7 @@ class CustomAgent(BaseAgent):
     """User-created custom agent with configurable system prompt and tools."""
 
     def __init__(self, agent_id: str, name: str, avatar: str, role: str,
-                 style: str, system_prompt: str, tools: list[str] = None):
+                 style: str, system_prompt: str, tools: list[str] | None = None):
         self.agent_id = agent_id
         self.name = name
         self.avatar = avatar
@@ -161,5 +161,5 @@ class CustomAgent(BaseAgent):
             )
         return base_prompt
 
-    def _generate_reply(self, message: str, context: list = None) -> str:
+    def _generate_reply(self, message: str, context: list | None = None) -> str:
         return f"[{self.name}] 收到！我来处理你的请求。"

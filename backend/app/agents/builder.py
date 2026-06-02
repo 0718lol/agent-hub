@@ -1,6 +1,7 @@
 import json
 import re
 import uuid
+
 from .base import BaseAgent
 from .custom import AVAILABLE_TOOLS
 
@@ -61,7 +62,7 @@ class AgentBuilderAgent(BaseAgent):
         "产品": "📋", "需求": "📋",
     }
 
-    def _generate_reply(self, message: str, context: list = None) -> str:
+    def _generate_reply(self, message: str, context: list | None = None) -> str:
         msg = message.lower().strip()
 
         # --- Show available tools ---
@@ -257,9 +258,8 @@ class AgentBuilderAgent(BaseAgent):
     def _detect_tools(self, msg: str) -> list[str]:
         tools = []
         for tool_id, keywords in self._TOOL_KEYWORDS.items():
-            if any(kw in msg for kw in keywords):
-                if tool_id not in tools:
-                    tools.append(tool_id)
+            if any(kw in msg for kw in keywords) and tool_id not in tools:
+                tools.append(tool_id)
         return tools
 
     def _build_system_prompt(self, name: str, role: str, style: str, tools: list[str]) -> str:

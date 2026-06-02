@@ -5,11 +5,12 @@ via the [tool_call:name]{params}[/tool_call] protocol.
 """
 
 import json
-import re
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Optional, Type
+import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any
+
 from pydantic import BaseModel
 
 logger = logging.getLogger("tool_registry")
@@ -32,7 +33,7 @@ class AgentTool(ABC):
     icon: str = "🔧"
     parameters: dict  # JSON Schema for parameters (must be declared by subclasses)
     enabled: bool = True
-    params_model: Optional[Type[BaseModel]] = None
+    params_model: type[BaseModel] | None = None
 
     @abstractmethod
     async def execute(self, params: dict) -> ToolResult:

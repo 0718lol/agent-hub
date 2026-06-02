@@ -1,6 +1,8 @@
 import uuid
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
 from app.core.async_wrappers import async_get_custom_agents
 from app.services.agent_registry import agent_registry
 
@@ -38,7 +40,7 @@ async def list_agents():
                 ca_tools = json.loads(ca_tools)
             except Exception:
                 ca_tools = []
-                
+
         all_agents.append({
             "agent_id": ca["agent_id"],
             "name": ca["name"],
@@ -54,7 +56,7 @@ async def list_agents():
 # 必须放在 /agents/{agent_id} 前面，否则被参数化路由吞掉
 @router.get("/agents/custom")
 async def list_custom_agents_route():
-    return get_custom_agents()
+    return await async_get_custom_agents()
 
 
 @router.get("/agents/{agent_id}")

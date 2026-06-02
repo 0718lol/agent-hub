@@ -1,8 +1,10 @@
 """Webhook callback endpoints for Slack and Telegram integrations."""
-import os
+import contextlib
 import json
 import logging
-from fastapi import APIRouter, Request, HTTPException
+import os
+
+from fastapi import APIRouter, HTTPException, Request
 
 logger = logging.getLogger("routers.webhook")
 router = APIRouter(tags=["webhook"])
@@ -37,10 +39,8 @@ async def slack_webhook_callback(request: Request):
                 payload = json.loads(payload_str)
 
         if not payload:
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 payload = json.loads(body_str)
-            except json.JSONDecodeError:
-                pass
 
         if not payload:
             return {"success": False, "error": "Invalid form-data or JSON payload"}

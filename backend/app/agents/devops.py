@@ -17,7 +17,7 @@ class DevopsAgent(BaseAgent):
         "\n- 回复谨慎稳重，不要冒险。"
     )
 
-    def _generate_reply(self, message: str, context: list = None) -> str:
+    def _generate_reply(self, message: str, context: list | None = None) -> str:
         msg = message.lower()
         if any(kw in msg for kw in ["部署", "上线", "docker", "发布"]):
             return self._deploy_reply()

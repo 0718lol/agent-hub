@@ -3,10 +3,11 @@ Minimal engine module to break the circular dependency between database.py and c
 
 Both database.py and crud.py import ``engine`` from here.
 """
+import logging as _logging
 import os
+
 from sqlalchemy import event
 from sqlmodel import create_engine
-import logging as _logging
 
 _db_logger = _logging.getLogger("database._engine")
 

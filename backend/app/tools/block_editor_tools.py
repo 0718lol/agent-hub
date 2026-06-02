@@ -1,8 +1,9 @@
 """Aider-style SEARCH/REPLACE Block-level High-Tolerance File Editor Tool."""
 
+import logging
 import os
 import re
-import logging
+
 from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_block_editor_tools")
@@ -127,7 +128,7 @@ class FilePatchBlockTool(AgentTool):
 
         # 3. Read current file content
         try:
-            with open(safe_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(safe_path, encoding="utf-8", errors="ignore") as f:
                 original_content = f.read()
         except Exception as read_err:
             return ToolResult(success=False, error=f"读取目标文件失败: {read_err}")

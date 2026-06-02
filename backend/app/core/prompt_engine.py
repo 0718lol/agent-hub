@@ -16,8 +16,8 @@ Each layer:
   - Is independently configurable per agent type or globally
 """
 
-from dataclasses import dataclass, field
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass
 
 
 @dataclass
@@ -29,7 +29,7 @@ class PromptLayer:
     enabled: bool = True
     condition: Callable = None  # Optional: (context_dict) -> bool
 
-    def render(self, variables: dict = None) -> str:
+    def render(self, variables: dict | None = None) -> str:
         """Render layer content with template variables."""
         if not self.enabled:
             return ""
@@ -39,7 +39,7 @@ class PromptLayer:
                 text = text.replace(f"{{{key}}}", str(val))
         return text
 
-    def should_inject(self, context: dict = None) -> bool:
+    def should_inject(self, context: dict | None = None) -> bool:
         """Check if this layer should be injected given the context."""
         if not self.enabled:
             return False
@@ -146,7 +146,7 @@ class PromptEngine:
         # Per-agent layer overrides: agent_id -> list[PromptLayer]
         self.agent_overrides: dict[str, list[PromptLayer]] = {}
 
-    def build(self, agent, context: dict = None) -> str:
+    def build(self, agent, context: dict | None = None) -> str:
         """
         Build the final system prompt for an agent.
 
@@ -177,7 +177,7 @@ class PromptEngine:
         # Build each layer
         sections = []
 
-        for layer in sorted(layers, key=lambda l: l.level):
+        for layer in sorted(layers, key=lambda layer_item: layer_item.level):
             if not layer.should_inject(context):
                 continue
 
@@ -210,7 +210,7 @@ class PromptEngine:
                 pm_breakdown = context.get("pm_breakdown", "")
                 if pm_breakdown:
                     sections.append(f"\n\n【任务上下文】：\nPM 的任务拆解：{pm_breakdown}")
-                
+
                 # Aider-style Repository Code Map Auto-injection! (MCP Standardized Resource Integration!)
                 conversation_id = context.get("conversation_id", "")
                 if conversation_id:
@@ -219,7 +219,7 @@ class PromptEngine:
                         # Fetch project code outline skeleton via standard MCP Resource reading protocol
                         repo_map = mcp_bridge_manager.read_builtin_resource_sync("workspace://repomap", conversation_id)
                         sections.append(f"\n\n【📂 当前工作区沙盒代码符号地图】:\n{repo_map}")
-                    except Exception as e:
+                    except Exception:
                         # Fallback silently to prevent system interruption
                         pass
 
@@ -247,12 +247,11 @@ class PromptEngine:
                 "has_condition": layer.condition is not None,
                 "content_preview": layer.content[:80] + "..." if len(layer.content) > 80 else layer.content,
             }
-            for layer in sorted(self.global_layers, key=lambda l: l.level)
+            for layer in sorted(self.global_layers, key=lambda layer_item: layer_item.level)
         ]
 
     def detect_task_type(self, message: str, agent_id: str = "") -> str:
         """Infer task type from message content and agent."""
-        import re
         msg = message.lower()
 
         if agent_id in ("agent_frontend", "agent_designer"):

@@ -1,4 +1,3 @@
-import random
 from .base import BaseAgent
 
 
@@ -50,7 +49,7 @@ class PMAgent(BaseAgent):
             return "api"
         return "default"
 
-    def _generate_reply(self, message: str, context: list = None) -> str:
+    def _generate_reply(self, message: str, context: list | None = None) -> str:
         msg = message.lower()
 
         if message.startswith("[clarified]") or message.startswith("[ask_user_reply]"):

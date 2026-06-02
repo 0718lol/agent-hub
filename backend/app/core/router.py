@@ -1,9 +1,9 @@
-import os
 import json
+import logging
+import os
 import socket
 from dataclasses import dataclass
 
-import logging
 _logger = logging.getLogger("smart_router")
 
 ROUTER_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "router_config.json")
@@ -31,7 +31,7 @@ class SmartRouter:
     def _load_config(self):
         try:
             if os.path.exists(ROUTER_CONFIG_PATH):
-                with open(ROUTER_CONFIG_PATH, "r", encoding="utf-8") as f:
+                with open(ROUTER_CONFIG_PATH, encoding="utf-8") as f:
                     data = json.load(f)
                     self.auto_routing = data.get("auto_routing", True)
                     self.manual_routes = data.get("manual_routes", {})
@@ -119,14 +119,13 @@ class SmartRouter:
                     )
 
             # L3 Tier: Design & Creative -> local if available, else cloud
-            if agent_id in ("agent_designer", "agent_devops"):
-                if check_port_alive("127.0.0.1", 11434):
-                    return ModelRoute(
-                        provider="ollama",
-                        base_url="http://127.0.0.1:11434/v1",
-                        model="qwen2.5:7b" if not llm_client.provider == "ollama" else llm_client.model,
-                        api_key="local"
-                    )
+            if agent_id in ("agent_designer", "agent_devops") and check_port_alive("127.0.0.1", 11434):
+                return ModelRoute(
+                    provider="ollama",
+                    base_url="http://127.0.0.1:11434/v1",
+                    model="qwen2.5:7b" if llm_client.provider != "ollama" else llm_client.model,
+                    api_key="local"
+                )
 
         # Fallback to globally configured model (Self-healing fallback)
         return global_route

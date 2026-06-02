@@ -1,12 +1,13 @@
 ﻿import asyncio
+import contextlib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 from app.core.database import get_due_cron_tasks, update_cron_task_run_time, update_cron_task_status
 
 logger = logging.getLogger("daemon_scheduler")
 
 
-import multiprocessing
 
 def _run_task_process_entry(task: dict, retry_counts_dict: dict):
     """
@@ -15,17 +16,17 @@ def _run_task_process_entry(task: dict, retry_counts_dict: dict):
     """
     import asyncio
     import logging
-    
+
     # Configure logging for the child process
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("daemon_scheduler.worker")
-    
+
     from app.services.daemon_scheduler import DaemonScheduler
-    
+
     scheduler = DaemonScheduler()
     # Share the manager-backed dict reference
     scheduler._retry_counts = retry_counts_dict
-    
+
     try:
         asyncio.run(scheduler._run_task(task))
     except Exception as e:
@@ -63,10 +64,8 @@ class DaemonScheduler:
             self._running = False
             if self._task:
                 self._task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self._task
-                except asyncio.CancelledError:
-                    pass
             if self._manager:
                 try:
                     self._manager.shutdown()
@@ -78,7 +77,7 @@ class DaemonScheduler:
         loop = asyncio.get_running_loop()
         while self._running:
             try:
-                now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                now_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
                 due_tasks = await loop.run_in_executor(None, get_due_cron_tasks, now_str)
 
                 for task in due_tasks:
@@ -134,10 +133,11 @@ class DaemonScheduler:
         error_msg = ""
 
         try:
-            from app.services.agent_registry import agent_registry
             from app.core.database import get_messages, save_message
+
             # Lazy import to avoid circular dependency
             from app.services.agent_orchestrator import stream_agent_reply as _stream_agent_reply
+            from app.services.agent_registry import agent_registry
 
             agent = await agent_registry.get_agent(agent_id)
             if not agent:
@@ -170,7 +170,7 @@ class DaemonScheduler:
 
             # 1. 时间预算安全阀：使用 asyncio.wait_for 强制限制最大运行时间
             try:
-                assigned_agents, full_text = await asyncio.wait_for(
+                _assigned_agents, full_text = await asyncio.wait_for(
                     _stream_agent_reply(
                         conversation_id=conversation_id,
                         agent=agent,
@@ -179,9 +179,9 @@ class DaemonScheduler:
                     ),
                     timeout=MAX_EXECUTION_TIME_SECONDS
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 stop_event.set()  # 终止底层大模型流
-                raise TimeoutError(f"后台任务执行超出安全时长限制 ({MAX_EXECUTION_TIME_SECONDS}秒)，安全熔断阀已自动介入拦截！")
+                raise TimeoutError(f"后台任务执行超出安全时长限制 ({MAX_EXECUTION_TIME_SECONDS}秒)，安全熔断阀已自动介入拦截！") from None
 
             # 2. 文本长度/Token预算安全阀
             if len(full_text) > MAX_OUTPUT_CHARACTERS:
@@ -202,7 +202,7 @@ class DaemonScheduler:
             logger.error(f"Error running background cron job {task_id}: {e}")
 
         # 【特性：自愈型指数退避重试调度机】
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         last_run_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
         if execution_success:
@@ -223,7 +223,7 @@ class DaemonScheduler:
                 next_run_str = (now + timedelta(seconds=backoff_seconds)).strftime("%Y-%m-%d %H:%M:%S")
 
                 logger.warning(f"Cron task {task_id} failed. Scheduling retry {current_retry}/{MAX_RETRIES} in {backoff_seconds}s.")
-                
+
                 # 写入带有自动重试字样的消息广播给前端
                 await asyncio.to_thread(save_message,
                     conversation_id,
@@ -244,10 +244,10 @@ class DaemonScheduler:
                 next_run_str = (now + timedelta(seconds=interval)).strftime("%Y-%m-%d %H:%M:%S")
 
                 logger.error(f"Cron task {task_id} failed 3 times. Skipping current cycle.")
-                
+
                 is_guardrail = "安全熔断" in error_msg or "TimeoutError" in error_msg
                 badge = "🛑 [后台自治安全熔断]" if is_guardrail else "🛑 [后台自治彻底失败]"
-                
+
                 await asyncio.to_thread(save_message,
                     conversation_id,
                     agent_id,

@@ -3,7 +3,8 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Any, List, Optional
+from typing import Any
+
 from app.tools.registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("mcp_bridge")
@@ -11,14 +12,14 @@ logger = logging.getLogger("mcp_bridge")
 class MCPServerProcess:
     """Manages the life-cycle and communication of a single Stdio-based MCP Server process."""
 
-    def __init__(self, name: str, command: str, args: List[str], env: Dict[str, str] = None):
+    def __init__(self, name: str, command: str, args: list[str], env: dict[str, str] | None = None):
         self.name = name
         self.command = command
         self.args = args
         self.env = {**os.environ, **(env or {})}
         self.process: asyncio.subprocess.Process = None
         self.rpc_id = 1
-        self.pending_requests: Dict[int, asyncio.Future] = {}
+        self.pending_requests: dict[int, asyncio.Future] = {}
         self.listen_task: asyncio.Task = None
         self.error_task: asyncio.Task = None
         self._running = False
@@ -26,7 +27,7 @@ class MCPServerProcess:
     async def start(self):
         """Start the MCP Server process and set up communication pipes."""
         logger.info(f"Starting MCP Server process [{self.name}]: {self.command} {' '.join(self.args)}")
-        
+
         # Ensure executable resolution is robust on Windows
         cmd = self.command
         if sys.platform == "win32" and cmd in ("npm", "npx", "npx.cmd", "npm.cmd"):
@@ -68,7 +69,7 @@ class MCPServerProcess:
             return
         self._running = False
         logger.info(f"Stopping MCP Server process [{self.name}]...")
-        
+
         if self.listen_task:
             self.listen_task.cancel()
         if self.error_task:
@@ -78,7 +79,7 @@ class MCPServerProcess:
             try:
                 self.process.terminate()
                 await asyncio.wait_for(self.process.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(f"MCP Server [{self.name}] did not terminate gracefully. Killing it...")
                 try:
                     self.process.kill()
@@ -86,28 +87,28 @@ class MCPServerProcess:
                     logger.warning(f"Failed to kill MCP server process [{self.name}]: {e}")
             except Exception as e:
                 logger.debug(f"Exception during terminating MCP Server process [{self.name}]: {e}")
-        
+
         for fut in self.pending_requests.values():
             if not fut.done():
                 fut.set_exception(RuntimeError("MCP Server connection terminated."))
         self.pending_requests.clear()
         logger.info(f"MCP Server process [{self.name}] stopped.")
 
-    async def list_tools(self) -> List[Dict[str, Any]]:
+    async def list_tools(self) -> list[dict[str, Any]]:
         """Request the list of available tools from this MCP Server."""
         req_id = self.rpc_id
         self.rpc_id += 1
-        
+
         payload = {
             "jsonrpc": "2.0",
             "id": req_id,
             "method": "tools/list",
             "params": {}
         }
-        
+
         fut = asyncio.get_running_loop().create_future()
         self.pending_requests[req_id] = fut
-        
+
         try:
             await self._write_stdin(payload)
             response = await fut
@@ -116,11 +117,11 @@ class MCPServerProcess:
             logger.error(f"Error querying tools list from MCP Server [{self.name}]: {e}")
             raise e
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Invoke a specific tool on this MCP Server."""
         req_id = self.rpc_id
         self.rpc_id += 1
-        
+
         payload = {
             "jsonrpc": "2.0",
             "id": req_id,
@@ -130,10 +131,10 @@ class MCPServerProcess:
                 "arguments": arguments
             }
         }
-        
+
         fut = asyncio.get_running_loop().create_future()
         self.pending_requests[req_id] = fut
-        
+
         try:
             await self._write_stdin(payload)
             result = await fut
@@ -159,7 +160,7 @@ class MCPServerProcess:
                 line_str = line.decode("utf-8").strip()
                 if not line_str:
                     continue
-                
+
                 response = json.loads(line_str)
                 req_id = response.get("id")
                 if req_id is not None and req_id in self.pending_requests:
@@ -197,7 +198,7 @@ class BuiltinMCPServer:
     def __init__(self):
         self.name = "system-builtin"
 
-    async def list_tools(self) -> List[Dict[str, Any]]:
+    async def list_tools(self) -> list[dict[str, Any]]:
         """Expose standard interactive HIL Tool details."""
         return [
             {
@@ -225,7 +226,7 @@ class BuiltinMCPServer:
             }
         ]
 
-    async def list_resources(self) -> List[Dict[str, Any]]:
+    async def list_resources(self) -> list[dict[str, Any]]:
         """Expose Project Codebase Skeleton (Repo Map) as read-only standard MCP Resource."""
         return [
             {
@@ -236,7 +237,7 @@ class BuiltinMCPServer:
             }
         ]
 
-    def read_resource_sync(self, uri: str, conversation_id: Optional[str] = None) -> str:
+    def read_resource_sync(self, uri: str, conversation_id: str | None = None) -> str:
         """Standard synchronous implementation to read the content of the specified workspace resource URI."""
         if uri == "workspace://repomap":
             from app.core.repo_map import codebase_map_scanner
@@ -248,17 +249,17 @@ class BuiltinMCPServer:
                 sandbox_dir = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")), "agenthub_export", conversation_id)
                 if os.path.exists(sandbox_dir):
                     workspace_dir = sandbox_dir
-                    
+
             logger.info(f"MCP Resource workspace://repomap called (Sync). Scanning workspace path: {workspace_dir}")
             return codebase_map_scanner.scan_directory(workspace_dir)
-            
+
         raise ValueError(f"Unknown Resource URI: {uri}")
 
-    async def read_resource(self, uri: str, conversation_id: Optional[str] = None) -> str:
+    async def read_resource(self, uri: str, conversation_id: str | None = None) -> str:
         """Standard asynchronous wrapper to read resource."""
         return self.read_resource_sync(uri, conversation_id)
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Route tool calls internally to the concrete UserInteractionJudgeTool implementation."""
         if tool_name == "user_interaction_judge":
             from app.tools.judge_tools import UserInteractionJudgeTool
@@ -291,17 +292,17 @@ class MCPToolWrapper(AgentTool):
         try:
             logger.info(f"Routing tool call [{self.name}] to MCP Server [{self.server_name}] with params: {params}")
             raw_result = await self.mcp_client.call_tool(self.name, params)
-            
+
             is_error = raw_result.get("isError", False)
             content_list = raw_result.get("content", [])
             text_outputs = []
-            
+
             for item in content_list:
                 if item.get("type") == "text":
                     text_outputs.append(item.get("text", ""))
-                    
+
             output_text = "\n".join(text_outputs)
-            
+
             if is_error:
                 return ToolResult(success=False, error=output_text or "MCP Tool execution failed.")
             return ToolResult(success=True, data=output_text)
@@ -314,7 +315,7 @@ class MCPBridgeManager:
     """Singleton registry manager to coordinate all external and builtin MCP Servers."""
 
     def __init__(self):
-        self.servers: Dict[str, MCPServerProcess] = {}
+        self.servers: dict[str, MCPServerProcess] = {}
         self.builtin_server = BuiltinMCPServer()
 
     async def load_and_start_servers(self, config_path: str):
@@ -326,7 +327,7 @@ class MCPBridgeManager:
                 t_name = t.get("name")
                 t_desc = t.get("description", "")
                 t_schema = t.get("inputSchema", {})
-                
+
                 # Note: System builtins are placed into TOOL_REGISTRY with higher priority
                 wrapper = MCPToolWrapper(self.builtin_server.name, self.builtin_server, t_name, t_desc, t_schema)
                 register_tool(wrapper)
@@ -340,7 +341,7 @@ class MCPBridgeManager:
             return
 
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
         except Exception as e:
             logger.error(f"Failed to read MCP config: {e}")
@@ -351,33 +352,33 @@ class MCPBridgeManager:
             command = cfg.get("command")
             args = cfg.get("args", [])
             env = cfg.get("env")
-            
+
             if not command:
                 logger.error(f"Skipping MCP Server [{name}]: command not specified.")
                 continue
-                
+
             server = MCPServerProcess(name, command, args, env)
             try:
                 await server.start()
                 self.servers[name] = server
-                
+
                 tools = await server.list_tools()
                 for t in tools:
                     t_name = t.get("name")
                     t_desc = t.get("description", "")
                     t_schema = t.get("inputSchema", {})
-                    
+
                     wrapper = MCPToolWrapper(name, server, t_name, t_desc, t_schema)
                     register_tool(wrapper)
                     logger.info(f"Dynamically mapped and registered MCP tool: {t_name} from Server [{name}]")
             except Exception as e:
                 logger.error(f"Failed to start and register MCP Server [{name}]: {e}")
 
-    async def read_builtin_resource(self, uri: str, conversation_id: Optional[str] = None) -> str:
+    async def read_builtin_resource(self, uri: str, conversation_id: str | None = None) -> str:
         """Direct exposure API for host/LLM to fetch System read-only MCP resources (like Repo Map) asynchronously."""
         return await self.builtin_server.read_resource(uri, conversation_id)
 
-    def read_builtin_resource_sync(self, uri: str, conversation_id: Optional[str] = None) -> str:
+    def read_builtin_resource_sync(self, uri: str, conversation_id: str | None = None) -> str:
         """Direct exposure API for host/LLM to fetch System read-only MCP resources (like Repo Map) synchronously."""
         return self.builtin_server.read_resource_sync(uri, conversation_id)
 

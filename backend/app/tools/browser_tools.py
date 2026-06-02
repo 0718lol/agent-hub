@@ -1,13 +1,13 @@
 """CyberBrowser Tools — Sandboxed browser automation with vision feedback for agents."""
 
-import os
 import base64
-import logging
 import json
-import asyncio
-from typing import Dict, Any
-from .registry import AgentTool, ToolResult, register_tool
+import logging
+import os
+
 from app.core.websocket import manager
+
+from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_browser_tools")
 
@@ -15,12 +15,12 @@ logger = logging.getLogger("tool_browser_tools")
 DOM_MINIMIZER_JS = """
 () => {
     const interactiveSelectors = [
-        'a', 'button', 'input', 'select', 'textarea', 
+        'a', 'button', 'input', 'select', 'textarea',
         '[role="button"]', '[role="link"]', '[role="textbox"]',
         '[role="checkbox"]', '[role="combobox"]', '[role="listbox"]',
         '[onclick]', '[cursor="pointer"]'
     ];
-    
+
     // Clean up previous highlights/badges if any
     const oldBadges = document.querySelectorAll('.cyberbrowser-badge');
     oldBadges.forEach(b => b.remove());
@@ -35,17 +35,17 @@ DOM_MINIMIZER_JS = """
         if (rect.width === 0 || rect.height === 0) return;
         const style = window.getComputedStyle(el);
         if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
-        
+
         const id = idCounter++;
-        
+
         // Get text/label description
         let text = el.innerText || el.placeholder || el.getAttribute('aria-label') || el.value || '';
         text = text.trim().substring(0, 100);
-        
+
         // Compute center coordinates
         const x = rect.left + rect.width / 2;
         const y = rect.top + rect.height / 2;
-        
+
         results.push({
             id: id,
             tagName: el.tagName.toLowerCase(),
@@ -56,7 +56,7 @@ DOM_MINIMIZER_JS = """
             width: rect.width,
             height: rect.height
         });
-        
+
         // Draw small visual number badges for multimodal LLM screenshots!
         const badge = document.createElement('div');
         badge.className = 'cyberbrowser-badge';
@@ -76,7 +76,7 @@ DOM_MINIMIZER_JS = """
         badge.style.pointerEvents = 'none';
         document.body.appendChild(badge);
     });
-    
+
     return results;
 }
 """
@@ -178,7 +178,7 @@ class BrowserActionTool(AgentTool):
     async def execute(self, params: dict) -> ToolResult:
         action = params.get("action", "").strip()
         conv_id = params.get("conversation_id", "default")
-        
+
         vision_used = False
         failover_used = False
         resolved_msg = ""
@@ -186,7 +186,7 @@ class BrowserActionTool(AgentTool):
         try:
             page = await browser_session_manager.get_page(conv_id)
         except Exception as e:
-            return ToolResult(success=False, error=f"浏览器启动失败: {str(e)}")
+            return ToolResult(success=False, error=f"浏览器启动失败: {e!s}")
 
         try:
             # 1. Dispatch action
@@ -194,7 +194,7 @@ class BrowserActionTool(AgentTool):
                 url = params.get("url", "").strip()
                 if not url:
                     return ToolResult(success=False, error=" goto 操作必须提供 url 参数")
-                
+
                 # Check for sandboxed local file resolution: e.g. "index.html" -> resolve to absolute file:/// path
                 if not url.startswith(("http://", "https://", "file://")):
                     # Assume relative file in sandboxed workspace
@@ -247,7 +247,7 @@ class BrowserActionTool(AgentTool):
 
             # 2. Extract simplified DOM elements and capture screenshot
             elements = await page.evaluate(DOM_MINIMIZER_JS)
-            
+
             # Update local elements cache for clicks/inputs
             browser_session_manager.elements_cache[conv_id] = {el["id"]: el for el in elements}
 
@@ -299,7 +299,7 @@ class BrowserActionTool(AgentTool):
 
         except Exception as ex:
             logger.error(f"[CyberBrowser] Action '{action}' execution crash: {ex}")
-            return ToolResult(success=False, error=f"浏览器操作期异常: {type(ex).__name__}: {str(ex)}")
+            return ToolResult(success=False, error=f"浏览器操作期异常: {type(ex).__name__}: {ex!s}")
 
     async def _resolve_coordinates(self, page, params: dict, conv_id: str) -> tuple[float, float, str, bool, bool]:
         """Resolves target coordinate (x, y) using element_id, or falls back to vision / fuzzy DOM search."""
@@ -323,7 +323,7 @@ class BrowserActionTool(AgentTool):
             return x_abs, y_abs, f"视觉定位 '{visual_desc}'", True, False
         except Exception as e:
             logger.warning(f"[CyberBrowser] Vision locator failed: {e}. Falling back to fuzzy DOM match.")
-            
+
             # 3. Fallback to Fuzzy DOM similarity match
             x_cached, y_cached, matched_text = self._locate_by_fuzzy_dom(conv_id, visual_desc)
             return x_cached, y_cached, f"模糊自愈命中 '{matched_text}'", False, True
@@ -332,7 +332,7 @@ class BrowserActionTool(AgentTool):
         """Predict coordinates using multimodal vision model from screenshot."""
         # Temporarily remove badges for clean screenshot
         await page.evaluate("const old = document.querySelectorAll('.cyberbrowser-badge'); old.forEach(b => b.remove());")
-        
+
         screenshot_bytes = await page.screenshot(type="png")
         screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
 
@@ -383,7 +383,7 @@ class BrowserActionTool(AgentTool):
         best_score = -1
         query_words = set(visual_description.lower().split())
 
-        for el_id, el in cache.items():
+        for _el_id, el in cache.items():
             text = (el.get("text") or "").lower()
             role = (el.get("role") or "").lower()
             tag = (el.get("tagName") or "").lower()
@@ -404,7 +404,7 @@ class BrowserActionTool(AgentTool):
 
         if best_el is None:
             # Fallback to the first interactive element as emergency safety net
-            first_key = list(cache.keys())[0]
+            first_key = next(iter(cache.keys()))
             best_el = cache[first_key]
 
         return best_el["x"], best_el["y"], best_el["text"]
@@ -430,11 +430,11 @@ class WorkspaceCaptureScreenshotTool(AgentTool):
     async def execute(self, params: dict) -> ToolResult:
         conv_id = params.get("conversation_id", "default")
         url = params.get("url", "").strip()
-        
+
         try:
             page = await browser_session_manager.get_page(conv_id)
         except Exception as e:
-            return ToolResult(success=False, error=f"浏览器启动失败: {str(e)}")
+            return ToolResult(success=False, error=f"浏览器启动失败: {e!s}")
 
         try:
             if url:
@@ -447,17 +447,17 @@ class WorkspaceCaptureScreenshotTool(AgentTool):
                         url = "file:///" + abs_path.replace(os.sep, "/")
                     else:
                         url = f"http://localhost:5173/{url.lstrip('/')}"
-                
+
                 logger.info(f"[CyberBrowser] Navigating to target URL for screenshot: {url}")
                 try:
                     await page.goto(url, wait_until="load", timeout=10000)
                 except Exception as go_ex:
                     logger.warning(f"[CyberBrowser] Failed navigating to {url}: {go_ex}. Capturing current state instead.")
-            
+
             # Capture screenshot
             screenshot_bytes = await page.screenshot(type="png")
             screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
-            
+
             return ToolResult(
                 success=True,
                 data={
@@ -467,7 +467,7 @@ class WorkspaceCaptureScreenshotTool(AgentTool):
                 }
             )
         except Exception as ex:
-            return ToolResult(success=False, error=f"网页截图生成失败: {type(ex).__name__}: {str(ex)}")
+            return ToolResult(success=False, error=f"网页截图生成失败: {type(ex).__name__}: {ex!s}")
 
 
 # Auto-register on import

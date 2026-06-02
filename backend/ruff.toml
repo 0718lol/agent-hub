@@ -38,9 +38,15 @@ select = [
 # Ignore specific rules that are too noisy for this codebase
 ignore = [
     "E501",   # line too long (handled by formatter)
+    "E402",   # module level import not at top (needed for conditional/lazy imports)
     "B008",   # function call in default argument (FastAPI Depends pattern)
     "SIM108", # ternary operator (reduces readability in some cases)
     "RUF012", # mutable class attributes (SQLModel pattern)
+    "RUF001", # string contains ambiguous unicode (Chinese text is intentional)
+    "RUF002", # docstring contains ambiguous unicode (Chinese text is intentional)
+    "RUF003", # comment contains ambiguous unicode (Chinese text is intentional)
+    "RUF006", # asyncio.create_task return value (fire-and-forget pattern is intentional)
+    "F405",   # star import undefined (models imported via * intentionally)
 ]
 
 # Allow autofix for all enabled rules

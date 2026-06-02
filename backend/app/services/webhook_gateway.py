@@ -1,9 +1,8 @@
 """Webhook Gateway Manager — Simulated & Production Multi-channel Interactive Webhook System."""
 
-import os
 import json
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any
 
 logger = logging.getLogger("webhook_gateway")
 
@@ -11,12 +10,12 @@ class WebhookGatewayManager:
     """Manages outgoing HIL notifications and incoming interactive callbacks for Slack & Telegram."""
 
     def __init__(self):
-        self.slack_webhook_url: Optional[str] = None
-        self.telegram_token: Optional[str] = None
-        self.telegram_chat_id: Optional[str] = None
-        self.simulated_sent_messages: List[Dict[str, Any]] = []
+        self.slack_webhook_url: str | None = None
+        self.telegram_token: str | None = None
+        self.telegram_chat_id: str | None = None
+        self.simulated_sent_messages: list[dict[str, Any]] = []
 
-    def register_channels(self, slack_url: Optional[str] = None, telegram_token: Optional[str] = None, telegram_chat_id: Optional[str] = None):
+    def register_channels(self, slack_url: str | None = None, telegram_token: str | None = None, telegram_chat_id: str | None = None):
         """Register active integration channels."""
         self.slack_webhook_url = slack_url
         self.telegram_token = telegram_token
@@ -27,7 +26,7 @@ class WebhookGatewayManager:
         """Clear the historical list of simulated messages for clean testing."""
         self.simulated_sent_messages.clear()
 
-    async def send_hil_notification(self, conversation_id: str, question: str, options: List[Dict[str, Any]]) -> bool:
+    async def send_hil_notification(self, conversation_id: str, question: str, options: list[dict[str, Any]]) -> bool:
         """Send a rich interactive notification containing approval buttons to Slack and/or Telegram."""
         sent_any = False
 
@@ -50,14 +49,14 @@ class WebhookGatewayManager:
         if self.slack_webhook_url:
             logger.info(f"[WebhookGateway] Dispatching Slack interactive blocks payload to {self.slack_webhook_url}")
             sent_any = True
-            
+
         if self.telegram_token and self.telegram_chat_id:
             logger.info(f"[WebhookGateway] Dispatching Telegram inline keyboard payload to bot chat {self.telegram_chat_id}")
             sent_any = True
 
         return sent_any
 
-    def _format_slack_message(self, conversation_id: str, question: str, options: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _format_slack_message(self, conversation_id: str, question: str, options: list[dict[str, Any]]) -> dict[str, Any]:
         """Construct Slack interactive blocks payload with buttons."""
         blocks = [
             {
@@ -99,7 +98,7 @@ class WebhookGatewayManager:
             "blocks": blocks
         }
 
-    def _format_telegram_message(self, conversation_id: str, question: str, options: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _format_telegram_message(self, conversation_id: str, question: str, options: list[dict[str, Any]]) -> dict[str, Any]:
         """Construct Telegram inline keyboard markup payload with buttons."""
         keyboard_buttons = []
         for opt in options:
@@ -126,7 +125,7 @@ class WebhookGatewayManager:
             }
         }
 
-    async def handle_slack_callback(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_slack_callback(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Process Slack interactive button callbacks and wake up the suspended state graph."""
         try:
             actions = payload.get("actions", [])
@@ -152,17 +151,17 @@ class WebhookGatewayManager:
             logger.error(f"[WebhookGateway] Error handling Slack callback: {e}")
             return {"success": False, "error": str(e)}
 
-    async def handle_telegram_callback(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_telegram_callback(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Process Telegram inline keyboard callbacks and wake up the suspended state graph."""
         try:
             callback_query = payload.get("callback_query", {})
             callback_data_str = callback_query.get("data")
             callback_data = json.loads(callback_data_str)
-            
+
             # Map back from compact telegram fields
             conversation_id = callback_data.get("c_id")
             chosen_action = callback_data.get("act")
-            
+
             if not conversation_id or not chosen_action:
                 return {"success": False, "error": "Missing callback query keys"}
 
@@ -182,7 +181,7 @@ class WebhookGatewayManager:
         If no future is found in memory, query the database checkpointer for resilient recovery.
         """
         from app.tools.judge_tools import _pending_interactions
-        
+
         target_conv_id = None
         if fuzzy:
             # Match the prefix for Telegram callback character constraints
@@ -209,12 +208,12 @@ class WebhookGatewayManager:
                 checkpoint = get_pending_hil_checkpoint_fuzzy(conversation_id)
             else:
                 checkpoint = get_pending_hil_checkpoint(conversation_id)
-                
+
             if checkpoint:
                 logger.info(f"[WebhookGateway] Resilient recovery triggered. Restoring state checkpoint from database for conversation {checkpoint['conversation_id']}")
                 # Locally import resumption helpers from app.main to avoid circular imports
-                from app.main import resume_graph_from_checkpoint, create_tracked_task
-                
+                from app.main import create_tracked_task, resume_graph_from_checkpoint
+
                 # Run the resumption flow with strong tracking to avoid GC premature collection
                 create_tracked_task(
                     resume_graph_from_checkpoint(checkpoint["conversation_id"], action),
@@ -233,8 +232,8 @@ webhook_gateway = WebhookGatewayManager()
 
 def verify_slack_signature(signing_secret: str, body: bytes, timestamp: str, signature: str) -> bool:
     """Validate Slack webhook signature using HMAC-SHA256."""
-    import hmac
     import hashlib
+    import hmac
     import time
     if not signing_secret:
         return True # Bypass if not configured
@@ -245,13 +244,13 @@ def verify_slack_signature(signing_secret: str, body: bytes, timestamp: str, sig
     except (ValueError, TypeError):
         return False
 
-    sig_basestring = f"v0:{timestamp}:".encode('utf-8') + body
+    sig_basestring = f"v0:{timestamp}:".encode() + body
     computed = "v0=" + hmac.new(
         signing_secret.encode('utf-8'),
         sig_basestring,
         hashlib.sha256
     ).hexdigest()
-    
+
     return hmac.compare_digest(computed, signature)
 
 

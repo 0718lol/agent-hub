@@ -1,7 +1,9 @@
-import shlex
 import re
+import shlex
+
 from fastapi import APIRouter
 from pydantic import BaseModel
+
 from app.core.mcp_bridge import mcp_bridge_manager
 
 ALLOWED_MCP_COMMANDS = {"npx", "node", "python", "uvx"}
@@ -55,7 +57,7 @@ async def register_mcp_server(body: MCPServerRegister):
     # Cross-validation: block dangerous arg patterns for python/node interpreters
     # Prevent: python -c "import os; os.system(...)" or node -e "require('child_process')..."
     if cmd_base in ("python", "node", "npx", "uvx"):
-        for i, arg in enumerate(body.args):
+        for _, arg in enumerate(body.args):
             for pattern in _DANGEROUS_ARG_PATTERNS:
                 if pattern.match(arg):
                     return {"status": "error", "message": f"Dangerous arg pattern '{arg}' not allowed for '{cmd_base}'"}
@@ -75,7 +77,7 @@ async def toggle_mcp_server(server_name: str, enabled: bool):
     """Temporarily suspend or reactivate an active MCP server."""
     success = await mcp_bridge_manager.toggle_server(server_name, enabled)
     if success:
-        return {"status": "ok", "message": f"Server status updated."}
+        return {"status": "ok", "message": "Server status updated."}
     return {"status": "error", "message": "Failed to toggle server state."}
 
 

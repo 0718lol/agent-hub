@@ -1,8 +1,8 @@
-import os
-import time
 import asyncio
 import logging
-from typing import AsyncGenerator
+import os
+import time
+from collections.abc import AsyncGenerator
 
 logger = logging.getLogger("claude_code_client")
 
@@ -23,8 +23,8 @@ async def claude_code_stream(
       - ANTHROPIC_API_KEY set (or passed via api_key param)
     """
     try:
-        from claude_code_sdk import query, ClaudeCodeOptions
         from anthropic.types import TextBlock, ToolUseBlock
+        from claude_code_sdk import ClaudeCodeOptions, query
     except ImportError:
         yield (
             "[错误: Claude Code SDK 未安装。请执行以下命令：\n"
@@ -58,7 +58,7 @@ async def claude_code_stream(
         lock_start = time.monotonic()
         try:
             await asyncio.wait_for(_api_key_lock.acquire(), timeout=30.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("claude_code_client: API key lock timeout (30s), possible deadlock")
             yield "\n[错误: API Key 锁超时，可能存在死锁]"
             return
