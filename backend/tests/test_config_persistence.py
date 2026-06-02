@@ -63,7 +63,7 @@ def test_llm_config_save_and_load(temp_config_dir, monkeypatch):
 
     # Verify file was created and key is not plaintext
     assert os.path.exists(config_path)
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         saved = json.load(f)
     assert saved["api_key"] != "sk-test-key-12345"
     assert saved["api_key"].startswith("fnt::") or saved["api_key"] == ""

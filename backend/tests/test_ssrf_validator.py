@@ -4,10 +4,10 @@ Pure logic tests: no real HTTP requests, no network I/O.
 Mocks socket.getaddrinfo for DNS resolution tests.
 """
 
-import sys
 import os
 import socket
-from unittest.mock import patch, MagicMock
+import sys
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
