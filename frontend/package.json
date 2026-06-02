@@ -1,32 +1,38 @@
 {
-  "name": "agent-hub-frontend",
-  "private": true,
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "test": "vitest run",
-    "lint": "eslint src --ext .js,.jsx --max-warnings 0"
-  },
-  "dependencies": {
-    "@monaco-editor/react": "^4.6.0",
-    "lucide-react": "^1.16.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-markdown": "^9.0.1",
-    "react-syntax-highlighter": "^15.6.6",
-    "remark-gfm": "^4.0.1",
-    "zustand": "^4.4.7"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.1",
-    "eslint": "^8.57.1",
-    "eslint-config-prettier": "^9.1.2",
-    "eslint-plugin-react": "^7.37.5",
-    "eslint-plugin-react-hooks": "^4.6.2",
-    "vite": "^5.0.0",
-    "vitest": "^1.2.0"
-  }
+    "name": "agent-hub-frontend",
+    "private": true,
+    "version": "0.1.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "test": "vitest run",
+        "lint": "eslint src --ext .js,.jsx --max-warnings 0",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage"
+    },
+    "dependencies": {
+        "@monaco-editor/react": "^4.6.0",
+        "lucide-react": "^1.16.0",
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "react-markdown": "^9.0.1",
+        "react-syntax-highlighter": "^15.6.6",
+        "remark-gfm": "^4.0.1",
+        "zustand": "^4.4.7"
+    },
+    "devDependencies": {
+        "@testing-library/jest-dom": "^6.9.1",
+        "@testing-library/react": "^16.3.2",
+        "@testing-library/user-event": "^14.6.1",
+        "@vitejs/plugin-react": "^4.2.1",
+        "eslint": "^8.57.1",
+        "eslint-config-prettier": "^9.1.2",
+        "eslint-plugin-react": "^7.37.5",
+        "eslint-plugin-react-hooks": "^4.6.2",
+        "jsdom": "^29.1.1",
+        "vite": "^5.0.0",
+        "vitest": "^1.2.0"
+    }
 }
