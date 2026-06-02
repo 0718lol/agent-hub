@@ -46,6 +46,20 @@ jobs:
           npm ci --legacy-peer-deps
           npm run lint
 
+  frontend-test:
+    name: Frontend Tests (Vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install and test
+        run: |
+          cd frontend
+          npm ci --legacy-peer-deps
+          npm run test
+
   security:
     name: Security Scan (Bandit)
     runs-on: ubuntu-latest

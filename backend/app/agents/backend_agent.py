@@ -30,7 +30,24 @@ class BackendAgent(BaseAgent):
             return "已排查，是数据库连接池耗尽导致的。已调整最大连接数并添加了连接回收机制。请确认环境变量 DB_POOL_SIZE 是否正确配置。"
         elif any(kw in msg for kw in ["谢谢", "感谢"]):
             return "不客气。接口文档已更新，注意并发场景下的幂等性处理。"
-        return "收到需求。我来设计数据模型和 API 接口，预计很快出方案。有什么特殊的数据存储需求吗？"
+        return (
+            "收到需求。正在设计 RESTful API 和数据模型。\n\n"
+            "```python\n"
+            "from fastapi import FastAPI\n"
+            "from pydantic import BaseModel\n\n"
+            "app = FastAPI()\n\n"
+            "class Item(BaseModel):\n"
+            "    name: str\n"
+            '    description: str = ""\n\n'
+            '@app.post("/api/items")\n'
+            "async def create_item(item: Item):\n"
+            '    return {"status": "created", "item": item}\n\n'
+            '@app.get("/api/items")\n'
+            "async def list_items():\n"
+            '    return {"items": []}\n'
+            "```\n\n"
+            "[assign:agent_tester]"
+        )
 
     def _api_reply(self) -> str:
         return (
