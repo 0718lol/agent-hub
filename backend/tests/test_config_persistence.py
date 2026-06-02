@@ -3,7 +3,7 @@ import os
 import json
 import pytest
 import tempfile
-from app.core.config_persistence import get_hil_settings, save_hil_settings
+from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config, load_llm_config
 
 
 @pytest.fixture
