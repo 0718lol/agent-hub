@@ -8,6 +8,7 @@ import ConnectionBanner from './components/ConnectionBanner'
 import { useChatStore } from './stores/chatStore'
 import { useAgentStore } from './stores/agentStore'
 import { useCanvasStore } from './stores/canvasStore'
+import { useTabStore } from './stores/tabStore'
 
 export default function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
@@ -29,7 +30,11 @@ export default function App() {
 
   // Fetch data from backend on first mount
   useEffect(() => {
-    useChatStore.getState().fetchConversations()
+    useChatStore.getState().fetchConversations().then(() => {
+      // 对话加载完成后，清理指向不存在对话的幽灵标签
+      const convIds = useChatStore.getState().conversations.map((c) => c.id)
+      useTabStore.getState().syncWithConversations(convIds)
+    })
     useAgentStore.getState().fetchAgents()
     useCanvasStore.getState().fetchDAGFromBackend()
   }, [])

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, memo } from 'react'
+import React, { useRef, useEffect, useCallback, memo, useMemo } from 'react'
 import { MessageSquare } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
@@ -35,6 +35,15 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
   const isGenerating = generatingConvs.has(convId)
   const isGroup = conv?.type === 'group'
   const currentPinned = pinnedMessages[convId] || []
+
+  // 最后一条 AI 消息的 id（用于控制重新生成按钮只在最新 AI 消息上显示）
+  const lastAgentMsgId = useMemo(() => {
+    if (!conv?.messages) return null
+    for (let i = conv.messages.length - 1; i >= 0; i--) {
+      if (conv.messages[i].sender !== 'user') return conv.messages[i].id
+    }
+    return null
+  }, [conv?.messages])
 
   const messagesRef = useRef(null)
   const generationTimeoutRef = useRef(null)
@@ -179,6 +188,7 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
             key={msg.id}
             message={msg}
             isPinned={currentPinned.includes(msg.id)}
+            isLast={msg.id === lastAgentMsgId}
           />
         ))}
 

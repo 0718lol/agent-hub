@@ -1,9 +1,11 @@
 import { create } from 'zustand'
 
-const STORAGE_KEY = 'agent-hub-tabs'
+const STORAGE_KEY = 'agent-hub-tabs-v2'
 const MAX_TABS = 8
 
-function loadTabs() {
+const DEFAULT_TAB = { id: 'tab_conv_pm', convId: 'conv_pm', title: 'PM 小助手', agentId: 'agent_pm' }
+
+function loadSavedTabs() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
@@ -14,21 +16,18 @@ function loadTabs() {
   return null
 }
 
-const DEFAULT_TAB = { id: 'tab_conv_pm', convId: 'conv_pm', title: 'PM 小助手', agentId: 'agent_pm' }
-const saved = loadTabs()
+const saved = loadSavedTabs()
 
-// lastActive: Map<tabId, timestamp> — 不存 localStorage，每次启动重置
-const initialLastActive = new Map()
+const initialLastActive = new Map([[DEFAULT_TAB.id, Date.now()]])
 if (saved?.openTabs) {
   saved.openTabs.forEach((t) => initialLastActive.set(t.id, Date.now()))
-} else {
-  initialLastActive.set(DEFAULT_TAB.id, Date.now())
 }
 
 export const useTabStore = create((set, get) => ({
   openTabs: saved?.openTabs || [DEFAULT_TAB],
   activeTabId: saved?.activeTabId || 'tab_conv_pm',
   lastActive: initialLastActive,
+  _synced: false,
 
   openTab: (convId, title, agentId) => {
     const tabId = `tab_${convId}`
@@ -41,7 +40,6 @@ export const useTabStore = create((set, get) => ({
     } else {
       let openTabs = state.openTabs
       const newLastActive = new Map(state.lastActive)
-      // 超过最大标签数，关闭最久未活跃的标签
       if (openTabs.length >= MAX_TABS) {
         let oldestId = null
         let oldestTime = Infinity
@@ -110,6 +108,43 @@ export const useTabStore = create((set, get) => ({
     set((state) => ({
       openTabs: state.openTabs.map((t) => t.id === tabId ? { ...t, title } : t),
     }))
+    get()._persist()
+  },
+
+  /**
+   * 对话加载后调用。用有效 convId 列表清理幽灵标签。
+   * 幂等：只在首次调用时执行清理，之后的调用直接跳过。
+   */
+  syncWithConversations: (validConvIds) => {
+    const state = get()
+    if (state._synced) return
+
+    const validSet = new Set(validConvIds)
+    validSet.add('conv_pm')
+
+    // 只保留 convId 有效且不重复的标签
+    const seen = new Set()
+    const cleanTabs = []
+    for (const tab of state.openTabs) {
+      if (validSet.has(tab.convId) && !seen.has(tab.convId)) {
+        seen.add(tab.convId)
+        cleanTabs.push(tab)
+      }
+    }
+
+    if (!seen.has('conv_pm')) {
+      cleanTabs.unshift(DEFAULT_TAB)
+    }
+
+    let activeTabId = state.activeTabId
+    if (!cleanTabs.find((t) => t.id === activeTabId)) {
+      activeTabId = cleanTabs[0].id
+    }
+
+    const newLastActive = new Map()
+    cleanTabs.forEach((t) => newLastActive.set(t.id, state.lastActive.get(t.id) || Date.now()))
+
+    set({ openTabs: cleanTabs, activeTabId, lastActive: newLastActive, _synced: true })
     get()._persist()
   },
 

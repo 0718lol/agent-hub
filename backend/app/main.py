@@ -3,7 +3,8 @@
 This module is responsible for:
 - App initialization, lifespan, and middleware
 - Mounting all API routers
-- WebSocket endpoint (in routers/ws.py)
+- Root & health endpoints
+- Deploy simulation (no dedicated router)
 
 Business logic is delegated to focused router modules:
 - routers/settings.py — LLM & HIL configuration
@@ -36,50 +37,24 @@ from app.core.config import settings
 from app.core.config_persistence import load_llm_config, save_llm_config
 from app.core.database import init_db
 from app.core.llm_client import llm_client
-from app.core.logging_config import RequestIdMiddleware, get_logger, setup_logging
+from app.core.logging_config import get_logger, RequestIdMiddleware, setup_logging
 from app.routers import (
     agents as agents_router,
-)
-from app.routers import (
-    benchmark as benchmark_router,
-)
-from app.routers import (
-    conversations as conversations_router,
-)
-from app.routers import (
-    cron as cron_router,
-)
-from app.routers import (
-    mcp as mcp_router,
-)
-from app.routers import (
-    prompt as prompt_router,
-)
-from app.routers import (
-    quality as quality_router,
-)
-from app.routers import (
-    sandbox as sandbox_router,
-)
-from app.routers import (
-    settings as settings_router,
-)
-from app.routers import (
-    speech as speech_router,
-)
-from app.routers import (
-    tools as tools_router,
-)
-from app.routers import (
     uploads as uploads_router,
-)
-from app.routers import (
-    webhook as webhook_router,
-)
-from app.routers import (
+    settings as settings_router,
+    cron as cron_router,
     workflows as workflows_router,
-)
-from app.routers import (
+    mcp as mcp_router,
+    webhook as webhook_router,
+    conversations as conversations_router,
+    knowledge as knowledge_router,
+    quality as quality_router,
+    prompt as prompt_router,
+    speech as speech_router,
+    sandbox as sandbox_router,
+    benchmark as benchmark_router,
+    tools as tools_router,
+    adapters as adapters_router,
     ws as ws_router,
 )
 from app.services.agent_orchestrator import get_agents
@@ -87,7 +62,7 @@ from app.services.agent_orchestrator import get_agents
 logger = get_logger("main")
 
 # Trigger runtime tool auto-registration
-import app.tools
+import app.tools  # noqa: F401
 
 
 # ---- App lifespan ----
@@ -118,7 +93,6 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # ---- CORS ----
-# Initialize structured logging
 setup_logging()
 
 app.add_middleware(RequestIdMiddleware)
@@ -153,12 +127,13 @@ async def api_security_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-# ---- Agent registry & stop events ----
+# ---- Agent registry ----
+from app.services.agent_registry import agent_registry
 AGENTS = get_agents()
 
 # ---- Mount all routers ----
 app.include_router(agents_router.router, prefix="/api")
-app.include_router(uploads_router.router)
+app.include_router(uploads_router.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(cron_router.router, prefix="/api")
 app.include_router(workflows_router.router, prefix="/api")
@@ -172,18 +147,47 @@ app.include_router(sandbox_router.router, prefix="/api")
 app.include_router(benchmark_router.router, prefix="/api")
 app.include_router(ws_router.router)
 app.include_router(tools_router.router, prefix="/api")
+app.include_router(knowledge_router.router, prefix="/api")
+app.include_router(adapters_router.router, prefix="/api")
 
 # ---- Initialize database ----
 init_db()
 
-# ---- Load LLM config ----
-def _load_llm_config():
-    load_llm_config(llm_client, settings)
+# ---- Load LLM config at startup ----
+load_llm_config(llm_client, settings)
 
-def _save_llm_config():
-    save_llm_config(llm_client, settings)
+# ---- Load saved adapters and register as agents ----
+from app.adapters.adapter_agent import AdapterAgent
+from app.routers.adapters import load_saved_adapters, create_adapter, ADAPTER_CLASSES
+from app.adapters.registry import adapter_registry as _ar
 
-_load_llm_config()
+load_saved_adapters()
+
+# 预注册默认外部 Agent 适配器（即使未配置 API Key 也注册，前端靠它判断配置状态）
+_DEFAULT_ADAPTERS = {
+    "claude_code": {"adapter_type": "claude", "name": "Claude Code", "avatar": "/avatars/claude-code.svg"},
+    "codex": {"adapter_type": "codex", "name": "Codex", "avatar": "/avatars/codex.svg"},
+}
+for _aid, _meta in _DEFAULT_ADAPTERS.items():
+    if _aid not in _ar._adapters:
+        saved = _ar.get_config(_aid)
+        if saved:
+            create_adapter(_aid, saved, save=False)
+        else:
+            create_adapter(_aid, {"adapter_type": _meta["adapter_type"]}, save=False)
+
+# 把所有适配器 Agent 注册到全局 AGENTS 字典
+for _aid, _adapter in _ar._adapters.items():
+    if _aid not in AGENTS:
+        _meta = _DEFAULT_ADAPTERS.get(_aid, {})
+        AGENTS[_aid] = AdapterAgent(
+            agent_id=_aid,
+            name=_meta.get("name", _adapter.name),
+            adapter=_adapter,
+            avatar=_meta.get("avatar", "🤖"),
+            role=_adapter.description,
+        )
+        logger.info(f"Registered adapter agent: {_aid} ({_adapter.adapter_type})")
 
 
 # ---- Root & health endpoints ----
@@ -229,7 +233,7 @@ async def health():
     }
 
 
-# ---- Deploy simulation endpoint ----
+# ---- Deploy simulation (no dedicated router module) ----
 from app.core.websocket import manager
 
 

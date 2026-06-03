@@ -1,0 +1,83 @@
+{
+  "skill_name": "dev-collaboration",
+  "iteration": 1,
+  "timestamp": "2026-06-01",
+  "configurations": [
+    {
+      "name": "with_skill",
+      "display_name": "使用 dev-collaboration Skill",
+      "evals": [
+        {
+          "eval_id": 1,
+          "eval_name": "git-conflict",
+          "pass_rate": 1.0,
+          "passed": 6,
+          "total": 6,
+          "duration_seconds": 125.2
+        },
+        {
+          "eval_id": 2,
+          "eval_name": "performance",
+          "pass_rate": 1.0,
+          "passed": 6,
+          "total": 6,
+          "duration_seconds": 142.8
+        },
+        {
+          "eval_id": 3,
+          "eval_name": "code-review",
+          "pass_rate": 1.0,
+          "passed": 5,
+          "total": 5,
+          "duration_seconds": 132.8
+        }
+      ],
+      "aggregate": {
+        "mean_pass_rate": 1.0,
+        "total_passed": 17,
+        "total_assertions": 17,
+        "mean_duration_seconds": 133.6
+      }
+    },
+    {
+      "name": "without_skill",
+      "display_name": "不使用 Skill（基线）",
+      "evals": [
+        {
+          "eval_id": 1,
+          "eval_name": "git-conflict",
+          "pass_rate": 1.0,
+          "passed": 6,
+          "total": 6,
+          "duration_seconds": 47.0
+        },
+        {
+          "eval_id": 2,
+          "eval_name": "performance",
+          "pass_rate": 0.67,
+          "passed": 4,
+          "total": 6,
+          "duration_seconds": 72.3
+        },
+        {
+          "eval_id": 3,
+          "eval_name": "code-review",
+          "pass_rate": 1.0,
+          "passed": 5,
+          "total": 5,
+          "duration_seconds": 83.4
+        }
+      ],
+      "aggregate": {
+        "mean_pass_rate": 0.89,
+        "total_passed": 15,
+        "total_assertions": 17,
+        "mean_duration_seconds": 67.6
+      }
+    }
+  ],
+  "delta": {
+    "pass_rate": "+0.11 (89% → 100%)",
+    "duration": "+66.0s (67.6s → 133.6s, Skill 版本更慢但更全面)"
+  }
+}

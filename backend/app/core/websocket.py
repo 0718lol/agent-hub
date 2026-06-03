@@ -79,18 +79,24 @@ class ConnectionManager:
     async def _redis_listener(self):
         """Background listener subscribing to the Redis broadcast channel.
         Processes distributed broadcast events and forwards them locally.
+        Uses exponential backoff on connection failures (1s → 2s → 4s → ... → 30s).
         """
         from redis.exceptions import ConnectionError, TimeoutError
 
         from app.core.redis import redis_manager
 
         logger.info("Initializing Redis Pub/Sub WebSocket listener background task...")
+        backoff = 1  # 指数退避起始秒数
+        max_backoff = 30  # 最大退避秒数
 
         while True:
             if not await redis_manager.check_connection():
-                # Redis not online, wait and retry later
-                await asyncio.sleep(5)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
                 continue
+
+            # 连接成功，重置退避
+            backoff = 1
 
             pubsub = None
             try:
@@ -120,9 +126,10 @@ class ConnectionManager:
                             logger.error(f"Unexpected error in Redis Pub/Sub listener loop: {e}")
                             await asyncio.sleep(1)
             except Exception as e:
-                logger.warning(f"Error subscribing to Redis Pub/Sub: {e}. Retrying in 5 seconds...")
+                logger.warning(f"Error subscribing to Redis Pub/Sub: {e}. Retrying in {backoff}s...")
                 redis_manager._is_connected = False
-                await asyncio.sleep(5)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
             finally:
                 try:
                     if pubsub:

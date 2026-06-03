@@ -3,7 +3,10 @@ import json
 import logging
 import re
 
-from app.core.database import get_messages, get_project_memory, save_memory_item
+from app.core.database import (
+    get_messages, get_project_memory, save_memory_item,
+    async_get_messages_cached, async_get_project_memory_cached, async_save_memory_item_cached,
+)
 from app.core.llm_client import llm_client
 from app.core.websocket import manager
 
@@ -29,8 +32,8 @@ async def trigger_background_reflection(conversation_id: str):
         logger.info("LLM Client is not configured. Skipping background memory reflection.")
         return
 
-    # 1. Fetch conversation messages
-    messages = get_messages(conversation_id, limit=40)
+    # 1. Fetch conversation messages（优先从 Redis 缓存读取）
+    messages = await async_get_messages_cached(conversation_id, limit=40)
     if len(messages) < 2:
         return  # Not enough conversation turns to reflect upon
 
@@ -114,12 +117,12 @@ async def trigger_background_reflection(conversation_id: str):
                 clean_json = re.sub(r"\n```$", "", clean_json)
                 clean_json = clean_json.strip()
 
-            # 6. Parse JSON and upsert to database
+            # 6. Parse JSON and upsert to database（优先写入 Redis 缓存）
             updated_data = json.loads(clean_json)
             keys_saved = []
             for key in ["tech_stack", "user_preference", "implemented_features", "pending_todos"]:
                 if updated_data.get(key):
-                    save_memory_item(conversation_id, key, str(updated_data[key]), source="system")
+                    await async_save_memory_item_cached(conversation_id, key, str(updated_data[key]), source="system")
                     keys_saved.append(key)
 
             # Successfully saved the memory, register the history fingerprint to prevent redundant reflections

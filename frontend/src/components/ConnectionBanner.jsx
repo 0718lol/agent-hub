@@ -1,6 +1,6 @@
 import React, { useSyncExternalStore, useState, useEffect } from 'react'
 import { WifiOff, RefreshCw, Loader2 } from 'lucide-react'
-import { wsClient } from '../../utils/websocket'
+import { wsClient } from '../utils/websocket'
 
 const STATUS_MAP = {
   connected: { bg: 'var(--green)', color: '#fff', icon: null, text: null },

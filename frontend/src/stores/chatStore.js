@@ -1,5 +1,12 @@
 import { create } from 'zustand'
 
+/** 从消息文本中提取关键词生成对话名称 */
+function generateConvName(text) {
+  if (!text || !text.trim()) return null
+  const cleaned = text.trim().replace(/[\n\r]+/g, ' ').slice(0, 30)
+  return cleaned.length > 20 ? cleaned.slice(0, 20) + '...' : cleaned
+}
+
 /** Map backend conversation to frontend shape */
 function mapConversation(c) {
   return {
@@ -52,6 +59,13 @@ export const useChatStore = create((set, get) => ({
     set((state) => ({
       conversations: state.conversations.map((c) =>
         c.id === conversationId ? { ...c, archived: true } : c
+      ),
+    })),
+
+  renameConversation: (conversationId, newName) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === conversationId ? { ...c, name: newName } : c
       ),
     })),
 
@@ -133,12 +147,20 @@ export const useChatStore = create((set, get) => ({
         // 如果提供了 id，检查是否已存在（防止重复）
         if (message.id && conv.messages.some((m) => m.id === message.id)) return conv
         const msgId = message.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2))
-        return {
+        let updatedConv = {
           ...conv,
           messages: [...conv.messages, { ...message, id: msgId, timestamp: message.timestamp || new Date().toISOString() }],
           updatedAt: Date.now(),
           unread: message.sender !== 'user' && conversationId !== state.activeConversationId,
         }
+        // 首次用户消息时，自动根据内容生成对话名称
+        if (message.sender === 'user' && conv.messages.length === 0) {
+          const autoName = generateConvName(message.content?.text || '')
+          if (autoName) {
+            updatedConv = { ...updatedConv, name: autoName }
+          }
+        }
+        return updatedConv
       }),
     })),
 
@@ -149,6 +171,14 @@ export const useChatStore = create((set, get) => ({
       ),
       typingAgents: { ...state.typingAgents, [conversationId]: new Set() },
       thinkingAgents: { ...state.thinkingAgents, [conversationId]: {} },
+    })),
+
+  deleteMessage: (conversationId, messageId) =>
+    set((state) => ({
+      conversations: state.conversations.map((conv) => {
+        if (conv.id !== conversationId) return conv
+        return { ...conv, messages: conv.messages.filter((m) => m.id !== messageId) }
+      }),
     })),
 
   updateLastAgentMessage: (conversationId, senderId, text, streaming) =>
