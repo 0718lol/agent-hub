@@ -1,16 +1,43 @@
 """Conversation and message CRUD endpoints."""
+from pydantic import BaseModel
+from typing import Optional
 from fastapi import APIRouter, Query
 from app.core.database import (
-    get_messages, get_conversations, clear_messages, search_messages,
+    get_messages, get_conversations, clear_messages, search_messages, create_conversation,
     async_get_messages_cached, async_get_conversations_cached, async_clear_messages_cached,
 )
 
 router = APIRouter(tags=["conversations"])
 
 
+class ConversationCreateRequest(BaseModel):
+    id: str
+    type: str = "single"
+    name: str
+    avatar: Optional[str] = None
+    agent_id: Optional[str] = None
+    agents: Optional[list[str]] = None
+    preview: str = ""
+
+
 @router.get("/conversations")
 async def list_conversations():
     return await async_get_conversations_cached()
+
+
+@router.post("/conversations")
+async def create_conv(req: ConversationCreateRequest):
+    """创建新对话。"""
+    create_conversation(
+        conv_id=req.id,
+        conv_type=req.type,
+        name=req.name,
+        avatar=req.avatar or '',
+        agent_id=req.agent_id,
+        agents=req.agents,
+        preview=req.preview,
+    )
+    return {"status": "created", "id": req.id}
 
 
 @router.get("/conversations/{conversation_id}/messages")

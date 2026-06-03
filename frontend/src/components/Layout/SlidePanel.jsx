@@ -4,6 +4,8 @@ import { useCanvasStore } from '../../stores/canvasStore'
 import DiffViewer from '../Canvas/DiffViewer'
 import WebPreview from '../Canvas/WebPreview'
 import DeployPanel from '../Canvas/DeployPanel'
+import ToolsPanel from './ToolsPanel'
+import KnowledgePanel from './KnowledgePanel'
 
 const MIN_WIDTH = 280
 const MAX_WIDTH = 680
@@ -68,41 +70,55 @@ export default function SlidePanel() {
         title="拖拽调节宽度"
       />
 
-      <div className="slide-panel-header">
-        <div className="slide-panel-tabs">
-          {content === 'code' && (
-            <>
-              <button
-                className={`slide-panel-tab ${tab === 'code' ? 'active' : ''}`}
-                onClick={() => setTab('code')}
-              >
-                代码
-              </button>
-              <button
-                className={`slide-panel-tab ${tab === 'preview' ? 'active' : ''}`}
-                onClick={() => setTab('preview')}
-              >
-                预览
-              </button>
-              <button
-                className={`slide-panel-tab ${tab === 'deploy' ? 'active' : ''}`}
-                onClick={() => setTab('deploy')}
-              >
-                部署
-              </button>
-            </>
-          )}
+      {/* Header: 只有 code 类型显示 tab 切换 */}
+      {content === 'code' && (
+        <div className="slide-panel-header">
+          <div className="slide-panel-tabs">
+            <button
+              className={`slide-panel-tab ${tab === 'code' ? 'active' : ''}`}
+              onClick={() => setTab('code')}
+            >
+              代码
+            </button>
+            <button
+              className={`slide-panel-tab ${tab === 'preview' ? 'active' : ''}`}
+              onClick={() => setTab('preview')}
+            >
+              预览
+            </button>
+            <button
+              className={`slide-panel-tab ${tab === 'deploy' ? 'active' : ''}`}
+              onClick={() => setTab('deploy')}
+            >
+              部署
+            </button>
+          </div>
+          <div className="slide-panel-actions">
+            <button className="slide-panel-btn" onClick={() => toggleSlidePanel(content)} title="关闭面板">
+              <X size={16} />
+            </button>
+          </div>
         </div>
-        <div className="slide-panel-actions">
-          <button className="slide-panel-btn" onClick={() => toggleSlidePanel(content)} title="关闭面板">
-            <X size={16} />
-          </button>
+      )}
+
+      {/* Header: tools/knowledge 类型只有关闭按钮 */}
+      {(content === 'tools' || content === 'knowledge') && (
+        <div className="slide-panel-header">
+          <div className="slide-panel-tabs" />
+          <div className="slide-panel-actions">
+            <button className="slide-panel-btn" onClick={() => toggleSlidePanel(content)} title="关闭面板">
+              <X size={16} />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
+
       <div className="slide-panel-content">
         {content === 'code' && tab === 'code' && <DiffViewer />}
         {content === 'code' && tab === 'preview' && <WebPreview />}
         {content === 'code' && tab === 'deploy' && <DeployPanel />}
+        {content === 'tools' && <ToolsPanel />}
+        {content === 'knowledge' && <KnowledgePanel />}
       </div>
     </div>
   )

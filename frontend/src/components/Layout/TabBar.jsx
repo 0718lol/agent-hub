@@ -15,11 +15,13 @@ const TabItem = memo(function TabItem({ tab, conv, isActive, onActivate, onClose
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
-      <IconAvatar
-        agentId={tab.agentId || conv?.agentId}
-        iconKey={conv?.type === 'group' ? 'group' : undefined}
-        size={14}
-      />
+      <div style={{ width: 14, height: 14, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderRadius: 3 }}>
+        <IconAvatar
+          agentId={tab.agentId || conv?.agentId}
+          iconKey={conv?.type === 'group' ? 'group' : undefined}
+          size={14}
+        />
+      </div>
       <span className="tab-item-title">{tab.title}</span>
       {isPm ? (
         <Lock size={10} className="tab-lock" title="默认对话，不可关闭" />
@@ -55,16 +57,31 @@ export default function TabBar() {
   }, [activeTabId])
 
   const handleNewTab = () => {
-    // Create a new conversation for the active tab's agent
     const activeTab = openTabs.find((t) => t.id === activeTabId)
     const agentId = activeTab?.agentId || 'agent_pm'
     const convId = `conv_${agentId}_${Date.now()}`
-    const name = `新对话${useTabStore.getState().openTabs.length + 1}`
+    // 生成不重复的 "新对话N" 名称
+    const agentConvs = useChatStore.getState().conversations.filter(
+      (c) => c.agentId === agentId && !c.archived
+    )
+    const usedNames = new Set(agentConvs.map((c) => c.name))
+    let n = agentConvs.length + 1
+    let name = `新对话${n}`
+    while (usedNames.has(name)) {
+      n++
+      name = `新对话${n}`
+    }
     useChatStore.getState().addConversation({
       id: convId, type: 'single', agentId,
       name, avatar: null,
       messages: [], pinned: false, unread: false, updatedAt: Date.now(),
     })
+    // 同步到后端
+    fetch('/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: convId, type: 'single', name, agent_id: agentId }),
+    }).catch(() => {})
     useTabStore.getState().openTab(convId, name, agentId)
   }
 

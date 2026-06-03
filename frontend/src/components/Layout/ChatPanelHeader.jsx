@@ -1,5 +1,5 @@
 import React, { useState, memo } from 'react'
-import { Code2, GitBranch, LayoutList, Menu, PanelRightClose, MoreHorizontal, Share2 } from 'lucide-react'
+import { Code2, GitBranch, LayoutList, Menu, PanelRightClose, MoreHorizontal, Share2, Wrench, BookOpen } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -86,6 +86,22 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
         >
           <GitBranch size={20} />
           <span className="icon-tooltip">协作图</span>
+        </button>
+        <button
+          className="header-icon-btn"
+          onClick={() => toggleSlidePanel('tools')}
+          style={slidePanelOpen && slidePanelContent === 'tools' ? { color: 'var(--accent)' } : undefined}
+        >
+          <Wrench size={20} />
+          <span className="icon-tooltip">工具</span>
+        </button>
+        <button
+          className="header-icon-btn"
+          onClick={() => toggleSlidePanel('knowledge')}
+          style={slidePanelOpen && slidePanelContent === 'knowledge' ? { color: 'var(--accent)' } : undefined}
+        >
+          <BookOpen size={20} />
+          <span className="icon-tooltip">知识库</span>
         </button>
         <button
           className="header-icon-btn"

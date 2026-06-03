@@ -43,12 +43,10 @@ async def list_uploads():
 async def upload_file(file: UploadFile = File(...)):
     """Upload a file to the server."""
     import uuid as _uuid
-    _os_path = os.path.dirname(__file__)
-    _UPLOAD_DIR = os.path.join(_os_path, "..", "..", "data", "uploads")
-    os.makedirs(_UPLOAD_DIR, exist_ok=True)
-    ext = _os.path.splitext(file.filename or "")[1]
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    ext = os.path.splitext(file.filename or "")[1]
     stored_name = f"{_uuid.uuid4().hex}{ext}"
-    file_path = _os.path.join(UPLOAD_DIR, stored_name)
+    file_path = os.path.join(UPLOAD_DIR, stored_name)
     content = await file.read()
     with open(file_path, "wb") as f:
         f.write(content)

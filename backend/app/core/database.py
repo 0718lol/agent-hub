@@ -139,6 +139,7 @@ class KnowledgeDoc(SQLModel, table=True):
     chunk_count: int = Field(default=0)
     char_count: int = Field(default=0)
     status: str = Field(default='ready')
+    knowledge_base_id: Optional[str] = Field(default=None, index=True)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -227,6 +228,17 @@ def init_db():
     except Exception:
         # Fallback: if Alembic fails (e.g. first run, no migrations), use create_all
         SQLModel.metadata.create_all(engine)
+
+    # 增量迁移：给 knowledge_docs 表添加 knowledge_base_id 列（如果不存在）
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cols = [row[1] for row in conn.execute('PRAGMA table_info(knowledge_docs)').fetchall()]
+        if 'knowledge_base_id' not in cols:
+            conn.execute('ALTER TABLE knowledge_docs ADD COLUMN knowledge_base_id TEXT')
+            conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
     # Populate default conversations using SQLModel Sessions
     with Session(engine) as session:

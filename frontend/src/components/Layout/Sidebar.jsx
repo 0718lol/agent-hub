@@ -10,8 +10,6 @@ import AgentCreator from '../Chat/AgentCreator'
 /* 资源子类定义 */
 const RESOURCE_CATEGORIES = [
   { key: 'skills', label: '技能', icon: Wrench },
-  { key: 'tools', label: '工具', icon: Hammer },
-  { key: 'knowledge', label: '知识库', icon: BookOpen },
   { key: 'models', label: '模型', icon: Cpu },
 ]
 
@@ -36,6 +34,7 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
   const [dragIndex, setDragIndex] = useState(null)
   const [confirmDeleteAgentId, setConfirmDeleteAgentId] = useState(null)
   const [renameDialog, setRenameDialog] = useState(null) // { convId, name } or null
+  const [renameError, setRenameError] = useState('')
   const [tooltip, setTooltip] = useState(null) // { text, x, y } or null
 
   // 分组折叠状态
@@ -95,6 +94,16 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
   }, [])
 
   const closeContextMenu = () => setContextMenu(null)
+
+  // 检查同一 agent 下是否存在重名对话
+  const checkDuplicateName = useCallback((convId, newName) => {
+    const conv = useChatStore.getState().conversations.find((c) => c.id === convId)
+    if (!conv) return false
+    const agentId = conv.agentId
+    return useChatStore.getState().conversations.some(
+      (c) => c.id !== convId && c.agentId === agentId && c.name === newName
+    )
+  }, [])
 
   const handleDeleteAgent = async (e, agentId) => {
     e.stopPropagation()
@@ -224,8 +233,43 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
                     className={`conversation-item ${isActive ? 'active' : ''}`}
                     style={{ paddingLeft: 'var(--space-5)' }}
                     onClick={() => {
-                      const convId = `conv_${agent.agent_id}`
-                      openTab(convId, agent.name, agent.agent_id)
+                      // 生成唯一对话 ID
+                      const convId = `conv_${agent.agent_id}_${Date.now()}`
+                      // 计算 "新对话N" 名称（不与该 agent 已有对话重名）
+                      const agentConvs = useChatStore.getState().conversations.filter(
+                        (c) => c.agentId === agent.agent_id && !c.archived
+                      )
+                      const usedNames = new Set(agentConvs.map((c) => c.name))
+                      let n = agentConvs.length + 1
+                      let convName = `新对话${n}`
+                      while (usedNames.has(convName)) {
+                        n++
+                        convName = `新对话${n}`
+                      }
+                      // 创建本地对话
+                      useChatStore.getState().addConversation({
+                        id: convId,
+                        type: 'single',
+                        agentId: agent.agent_id,
+                        name: convName,
+                        avatar: null,
+                        messages: [],
+                        pinned: false,
+                        unread: false,
+                        updatedAt: Date.now(),
+                      })
+                      // 同步到后端
+                      fetch('/api/conversations', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          id: convId,
+                          type: 'single',
+                          name: convName,
+                          agent_id: agent.agent_id,
+                        }),
+                      }).catch(() => {})
+                      openTab(convId, convName, agent.agent_id)
                     }}
                   >
                     <div className="conv-avatar" style={{ width: 32, height: 32 }}>
@@ -463,25 +507,35 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
             <input
               autoFocus
               value={renameDialog.name}
-              onChange={(e) => setRenameDialog({ ...renameDialog, name: e.target.value })}
+              onChange={(e) => { setRenameDialog({ ...renameDialog, name: e.target.value }); setRenameError('') }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && renameDialog.name.trim()) {
+                  if (checkDuplicateName(renameDialog.convId, renameDialog.name.trim())) {
+                    setRenameError('该 Agent 下已存在同名对话，请换一个名称')
+                    return
+                  }
                   useChatStore.getState().renameConversation(renameDialog.convId, renameDialog.name.trim())
                   setRenameDialog(null)
+                  setRenameError('')
                 }
               }}
               style={{
                 width: '100%', padding: '10px 14px',
-                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                background: 'var(--bg-secondary)',
+                border: renameError ? '1px solid var(--red, #ef4444)' : '1px solid var(--border)',
                 borderRadius: 'var(--radius-md)', color: 'var(--text-primary)',
                 fontSize: 'var(--text-sm)', fontFamily: 'var(--font-ui)', outline: 'none',
-                marginBottom: 'var(--space-4)',
               }}
               placeholder="输入对话名称"
             />
-            <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
+            {renameError && (
+              <div style={{ fontSize: 12, color: 'var(--red, #ef4444)', marginTop: 6, marginBottom: 'var(--space-2)' }}>
+                {renameError}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', marginTop: 'var(--space-4)' }}>
               <button
-                onClick={() => setRenameDialog(null)}
+                onClick={() => { setRenameDialog(null); setRenameError('') }}
                 style={{
                   padding: '8px 20px', borderRadius: 'var(--radius-md)',
                   border: '1px solid var(--border)', background: 'var(--bg-secondary)',
@@ -494,9 +548,14 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
               <button
                 onClick={() => {
                   if (renameDialog.name.trim()) {
+                    if (checkDuplicateName(renameDialog.convId, renameDialog.name.trim())) {
+                      setRenameError('该 Agent 下已存在同名对话，请换一个名称')
+                      return
+                    }
                     useChatStore.getState().renameConversation(renameDialog.convId, renameDialog.name.trim())
                   }
                   setRenameDialog(null)
+                  setRenameError('')
                 }}
                 disabled={!renameDialog.name.trim()}
                 style={{

@@ -6,7 +6,7 @@ export const useCanvasStore = create((set) => ({
 
   // Slide panel state
   slidePanelOpen: false,
-  slidePanelContent: 'code', // 'code' | 'dag' | 'task'
+  slidePanelContent: 'code', // 'code' | 'dag' | 'task' | 'tools' | 'knowledge'
   slidePanelTab: 'code',
   slidePanelWidth: (() => {
     try { const v = localStorage.getItem('agent-hub-slide-panel-width'); return v ? parseInt(v) : 380 }

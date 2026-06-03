@@ -45,12 +45,14 @@ from app.routers import (
     mcp as mcp_router,
     webhook as webhook_router,
     conversations as conversations_router,
+    knowledge as knowledge_router,
     quality as quality_router,
     prompt as prompt_router,
     speech as speech_router,
     sandbox as sandbox_router,
     benchmark as benchmark_router,
     tools as tools_router,
+    adapters as adapters_router,
 )
 
 from app.core.logging_config import get_logger, RequestIdMiddleware, setup_logging
@@ -130,7 +132,7 @@ AGENTS = get_agents()
 
 # ---- Mount all routers ----
 app.include_router(agents_router.router, prefix="/api")
-app.include_router(uploads_router.router)
+app.include_router(uploads_router.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(cron_router.router, prefix="/api")
 app.include_router(workflows_router.router, prefix="/api")
@@ -144,12 +146,47 @@ app.include_router(sandbox_router.router, prefix="/api")
 app.include_router(benchmark_router.router, prefix="/api")
 app.include_router(ws_router.router)
 app.include_router(tools_router.router, prefix="/api")
+app.include_router(knowledge_router.router, prefix="/api")
+app.include_router(adapters_router.router, prefix="/api")
 
 # ---- Initialize database ----
 init_db()
 
 # ---- Load LLM config at startup ----
 load_llm_config(llm_client, settings)
+
+# ---- Load saved adapters and register as agents ----
+from app.adapters.adapter_agent import AdapterAgent
+from app.routers.adapters import load_saved_adapters, create_adapter, ADAPTER_CLASSES
+from app.adapters.registry import adapter_registry as _ar
+
+load_saved_adapters()
+
+# 预注册默认外部 Agent 适配器（即使未配置 API Key 也注册，前端靠它判断配置状态）
+_DEFAULT_ADAPTERS = {
+    "claude_code": {"adapter_type": "claude", "name": "Claude Code", "avatar": "/avatars/claude-code.svg"},
+    "codex": {"adapter_type": "codex", "name": "Codex", "avatar": "/avatars/codex.svg"},
+}
+for _aid, _meta in _DEFAULT_ADAPTERS.items():
+    if _aid not in _ar._adapters:
+        saved = _ar.get_config(_aid)
+        if saved:
+            create_adapter(_aid, saved, save=False)
+        else:
+            create_adapter(_aid, {"adapter_type": _meta["adapter_type"]}, save=False)
+
+# 把所有适配器 Agent 注册到全局 AGENTS 字典
+for _aid, _adapter in _ar._adapters.items():
+    if _aid not in AGENTS:
+        _meta = _DEFAULT_ADAPTERS.get(_aid, {})
+        AGENTS[_aid] = AdapterAgent(
+            agent_id=_aid,
+            name=_meta.get("name", _adapter.name),
+            adapter=_adapter,
+            avatar=_meta.get("avatar", "🤖"),
+            role=_adapter.description,
+        )
+        logger.info(f"Registered adapter agent: {_aid} ({_adapter.adapter_type})")
 
 
 # ---- Root & health endpoints ----

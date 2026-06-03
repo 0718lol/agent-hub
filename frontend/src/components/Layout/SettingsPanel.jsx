@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Sun, Moon, Trash2 } from 'lucide-react'
+import { Sun, Moon, Trash2, Key, ExternalLink, Check, X, Loader } from 'lucide-react'
 import { useThemeStore } from '../../stores/themeStore'
 import { useChatStore } from '../../stores/chatStore'
+import IconAvatar from '../IconAvatar'
 
 export default function SettingsPanel({ onClose }) {
   const theme = useThemeStore((s) => s.theme)
@@ -158,7 +159,8 @@ export default function SettingsPanel({ onClose }) {
   useEffect(() => {
     if (tab === 'cron') fetchCronTasks()
     if (tab === 'knowledge') fetchKnowledgeDocs()
-    if (tab === 'tools') fetchRuntimeTools()
+    if (tab === 'other') { fetchRuntimeTools(); fetchKnowledgeDocs() }
+    if (tab === 'adapters') fetchAdapters()
   }, [tab])
 
   // Knowledge base state
@@ -418,13 +420,117 @@ export default function SettingsPanel({ onClose }) {
 
   const tabs = [
     { id: 'llm', label: 'LLM 模型' },
+    { id: 'adapters', label: '外部 Agent' },
     { id: 'quality', label: '质量门' },
     { id: 'prompt', label: 'Prompt 分层' },
-    { id: 'tools', label: '🔧 工具' },
     { id: 'cron', label: '📅 自治' },
-    { id: 'knowledge', label: '📚 知识库' },
     { id: 'security', label: '🔒 安全' },
+    { id: 'other', label: '其他' },
   ]
+
+  // ---- Adapters state ----
+  const [adapters, setAdapters] = useState([])
+  const [adapterLoading, setAdapterLoading] = useState(false)
+  const [adapterMsg, setAdapterMsg] = useState('')
+  const [adapterEditing, setAdapterEditing] = useState(null) // agent_id being edited
+  const [adapterForm, setAdapterForm] = useState({ api_key: '', api_url: '', model: '' })
+  const [testingAdapter, setTestingAdapter] = useState(null)
+
+  const ADAPTER_META = {
+    claude_code: {
+      name: 'Claude Code',
+      icon: '/avatars/claude-code.svg',
+      description: 'Anthropic 最强代码 Agent，支持原生工具调用',
+      fields: [
+        { key: 'api_key', label: 'Anthropic API Key', placeholder: 'sk-ant-api03-...', type: 'password' },
+        { key: 'model', label: '模型', placeholder: 'claude-sonnet-4-20250514', type: 'text' },
+      ],
+      helpUrl: 'https://console.anthropic.com/settings/keys',
+    },
+    codex: {
+      name: 'Codex',
+      icon: '/avatars/codex.svg',
+      description: 'OpenAI Assistants API 代码 Agent，支持代码解释器和文件搜索',
+      fields: [
+        { key: 'api_key', label: 'OpenAI Assistants API Key', placeholder: 'sk-proj-...', type: 'password' },
+        { key: 'model', label: '模型', placeholder: 'gpt-4o', type: 'text' },
+      ],
+      helpUrl: 'https://platform.openai.com/api-keys',
+    },
+    coze: {
+      name: 'Coze',
+      icon: null,
+      description: '字节跳动 Agent 平台，支持插件和工作流',
+      fields: [
+        { key: 'api_key', label: 'Coze API Key', placeholder: 'pat_...', type: 'password' },
+        { key: 'api_url', label: 'API 地址（可选）', placeholder: 'https://api.coze.cn', type: 'text' },
+      ],
+      helpUrl: 'https://www.coze.cn/docs/guides/authentication',
+    },
+  }
+
+  const fetchAdapters = async () => {
+    setAdapterLoading(true)
+    try {
+      const resp = await fetch('/api/adapters')
+      const data = await resp.json()
+      setAdapters(data.adapters || [])
+    } catch {}
+    setAdapterLoading(false)
+  }
+
+  const handleSaveAdapter = async (agentId) => {
+    const meta = ADAPTER_META[agentId]
+    if (!meta) return
+    const adapterType = agentId === 'claude_code' ? 'claude' : agentId === 'codex' ? 'codex' : 'coze'
+    try {
+      const resp = await fetch('/api/adapters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: agentId,
+          adapter_type: adapterType,
+          name: meta.name,
+          api_key: adapterForm.api_key,
+          api_url: adapterForm.api_url,
+          model: adapterForm.model,
+        }),
+      })
+      const data = await resp.json()
+      if (data.status === 'ok') {
+        setAdapterMsg(`${meta.name} 配置已保存`)
+        setAdapterEditing(null)
+        setAdapterForm({ api_key: '', api_url: '', model: '' })
+        fetchAdapters()
+      } else {
+        setAdapterMsg(`保存失败: ${data.error || '未知错误'}`)
+      }
+    } catch {
+      setAdapterMsg('保存失败，请检查后端是否运行')
+    }
+    setTimeout(() => setAdapterMsg(''), 3000)
+  }
+
+  const handleTestAdapter = async (agentId) => {
+    setTestingAdapter(agentId)
+    try {
+      const resp = await fetch(`/api/adapters/${agentId}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: '你好，请简单介绍一下你自己。' }),
+      })
+      const data = await resp.json()
+      if (data.status === 'ok') {
+        setAdapterMsg(`测试成功: ${data.response?.slice(0, 100) || '正常响应'}`)
+      } else {
+        setAdapterMsg(`测试失败: ${data.error || '未知错误'}`)
+      }
+    } catch {
+      setAdapterMsg('测试失败，请检查网络连接')
+    }
+    setTestingAdapter(null)
+    setTimeout(() => setAdapterMsg(''), 5000)
+  }
 
   // Light theme styles
   const labelStyle = {
@@ -725,6 +831,156 @@ export default function SettingsPanel({ onClose }) {
           </>
         )}
 
+        {/* ====== TAB: Adapters (外部 Agent) ====== */}
+        {tab === 'adapters' && (
+          <>
+            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: '#eef2ff', border: '1px solid #c7d2fe', fontSize: 12, color: '#4f46e5' }}>
+              配置对应 Agent 专属平台 API Key 即可启用，该类专属 API 同时承载大模型推理与 Agent 工具调度双重能力，区别于通用大模型 API，配置完成后可在对话列表选用 Claude Code、Codex 等外部 Agent。
+            </div>
+
+            {adapterMsg && (
+              <div style={{
+                padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13,
+                background: adapterMsg.includes('成功') || adapterMsg.includes('已保存') ? '#ecfdf5' : '#fef2f2',
+                border: `1px solid ${adapterMsg.includes('成功') || adapterMsg.includes('已保存') ? '#a7f3d0' : '#fecaca'}`,
+                color: adapterMsg.includes('成功') || adapterMsg.includes('已保存') ? '#059669' : '#dc2626',
+              }}>{adapterMsg}</div>
+            )}
+
+            {Object.entries(ADAPTER_META).map(([agentId, meta]) => {
+              const adapter = adapters.find((a) => a.agent_id === agentId)
+              const isConfigured = adapter?.configured ?? false
+              const isEditing = adapterEditing === agentId
+
+              return (
+                <div key={agentId} style={{
+                  border: '1px solid #e5e7eb', borderRadius: 12, marginBottom: 16,
+                  overflow: 'hidden',
+                }}>
+                  {/* 头部 */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px',
+                    background: isConfigured ? '#f0fdf4' : '#f9fafb',
+                    borderBottom: isEditing ? '1px solid #e5e7eb' : 'none',
+                  }}>
+                    <div style={{
+                      width: 36, height: 36, borderRadius: 8,
+                      background: '#f3f4f6', border: '1px solid #e5e7eb',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      overflow: 'hidden', flexShrink: 0,
+                    }}>
+                      <IconAvatar agentId={agentId} size={20} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: '#1f2937' }}>{meta.name}</div>
+                      <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>{meta.description}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      {isConfigured ? (
+                        <span style={{ fontSize: 11, color: '#059669', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <Check size={12} /> 已配置
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 11, color: '#9ca3af' }}>未配置</span>
+                      )}
+                      <button
+                        onClick={() => {
+                          if (isEditing) {
+                            setAdapterEditing(null)
+                            setAdapterForm({ api_key: '', api_url: '', model: '' })
+                          } else {
+                            setAdapterEditing(agentId)
+                            setAdapterForm({
+                              api_key: '',
+                              api_url: '',
+                              model: adapter?.model || '',
+                            })
+                          }
+                        }}
+                        style={{
+                          padding: '5px 12px', borderRadius: 6, fontSize: 12,
+                          background: isEditing ? '#f3f4f6' : '#4f46e5',
+                          border: isEditing ? '1px solid #e5e7eb' : '1px solid #4f46e5',
+                          color: isEditing ? '#6b7280' : 'white',
+                          cursor: 'pointer', fontWeight: 500,
+                        }}
+                      >
+                        {isEditing ? '取消' : isConfigured ? '修改' : '配置'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 编辑表单 */}
+                  {isEditing && (
+                    <div style={{ padding: '16px', background: 'white' }}>
+                      {meta.fields.map((field) => (
+                        <div key={field.key} style={{ marginBottom: 12 }}>
+                          <label style={{ fontSize: 12, color: '#6b7280', marginBottom: 4, display: 'block', fontWeight: 500 }}>
+                            {field.label}
+                          </label>
+                          <input
+                            type={field.type}
+                            value={adapterForm[field.key]}
+                            onChange={(e) => setAdapterForm({ ...adapterForm, [field.key]: e.target.value })}
+                            placeholder={field.placeholder}
+                            style={{
+                              width: '100%', padding: '9px 12px',
+                              background: '#f9fafb', border: '1px solid #e5e7eb',
+                              borderRadius: 8, fontSize: 13, color: '#1f2937',
+                              outline: 'none', fontFamily: 'inherit',
+                            }}
+                          />
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                        <button
+                          onClick={() => handleSaveAdapter(agentId)}
+                          style={{
+                            padding: '8px 20px', borderRadius: 8, fontSize: 13,
+                            background: '#4f46e5', border: 'none', color: 'white',
+                            cursor: 'pointer', fontWeight: 600,
+                          }}
+                        >
+                          保存配置
+                        </button>
+                        {isConfigured && (
+                          <button
+                            onClick={() => handleTestAdapter(agentId)}
+                            disabled={testingAdapter === agentId}
+                            style={{
+                              padding: '8px 16px', borderRadius: 8, fontSize: 13,
+                              background: '#ecfdf5', border: '1px solid #a7f3d0',
+                              color: '#059669', cursor: 'pointer', fontWeight: 500,
+                              display: 'flex', alignItems: 'center', gap: 4,
+                            }}
+                          >
+                            {testingAdapter === agentId ? (
+                              <><Loader size={12} style={{ animation: 'spin 1s linear infinite' }} /> 测试中...</>
+                            ) : '测试连接'}
+                          </button>
+                        )}
+                        <a
+                          href={meta.helpUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            padding: '8px 16px', borderRadius: 8, fontSize: 13,
+                            background: '#f3f4f6', border: '1px solid #e5e7eb',
+                            color: '#6b7280', cursor: 'pointer', fontWeight: 500,
+                            textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4,
+                          }}
+                        >
+                          <ExternalLink size={12} /> 获取 Key
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </>
+        )}
+
         {/* ====== TAB: Quality Gate ====== */}
         {tab === 'quality' && (
           <>
@@ -930,8 +1186,8 @@ export default function SettingsPanel({ onClose }) {
           </>
         )}
 
-        {/* ====== TAB: Runtime Tools ====== */}
-        {tab === 'tools' && (
+        {/* ====== TAB: Other (Tools + Knowledge) ====== */}
+        {tab === 'other' && (
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
@@ -1027,12 +1283,8 @@ export default function SettingsPanel({ onClose }) {
                 </div>
               )}
             </div>
-          </>
-        )}
 
-        {/* ====== TAB: Knowledge Base (RAG) ====== */}
-        {tab === 'knowledge' && (
-          <>
+            {/* ===== 知识库管理 ===== */}
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
               background: '#f0fdf4', border: '1px solid #bbf7d0',
