@@ -162,3 +162,43 @@ agent-hub/
 │   └── package.json
 └── README.md
 ```
+
+## 测试覆盖
+
+**后端测试：269 个**（14 个测试文件）
+
+| 测试类别 | 测试数 | 覆盖模块 |
+|---------|--------|---------|
+| 安全专项测试 | 60 | SSRF 防护（31）、路径穿越防护（18）、MCP 命令注入防护（6）、加密模块（5） |
+| 质量门禁测试 | 30 | 规则引擎、评分逻辑、输出类型检测 |
+| 输出校验测试 | 26 | 反模式检测、格式合规、标签检查 |
+| 集成测试 | 75 | Agent 编排流（7）、WebSocket 生命周期（16）、数据库 CRUD（33） |
+| AST 沙盒测试 | 19 | 基本执行（7）、安全拦截（6）、边界情况（6） |
+| 其他测试 | 59 | Agent 回复逻辑、API 端点、配置持久化、工具注册 |
+
+**前端测试：91 个**（7 个测试文件）
+
+| 测试类别 | 测试数 | 覆盖模块 |
+|---------|--------|---------|
+| Store 测试 | 55 | chatStore（25）、canvasStore（18）、agentStore（12） |
+| WebSocket 测试 | 12 | 连接、鉴权、消息收发、断开重连 |
+| 组件测试 | 17 | SettingsPanel（Tab 切换、设置保存、主题切换） |
+| 其他测试 | 7 | themeStore、uploadStore |
+
+**核心模块覆盖率**
+
+| 模块 | 覆盖率 |
+|------|--------|
+| quality_standards.py | 87% |
+| config_persistence.py | 80% |
+| crud/messages.py | 98% |
+| crud/agents.py | 91% |
+| crud/cron.py | 91% |
+| config.py | 76% |
+| _engine.py | 76% |
+| pm.py | 76% |
+| ast_interpreter.py | 58% |
+| agent_orchestrator.py | 62% |
+| websocket.py | 47% |
+
+**CI/CD**: GitHub Actions 自动运行 Ruff + pytest + ESLint + Bandit + Vitest
