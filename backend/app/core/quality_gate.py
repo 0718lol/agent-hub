@@ -24,12 +24,12 @@ from app.core.quality_standards import STANDARDS, QualityReport, detect_output_t
 
 class QualityGate:
     def __init__(self, enabled: bool = True, max_retries: int = 1,
-                 use_llm_judge: bool = False, best_of_n: int = 1,
+                 use_llm_judge: bool = False, best_of_n: int = 2,
                  max_concurrent_generations: int = 3):
         self.enabled = enabled
         self.max_retries = max_retries
         self.use_llm_judge = use_llm_judge
-        self.best_of_n = best_of_n  # 1 = disabled, 3 = generate 3 candidates pick best
+        self.best_of_n = best_of_n  # 2 = generate 2 candidates pick best (default)
         # Semaphore to limit concurrent LLM generation calls and protect API quota
         self._generation_semaphore = asyncio.Semaphore(max_concurrent_generations)
 
