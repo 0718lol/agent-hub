@@ -1,4 +1,4 @@
-﻿"""Agent orchestration — WebSocket message handling, group chat graph,
+"""Agent orchestration — WebSocket message handling, group chat graph,
 streaming agent replies, and checkpoint recovery.
 
 Extracted from main.py to keep the app factory focused on HTTP routes
@@ -107,6 +107,149 @@ def get_agents() -> dict:
 async def _remove_custom_agent(agent_id: str):
     """Delete a custom agent via the concurrency-safe agent registry."""
     await agent_registry.unregister_custom_agent(agent_id)
+
+
+# ============================================================
+# Output validation — format checks, anti-pattern detection
+# ============================================================
+
+# Question patterns that break the demo flow
+QUESTION_PATTERNS = [
+    (r'[^。\n]*[？?]\s*$', "ends with question"),
+    (r'你想[^，。\n]*[？?]', "direct question to user"),
+    (r'请问[^，。\n]*[？?]', "polite question to user"),
+    (r'需要[^，。\n]*确认[^，。\n]*[？?]', "confirmation request"),
+    (r'你希望[^，。\n]*[？?]', "preference question"),
+    (r'是否需要[^，。\n]*[？?]', "yes/no question"),
+    (r'能告诉我[^，。\n]*[？?]', "information request"),
+    (r'有什么[^，。\n]*需求[^，。\n]*[？?]', "requirement question"),
+]
+
+# Expected format rules per agent type
+FORMAT_RULES = {
+    "agent_frontend": {
+        "required_any": ["```html", "```jsx", "```vue", "```css", "<!DOCTYPE", "<html"],
+        "min_length": 100,
+    },
+    "agent_backend": {
+        "required_any": ["```python", "```sql", "```yaml", "```json", "```bash",
+                         "```dockerfile", "def ", "import ", "class ", "CREATE TABLE"],
+        "min_length": 80,
+    },
+    "agent_tester": {
+        "required_any": ["```python", "def test_", "import pytest", "assert "],
+        "min_length": 50,
+    },
+    "agent_devops": {
+        "required_any": ["```bash", "```dockerfile", "```yaml", "docker", "Dockerfile"],
+        "min_length": 30,
+    },
+    "agent_pm": {
+        "required_any": ["[assign:"],
+        "min_length": 20,
+    },
+    "agent_builder": {
+        "required_any": ["{"],
+        "min_length": 20,
+    },
+}
+
+# Valid agent IDs for [assign:] tags
+VALID_AGENT_IDS = {
+    "agent_frontend", "agent_backend", "agent_tester",
+    "agent_devops", "agent_designer", "agent_builder",
+}
+
+# Format instructions for retry prompts
+FORMAT_INSTRUCTIONS = {
+    "agent_frontend": (
+        "你必须输出完整可运行的代码。根据任务选择合适格式：\n"
+        "- 页面/游戏 → ```html 代码块，以 <!DOCTYPE html> 开头\n"
+        "- React 组件 → ```jsx 代码块\n"
+        "- 样式 → ```css 代码块\n"
+        "不要问用户任何问题，直接实现。"
+    ),
+    "agent_backend": (
+        "你必须输出完整可运行的代码。根据任务选择合适格式：\n"
+        "- API/接口 → ```python 代码块（FastAPI）\n"
+        "- 数据库 → ```sql 代码块\n"
+        "- 配置 → ```yaml 代码块\n"
+        "不要问用户任何问题，直接实现。"
+    ),
+    "agent_pm": (
+        "你必须输出任务分配标签。\n"
+        "在回复末尾添加 [assign:agent_frontend] [assign:agent_backend] 等标签。\n"
+        "不要问用户任何问题，直接拆解任务。"
+    ),
+    "agent_tester": (
+        "你必须输出测试代码。\n"
+        "用 ```python 代码块包裹，包含 def test_ 开头的测试函数。"
+    ),
+    "agent_devops": (
+        "你必须输出部署配置。\n"
+        "用 ```bash 或 ```yaml 或 ```dockerfile 代码块包裹。"
+    ),
+}
+
+
+def detect_questions(text: str) -> str | None:
+    """Detect question patterns that would break the demo flow."""
+    # Exclude [ask_user:...] tags
+    clean = re.sub(r'\[ask_user:.*?\]', '', text, flags=re.DOTALL)
+    # Exclude code blocks
+    clean = re.sub(r'```.*?```', '', clean, flags=re.DOTALL)
+    # Exclude quoted text
+    clean = re.sub(r'"[^"]*[？?]"', '', clean)
+    clean = re.sub(r"'[^']*[？?]'", '', clean)
+    for pattern, reason in QUESTION_PATTERNS:
+        if re.search(pattern, clean):
+            return reason
+    return None
+
+
+def check_format_compliance(text: str, agent_id: str) -> tuple[bool, str]:
+    """Check if output matches expected format for the agent type."""
+    rules = FORMAT_RULES.get(agent_id)
+    if not rules:
+        return True, "no rules"
+    if len(text.strip()) < rules["min_length"]:
+        return False, f"output too short ({len(text.strip())} < {rules['min_length']})"
+    if not any(r in text for r in rules["required_any"]):
+        return False, f"missing expected content for {agent_id}"
+    return True, "passed"
+
+
+def check_tag_format(text: str, agent_id: str) -> tuple[bool, str]:
+    """Check tag format correctness."""
+    if agent_id == "agent_pm":
+        tags = re.findall(r'\[assign:(\w+)\]', text)
+        if not tags:
+            return False, "PM must output [assign:agent_xxx] tags"
+        for tag in tags:
+            if tag not in VALID_AGENT_IDS:
+                return False, f"invalid agent_id in [assign:{tag}]"
+    return True, "passed"
+
+
+def validate_agent_output(text: str, agent_id: str) -> tuple[bool, str]:
+    """Full output validation. Returns (passed, reason)."""
+    # Skip validation for error responses
+    error_indicators = ["[LLM Error", "[LLM 调用出错", "[Agent 回复出错", "出错", "Error"]
+    if any(indicator in text for indicator in error_indicators):
+        return True, "error response skipped"
+    # 1. Anti-pattern detection (questions)
+    q = detect_questions(text)
+    if q:
+        return False, f"anti-pattern: {q}"
+    # 2. Format compliance
+    ok, reason = check_format_compliance(text, agent_id)
+    if not ok:
+        return False, f"format: {reason}"
+    # 3. Tag format
+    ok, reason = check_tag_format(text, agent_id)
+    if not ok:
+        return False, f"tag: {reason}"
+    return True, "passed"
 
 
 # ============================================================
@@ -381,6 +524,44 @@ async def stream_agent_reply(
 
     if not raw_text:
         raw_text = full_text
+
+    # ---- Format validation layer ----
+    if not stopped and full_text and full_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）"):
+        is_valid, reason = validate_agent_output(full_text, agent.agent_id)
+        if not is_valid:
+            logger.warning(f"Agent {agent.agent_id} format check failed: {reason}")
+            await manager.broadcast(conversation_id, {
+                "type": "message",
+                "conversation_id": conversation_id,
+                "sender": agent.agent_id,
+                "content": {"text": f"⚠️ 输出格式不符合要求（{reason}），正在重新生成..."},
+                "stream": True,
+            })
+            retry_prompt = (
+                f"你的上一次输出不符合要求：{reason}。"
+                f"请严格按照以下格式重新生成：\n"
+                f"{FORMAT_INSTRUCTIONS.get(agent.agent_id, '')}"
+                f"\n\n用户原始需求：{effective_text}"
+            )
+            retry_text = ""
+            async for chunk in agent.stream_reply(retry_prompt, history=history, conversation_id=conversation_id):
+                if stop_event and stop_event.is_set():
+                    break
+                retry_text += chunk
+            if retry_text.strip():
+                full_text = retry_text.strip()
+                raw_text = retry_text
+                # Re-validate once (no infinite loop)
+                is_valid2, reason2 = validate_agent_output(full_text, agent.agent_id)
+                if not is_valid2:
+                    logger.warning(f"Agent {agent.agent_id} retry still invalid: {reason2}")
+                    await manager.broadcast(conversation_id, {
+                        "type": "message",
+                        "conversation_id": conversation_id,
+                        "sender": agent.agent_id,
+                        "content": {"text": f"⚠️ 重试后仍不符合要求（{reason2}），已保留当前输出。"},
+                        "stream": True,
+                    })
 
     # ---- Auto self-reflection & retry ----
     if not stopped and agent.agent_id not in ("agent_builder", "agent_pm"):
