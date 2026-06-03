@@ -1,0 +1,401 @@
+﻿# AgentHub 技术架构文档
+
+## 1. 系统概述
+
+AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉/飞书中聊天一样，与多个预置 AI Agent 对话，驱动软件开发全流程——从需求拆解、UI 设计、前后端编码、测试到部署，全部在群聊界面中完成。
+
+核心设计原则：
+- **IM 优先**：所有交互基于聊天消息流，降低用户学习成本
+- **Agent 即插件**：每个 Agent 是独立的 Python 类，通过注册中心动态管理
+- **流式输出**：所有 LLM 响应通过 WebSocket 实时推送，支持中断
+- **质量自愈**：输出经过质量门禁检测，不合格自动重试
+
+## 2. 技术栈
+
+| 层级       | 技术                                                    |
+| ---------- | ------------------------------------------------------- |
+| 后端框架   | Python 3.12 + FastAPI + WebSocket                       |
+| 前端框架   | React 18 + Zustand + Vite                               |
+| 数据库     | SQLite (WAL 模式) + SQLModel (SQLAlchemy)               |
+| 缓存/广播  | Redis (可选，用于 WebSocket 多实例 Pub/Sub 广播)        |
+| LLM 客户端 | httpx，支持 OpenAI / Claude / Ollama 多后端             |
+| 协议       | MCP (Model Context Protocol) Stdio 桥接                 |
+| 容器化     | Docker + docker-compose                                 |
+| 代码质量   | Ruff (linter/formatter)                                 |
+
+## 3. 核心架构
+
+### 3.1 应用入口与生命周期
+
+- **位置**: backend/app/main.py
+- **框架**: FastAPI，使用 lifespan 上下文管理器处理启动/关闭
+- **启动时**: 初始化数据库 (init_db)、加载 LLM 配置、启动 DaemonScheduler、注册所有路由
+- **关闭时**: 停止 DaemonScheduler、关闭浏览器会话和终端会话
+- **中间件**: CORS、RequestId 日志追踪、API 密钥/IP 鉴权
+- **路由挂载**: 16 个独立路由模块，统一挂载在 /api 前缀下
+
+### 3.2 Agent 体系
+
+- **基类位置**: backend/app/agents/base.py
+- **注册中心位置**: backend/app/services/agent_registry.py
+
+**BaseAgent** 是所有 Agent 的抽象基类，提供：
+- stream_reply() — 流式生成回复，支持工具调用循环（最多 5 轮）
+- _build_messages() — 构建 LLM 消息数组，包含历史裁剪（约 12000 字符上限）
+- _get_tools_prompt() — 将工具描述注入系统提示词
+- PromptEngine 集成 — 自动检测任务类型，分层注入提示词
+
+**内置 Agent（7 个）**:
+
+| Agent ID         | 类名              | 职责                          |
+| ---------------- | ----------------- | ----------------------------- |
+| agent_pm         | PMAgent           | 规划需求、拆解任务、分配工作  |
+| agent_frontend   | FrontendAgent     | 开发 React 前端组件           |
+| agent_backend    | BackendAgent      | 编写 Python 后端 API          |
+| agent_tester     | TesterAgent       | 编写与执行 pytest 测试        |
+| agent_devops     | DevopsAgent       | 配置 Docker 容器和部署        |
+| agent_designer   | DesignerAgent     | UI/UX 设计及样式美化建议      |
+| agent_builder    | AgentBuilderAgent | 协助用户创建自定义 Agent      |
+
+**CustomAgent** (backend/app/agents/custom.py): 支持用户通过 [create_agent:{json}] 标签动态创建自定义 Agent，持久化到数据库。
+
+### 3.3 StateGraph 引擎
+
+- **位置**: backend/app/core/state_graph.py
+- **作用**: 管理多 Agent 之间的任务流转状态
+- **设计**: 基于 Pydantic 的 GraphState 模型，追踪已完成节点和已分配 Agent
+- **状态字段**:
+  - completed_nodes — 已完成的 Agent 节点列表
+  - assigned_agents — 被分配任务的 Agent 列表
+  - {agent}_response — 各 Agent 的输出结果（pm/designer/frontend/backend/tester/devops）
+  - {agent}_feedback — PM 对各 Agent 的反馈评价
+  - original_prompt — 用户原始输入
+- **兼容性**: 提供 get() / __getitem__() 字典式访问，支持 model_extra 动态字段
+- **HIL 支持**: 支持 Human-in-the-Loop 检查点持久化，用户可暂停/恢复流程
+
+### 3.4 Agent 编排流
+
+- **位置**: backend/app/services/agent_orchestrator.py
+- **核心流程**:
+
+用户消息 → WebSocket 接收 → PM Agent 拆解任务（输出包含 [assign:agent_xxx] 标签）→ 编排器解析标签分配任务 → 多 Agent 并行执行（asyncio.gather）→ 流式输出 → WebSocket 广播 → 前端渲染 → 质量门禁检测（不合格则自动重试）
+
+- **关键协议标签**:
+  - [assign:agent_xxx] — PM 指定任务分配给某个 Agent
+  - [thinking]...[/thinking] — Agent 思考过程，前端折叠展示
+  - [create_agent:{json}] — 动态创建自定义 Agent
+  - [tool_call:name]{params}[/tool_call] — Agent 调用运行时工具
+- **停止机制**: 每个会话维护独立的 asyncio.Event 停止信号，用户可通过 WebSocket 发送 stop 指令中断生成
+- **检查点恢复**: resume_graph_from_checkpoint() 支持从 HIL 检查点恢复执行
+
+### 3.5 WebSocket 双通道通信
+
+- **后端位置**: backend/app/core/websocket.py + backend/app/routers/ws.py
+- **前端位置**: frontend/src/utils/websocket.js
+- **端点**: ws://host/ws/{conversation_id}
+- **鉴权**: 支持 x-api-secret Header 或 ?token= Query 参数；无密钥时仅允许本机连接
+
+**ConnectionManager**:
+- 维护 active_connections: dict[str, set[WebSocket]]，按会话 ID 分组管理连接
+- 每个 WebSocket 绑定独立的 asyncio.Lock 防止并发写入冲突
+- 懒启动 Redis Pub/Sub 监听任务（首连接时触发）
+
+**广播策略**:
+- 优先通过 Redis Pub/Sub 发布到 agenthub:ws_broadcast 频道（支持多实例部署）
+- Redis 不可用时自动降级为本地广播
+- 消息类型: message, typing, thinking, code, deploy_status, task_status
+
+**前端 WSClient**:
+- 指数退避重连（1s 基础延迟，最大 30s）
+- 连接状态追踪: connected / reconnecting / disconnected
+- 状态变更监听器模式，UI 组件可订阅连接状态
+- 离线消息队列，重连后自动补发
+
+### 3.6 质量门禁
+
+- **位置**: backend/app/core/quality_gate.py + backend/app/core/quality_standards.py
+- **配置**: 可开关，支持 max_retries（重试次数）、best_of_n（候选数量）、use_llm_judge（LLM 评判）
+
+**评估流水线**:
+1. 从 Agent 输出中提取代码块
+2. 自动检测输出类型（html / python / api / document）
+3. 运行规则引擎检查（即时、确定性）
+4. 可选运行 LLM-as-Judge（语义评估）
+5. 不合格则注入反馈到提示词，自动重试
+6. Best-of-N: 并行生成 N 个候选，取最高分
+7. 广播质量报告到前端
+
+### 3.7 MCP 集成
+
+- **位置**: backend/app/core/mcp_bridge.py + backend/app/mcp_server.py
+- **作用**: 将 AgentHub 注册为 Claude Code 等外部工具的 MCP Server
+- **通信方式**: Stdio 管道，基于 JSON-RPC 协议
+- **提供工具**: agenthub_quality_judge, agenthub_complexity_judge, agenthub_alignment_judge
+- **生命周期**: MCPServerProcess 管理子进程的启动、通信、关闭
+
+### 3.8 工具系统
+
+- **位置**: backend/app/tools/ 目录
+- **基类**: AgentTool (backend/app/tools/registry.py)
+- **注册表**: ToolRegistry 全局单例，支持运行时注册/注销
+
+**内置工具**:
+
+| 工具模块                     | 功能               |
+| ---------------------------- | ------------------ |
+| browser_tools.py             | 浏览器自动化操作   |
+| code_agent_tools.py          | 代码生成与分析     |
+| code_interpreter_tools.py    | 代码执行沙盒       |
+| file_ops.py                  | 文件读写操作       |
+| http_request.py              | HTTP 请求发送      |
+| web_search.py                | 网页搜索           |
+| stateful_terminal_tool.py    | 有状态终端会话     |
+| block_editor_tools.py        | 块编辑器操作       |
+| judge_tools.py               | 质量评判工具       |
+
+工具通过 [tool_call:name]{params}[/tool_call] 协议在 LLM 输出中被识别和执行。
+
+### 3.9 LLM 客户端
+
+- **位置**: backend/app/core/llm_client.py
+- **传输**: httpx 异步 HTTP 客户端
+- **支持后端**: OpenAI API / Claude API / Ollama（本地模型）
+- **特性**:
+  - 流式输出 (chat_stream)
+  - 上下文优化 (ContextOptimizer) — 自动裁剪过长消息、过滤进度条噪音
+  - 配置持久化 (config_persistence.py) — LLM 设置保存/加载
+  - 错误自定义 (LLMAPIError) — 携带状态码和消息
+
+### 3.10 数据层
+
+- **数据库**: SQLite + SQLModel (SQLAlchemy ORM)
+- **位置**: backend/app/core/database.py + backend/app/core/_engine.py
+- **模型定义**: backend/app/core/models.py
+- **CRUD 操作**: backend/app/core/crud/
+- **WAL 模式**: 启用 Write-Ahead Logging，支持读写并发
+- **主要实体**: 会话 (Conversation)、消息 (Message)、制品 (Artifact)、自定义 Agent、HIL 检查点
+- **文件存储**: backend/app/core/file_storage.py，上传目录 data/uploads/
+
+## 4. 关键设计决策
+
+### 4.1 为什么用 WebSocket 而非 SSE？
+
+- SSE 是单向的（服务器到客户端），无法接收用户的 stop/read 消息
+- WebSocket 支持双向通信，用户可以随时中断生成
+- WebSocket 支持二进制数据传输（未来扩展文件/图片流）
+- 前端需要实时反馈连接状态（connected/reconnecting/disconnected），WebSocket 原生支持
+
+### 4.2 为什么用 SQLite 而非 PostgreSQL？
+
+- 项目定位是内部工具/挑战赛作品，不需要高并发
+- SQLite 零配置，开箱即用，无需额外部署
+- WAL 模式支持读写并发，足够应对 demo 场景
+- SQLModel/SQLAlchemy 抽象层使得未来切换到 PostgreSQL 只需改连接字符串
+
+### 4.3 为什么自建 StateGraph 而非 LangGraph？
+
+- LangGraph 依赖 LangChain 生态，引入重，增加维护负担
+- 自建 StateGraph 轻量（基于 Pydantic Model），完全可控
+- 更容易集成 WebSocket 流式推送和前端画布渲染
+- 支持自定义节点类型和动态 Agent 注册
+
+### 4.4 为什么用 Redis Pub/Sub 而非 Sticky Session？
+
+- 单实例部署时 Redis 是可选的，自动降级为本地广播
+- 多实例部署时，Redis Pub/Sub 确保所有连接都能收到消息
+- 比 Sticky Session 更灵活，不依赖负载均衡器配置
+- Redis 还可用于缓存、限流等其他场景
+
+## 5. 数据流
+
+用户输入 → WebSocket (/ws/{conversation_id}) → Agent 编排器接收消息并保存到数据库 → PM Agent 拆解任务（输出包含 [assign:agent_xxx] 标签）→ 编排器解析标签构建任务分配计划 → 多 Agent 并行执行（asyncio.gather）：
+
+- FrontendAgent: 生成 React 组件代码
+- BackendAgent: 生成 Python API 代码
+- TesterAgent: 生成 pytest 测试用例
+- DesignerAgent: 提供 UI/UX 设计建议
+
+→ 流式输出 → WebSocket 广播（typing → thinking → message）→ 代码块提取 → 前端预览面板渲染 → 质量门禁评估（规则引擎 + LLM Judge）：
+
+- 通过 → 保存制品 (Artifact)
+- 不通过 → 注入反馈，自动重试（最多 N 次）
+
+→ DevOps Agent 执行部署模拟 → deploy_status 消息 → 前端展示部署进度
+
+## 6. 目录结构
+
+```
+high agent-hub/
+├── backend/
+│   ├── app/
+│   │   ├── main.py                  # FastAPI 应用入口、中间件、路由挂载
+│   │   ├── mcp_server.py            # MCP Server 入口
+│   │   ├── agents/                  # Agent 定义
+│   │   │   ├── base.py              #   BaseAgent 基类
+│   │   │   ├── pm.py                #   PM Agent（任务拆解与分配）
+│   │   │   ├── frontend.py          #   Frontend Agent
+│   │   │   ├── backend_agent.py     #   Backend Agent
+│   │   │   ├── tester.py            #   Tester Agent
+│   │   │   ├── devops.py            #   DevOps Agent
+│   │   │   ├── designer.py          #   Designer Agent
+│   │   │   ├── builder.py           #   AgentBuilder Agent（创建自定义 Agent）
+│   │   │   ├── custom.py            #   CustomAgent（用户自定义）
+│   │   │   ├── harness_engine.py    #   Harness 评测引擎 Agent
+│   │   │   └── auto_evaluator.py    #   自动评估 Agent
+│   │   ├── core/                    # 核心基础设施
+│   │   │   ├── config.py            #   应用配置（Settings）
+│   │   │   ├── database.py          #   数据库入口（导出所有符号）
+│   │   │   ├── _engine.py           #   SQLAlchemy 引擎（打破循环依赖）
+│   │   │   ├── models.py            #   SQLModel 数据模型
+│   │   │   ├── crud/                #   CRUD 操作
+│   │   │   ├── llm_client.py        #   LLM 多后端客户端
+│   │   │   ├── websocket.py         #   WebSocket ConnectionManager
+│   │   │   ├── state_graph.py       #   StateGraph 引擎
+│   │   │   ├── quality_gate.py      #   质量门禁
+│   │   │   ├── quality_standards.py #   质量规则与评分标准
+│   │   │   ├── quality_retry.py     #   质量重试逻辑
+│   │   │   ├── mcp_bridge.py        #   MCP Stdio 桥接
+│   │   │   ├── mcp_client.py        #   MCP 客户端
+│   │   │   ├── prompt_engine.py     #   提示词引擎（分层注入）
+│   │   │   ├── redis.py             #   Redis 连接管理器
+│   │   │   ├── rag_engine.py        #   RAG 检索引擎
+│   │   │   ├── sandbox.py           #   代码沙盒
+│   │   │   ├── sandbox_manager.py   #   沙盒管理器
+│   │   │   ├── git_sandbox.py       #   Git 沙盒操作
+│   │   │   ├── repo_map.py          #   仓库结构映射
+│   │   │   ├── terminal.py          #   有状态终端管理器
+│   │   │   ├── speech.py            #   语音转文字
+│   │   │   ├── image_processor.py   #   图片处理
+│   │   │   ├── document_parser.py   #   文档解析
+│   │   │   ├── file_storage.py      #   文件存储
+│   │   │   ├── event_stream.py      #   事件流
+│   │   │   ├── metrics.py           #   指标收集
+│   │   │   ├── logging_config.py    #   结构化日志配置
+│   │   │   ├── config_persistence.py#   配置持久化
+│   │   │   ├── pipeline.py          #   数据管线
+│   │   │   ├── benchmark.py         #   基准测试
+│   │   │   ├── router.py            #   路由工具
+│   │   │   └── deps.py              #   FastAPI 依赖注入
+│   │   ├── routers/                 # API 路由
+│   │   │   ├── ws.py                #   WebSocket 端点
+│   │   │   ├── agents.py            #   Agent 管理
+│   │   │   ├── conversations.py     #   会话与消息 CRUD
+│   │   │   ├── settings.py          #   LLM & HIL 配置
+│   │   │   ├── quality.py           #   质量门禁设置
+│   │   │   ├── prompt.py            #   提示词引擎配置
+│   │   │   ├── mcp.py               #   MCP 工具
+│   │   │   ├── sandbox.py           #   代码沙盒执行
+│   │   │   ├── benchmark.py         #   基准测试执行
+│   │   │   ├── speech.py            #   STT 设置与转录
+│   │   │   ├── webhook.py           #   Slack & Telegram 回调
+│   │   │   ├── workflows.py         #   工作流导入/导出/编译
+│   │   │   ├── tools.py             #   工具列表与测试
+│   │   │   ├── uploads.py           #   文件上传
+│   │   │   ├── cron.py              #   定时任务管理
+│   │   │   └── harness_handler.py   #   Harness 评测处理
+│   │   ├── services/                # 业务服务
+│   │   │   ├── agent_orchestrator.py#   Agent 编排器（核心）
+│   │   │   ├── agent_registry.py    #   Agent 注册中心
+│   │   │   ├── memory_engine.py     #   记忆引擎
+│   │   │   ├── daemon_scheduler.py  #   后台守护调度器
+│   │   │   ├── detector.py          #   检测器
+│   │   │   └── webhook_gateway.py   #   Webhook 网关
+│   │   ├── tools/                   # 运行时工具
+│   │   │   ├── registry.py          #   AgentTool 基类 & ToolRegistry
+│   │   │   ├── browser_tools.py     #   浏览器自动化
+│   │   │   ├── code_agent_tools.py  #   代码生成与分析
+│   │   │   ├── code_interpreter_tools.py # 代码执行沙盒
+│   │   │   ├── file_ops.py          #   文件操作
+│   │   │   ├── http_request.py      #   HTTP 请求
+│   │   │   ├── web_search.py        #   网页搜索
+│   │   │   ├── stateful_terminal_tool.py # 有状态终端
+│   │   │   ├── block_editor_tools.py#   块编辑器
+│   │   │   ├── judge_tools.py       #   质量评判
+│   │   │   └── base.py              #   工具基类
+│   │   ├── prompts/                 # 提示词模板
+│   │   ├── models/                  # Pydantic 请求/响应模型
+│   │   ├── harness/                 # Harness 评测框架
+│   │   └── mock/                    # 测试 Mock 数据
+│   ├── data/                        # 运行时数据（SQLite、上传文件）
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx                  # 应用根组件
+│   │   ├── main.jsx                 # 入口文件
+│   │   ├── components/              # UI 组件
+│   │   │   ├── Chat/                #   聊天界面
+│   │   │   ├── Canvas/              #   代码预览画布
+│   │   │   ├── AgentCharacter/      #   Agent 角色展示
+│   │   │   ├── VirtualOffice/       #   虚拟办公室视图
+│   │   │   ├── Layout/              #   布局组件
+│   │   │   ├── Settings/            #   设置面板
+│   │   │   ├── ConnectionBanner.jsx #   连接状态横幅
+│   │   │   ├── ErrorBoundary.jsx    #   错误边界
+│   │   │   └── ThemeToggle.jsx      #   主题切换
+│   │   ├── stores/                  # Zustand 状态管理
+│   │   │   ├── chatStore.js         #   聊天状态
+│   │   │   ├── agentStore.js        #   Agent 状态
+│   │   │   ├── canvasStore.js       #   画布状态
+│   │   │   ├── tabStore.js          #   标签页状态
+│   │   │   ├── themeStore.js        #   主题状态
+│   │   │   └── uploadStore.js       #   上传状态
+│   │   ├── hooks/                   # React Hooks
+│   │   ├── utils/                   # 工具函数
+│   │   │   └── websocket.js         #   WebSocket 客户端
+│   │   ├── types/                   # TypeScript 类型定义
+│   │   └── styles/                  # 全局样式
+│   ├── index.html
+│   ├── vite.config.js
+│   └── package.json
+├── docs/                            # 项目文档
+├── skills/                          # 技能定义
+├── docker-compose.yml               # 开发环境编排
+├── docker-compose.prod.yml          # 生产环境编排
+├── ruff.toml                        # Python 代码风格配置
+└── CLAUDE.md                        # Claude Code 项目指令
+```
+
+## 7. 部署架构
+
+### 开发环境
+
+```bash
+# 后端
+cd backend && pip install -r requirements.txt && python -m app.main
+
+# 前端
+cd frontend && npm install && npm run dev
+```
+
+### Docker 部署
+
+```bash
+docker-compose up -d          # 开发环境
+docker-compose -f docker-compose.prod.yml up -d  # 生产环境
+```
+
+### 生产架构（可选）
+
+```
+                    +-------------+
+                    |   Nginx     |
+                    |  (反向代理)  |
+                    +------+------+
+                           |
+              +------------+------------+
+              |            |            |
+        +-----+-----+ +---+---+ +-----+-----+
+        | Backend-1 | | B-2   | | Backend-N |
+        | (FastAPI) | |       | |           |
+        +-----+-----+ +---+---+ +-----+-----+
+              |            |            |
+              +------------+------------+
+                           |
+                    +------+------+
+                    |    Redis    |
+                    | (Pub/Sub)   |
+                    +-------------+
+```
+
+多实例部署时，Redis Pub/Sub 确保 WebSocket 消息在所有实例间同步。单实例部署时 Redis 为可选组件。
