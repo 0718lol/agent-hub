@@ -54,8 +54,10 @@ class SelfDeployedAdapter(AgentAdapter):
         body = self._build_body(message, history, conversation_id)
 
         endpoint = self._get_endpoint()
+        # 默认启用 TLS 验证；本地服务可在 extra 中设置 skip_tls=true 跳过
+        skip_tls = self.config.extra.get("skip_tls", False)
         try:
-            async with httpx.AsyncClient(timeout=self.config.timeout, verify=False) as client:
+            async with httpx.AsyncClient(timeout=self.config.timeout, verify=not skip_tls) as client:
                 async with client.stream(
                     "POST",
                     endpoint,

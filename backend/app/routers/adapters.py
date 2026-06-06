@@ -16,6 +16,7 @@ import logging
 import asyncio
 import os
 import sys
+import shlex
 import subprocess
 from pydantic import BaseModel
 from typing import Optional
@@ -248,25 +249,27 @@ async def start_proxy():
         if si:
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-        # 清理可能残留的旧进程
+        # 清理可能残留的旧进程（端口为固定常量，非用户输入）
         for port in [OPENCODE_PORT, PROXY_PORT]:
             try:
+                # nosec B602: 固定端口号，无注入风险；Windows 需 shell 执行管道命令
                 out = subprocess.check_output(
                     f'netstat -ano | findstr ":{port}" | findstr LISTEN',
                     shell=True, text=True, stderr=subprocess.DEVNULL,
-                ).strip()
+                ).strip()  # nosec B602
                 if out:
                     pid = out.split()[-1]
-                    subprocess.run(f"taskkill /F /PID {pid}", shell=True,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if pid.isdigit():
+                        subprocess.run(["taskkill", "/F", "/PID", pid],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     await asyncio.sleep(1)
             except Exception:
                 pass
 
-        # 1. 启动 opencode serve
+        # 1. 启动 opencode serve（参数为固定常量，使用列表避免 shell 注入）
         opencode_proc = subprocess.Popen(
-            f"opencode serve --port {OPENCODE_PORT}",
-            shell=True, env=env, startupinfo=si,
+            ["opencode", "serve", "--port", str(OPENCODE_PORT)],
+            env=env, startupinfo=si,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         _proxy_processes["opencode"] = opencode_proc
@@ -275,10 +278,11 @@ async def start_proxy():
         if opencode_proc.poll() is not None:
             return {"error": "opencode serve 启动失败，请检查 OpenCode 是否已安装"}
 
-        # 2. 启动 Node.js 代理
+        # 2. 启动 Node.js 代理（脚本路径来自代码常量，非用户输入）
         proxy_proc = subprocess.Popen(
-            f'node "{proxy_script}" --port {PROXY_PORT} --opencode-url http://127.0.0.1:{OPENCODE_PORT}',
-            shell=True, env=env, cwd=project_root, startupinfo=si,
+            ["node", proxy_script, "--port", str(PROXY_PORT),
+             "--opencode-url", f"http://127.0.0.1:{OPENCODE_PORT}"],
+            env=env, cwd=project_root, startupinfo=si,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         _proxy_processes["proxy"] = proxy_proc
@@ -304,8 +308,8 @@ async def stop_proxy():
         try:
             proc.terminate()
             if sys.platform == "win32":
-                # Windows: taskkill 杀掉整个进程树
-                subprocess.run(f"taskkill /F /T /PID {proc.pid}", shell=True,
+                # Windows: taskkill 杀掉整个进程树（pid 为系统分配的整数，无注入风险）
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             stopped.append(name)
         except Exception:
