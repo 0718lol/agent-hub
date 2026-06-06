@@ -10,6 +10,24 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
+@pytest.fixture(autouse=True)
+def test_env():
+    """Set test environment variables for all tests."""
+    os.environ["AGENTHUB_DB_PATH"] = ":memory:"
+    os.environ["AGENTHUB_ENCRYPT_KEY"] = "test-key-12345"
+    yield
+
+
+@pytest.fixture(autouse=True)
+def setup_database():
+    """Auto-create all tables before each test, drop after."""
+    from app.core._engine import engine
+    from sqlmodel import SQLModel
+    SQLModel.metadata.create_all(engine)
+    yield
+    SQLModel.metadata.drop_all(engine)
+
+
 @pytest.fixture
 def mock_llm_client():
     """Mock LLM client that returns predictable responses."""
@@ -44,15 +62,6 @@ def mock_ws_manager():
 def sample_conversation_id():
     return "conv_test_001"
 
-
-
-@pytest.fixture(autouse=True)
-def test_env():
-    """Set test environment variables for all tests."""
-    os.environ["AGENTHUB_DB_PATH"] = ":memory:"
-    os.environ["AGENTHUB_ENCRYPT_KEY"] = "test-key-12345"
-    yield
-    # No cleanup needed for env vars in test context
 
 @pytest.fixture
 def tmp_sandbox(tmp_path):

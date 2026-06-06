@@ -686,7 +686,7 @@ def update_latest_artifact_quality(conversation_id: str, agent_id: str, score: i
         statement = select(Artifact).where(
             Artifact.conversation_id == conversation_id,
             Artifact.agent_id == agent_id,
-            Artifact.quality_score == None
+            Artifact.quality_score.is_(None)
         )
         results = session.exec(statement).all()
         for art in results:
@@ -756,6 +756,7 @@ def get_artifacts_grouped(conversation_id: str = None, limit: int = 50) -> list[
 # ============================================================
 
 import asyncio
+
 
 async def async_save_message(conversation_id, sender, content, streaming=False):
     return await asyncio.to_thread(save_message, conversation_id, sender, content, streaming)

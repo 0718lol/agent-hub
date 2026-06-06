@@ -3,20 +3,24 @@
 支持多知识库，每个知识库对应一个 chromadb collection。
 """
 
-import os
 import json
-import uuid
 import logging
+import os
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from sqlmodel import col, select
 
 from app.core.database import (
-    Session, engine, KnowledgeDoc,
-    save_knowledge_doc, delete_knowledge_doc,
+    KnowledgeDoc,
+    Session,
+    delete_knowledge_doc,
+    engine,
+    save_knowledge_doc,
 )
-from sqlmodel import select, col
 
 logger = logging.getLogger("knowledge_router")
 router = APIRouter(tags=["knowledge"])
@@ -84,7 +88,7 @@ async def list_knowledge_bases():
     # 也统计没有 knowledge_base_id 的旧文档（归入"默认知识库"）
     with Session(engine) as session:
         orphan_docs = session.exec(
-            select(KnowledgeDoc).where(KnowledgeDoc.knowledge_base_id == None)
+            select(KnowledgeDoc).where(KnowledgeDoc.knowledge_base_id.is_(None))
         ).all()
     if orphan_docs:
         bases.append({
@@ -126,7 +130,7 @@ async def get_knowledge_base(kb_id: str):
         # 默认知识库：返回没有 knowledge_base_id 的文档
         with Session(engine) as session:
             docs = session.exec(
-                select(KnowledgeDoc).where(KnowledgeDoc.knowledge_base_id == None)
+                select(KnowledgeDoc).where(KnowledgeDoc.knowledge_base_id.is_(None))
             ).all()
         return {
             "id": "__default__",
@@ -266,7 +270,7 @@ async def upload_file_to_kb(kb_id: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="无法解析文件内容")
 
     # 分块
-    from app.core.rag_engine import split_text, _get_or_create_collection
+    from app.core.rag_engine import _get_or_create_collection, split_text
     chunks = split_text(text)
     if not chunks:
         FileStorageManager.delete(stored_name)

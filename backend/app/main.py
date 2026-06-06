@@ -37,24 +37,56 @@ from app.core.config import settings
 from app.core.config_persistence import load_llm_config, save_llm_config
 from app.core.database import init_db
 from app.core.llm_client import llm_client
-from app.core.logging_config import get_logger, RequestIdMiddleware, setup_logging
+from app.core.logging_config import RequestIdMiddleware, get_logger, setup_logging
+from app.routers import (
+    adapters as adapters_router,
+)
 from app.routers import (
     agents as agents_router,
-    uploads as uploads_router,
-    settings as settings_router,
-    cron as cron_router,
-    workflows as workflows_router,
-    mcp as mcp_router,
-    webhook as webhook_router,
-    conversations as conversations_router,
-    knowledge as knowledge_router,
-    quality as quality_router,
-    prompt as prompt_router,
-    speech as speech_router,
-    sandbox as sandbox_router,
+)
+from app.routers import (
     benchmark as benchmark_router,
+)
+from app.routers import (
+    conversations as conversations_router,
+)
+from app.routers import (
+    cron as cron_router,
+)
+from app.routers import (
+    knowledge as knowledge_router,
+)
+from app.routers import (
+    mcp as mcp_router,
+)
+from app.routers import (
+    prompt as prompt_router,
+)
+from app.routers import (
+    quality as quality_router,
+)
+from app.routers import (
+    sandbox as sandbox_router,
+)
+from app.routers import (
+    settings as settings_router,
+)
+from app.routers import (
+    speech as speech_router,
+)
+from app.routers import (
     tools as tools_router,
-    adapters as adapters_router,
+)
+from app.routers import (
+    uploads as uploads_router,
+)
+from app.routers import (
+    webhook as webhook_router,
+)
+from app.routers import (
+    workflows as workflows_router,
+)
+from app.routers import (
     ws as ws_router,
 )
 from app.services.agent_orchestrator import get_agents
@@ -129,6 +161,7 @@ async def api_security_middleware(request: Request, call_next):
 
 # ---- Agent registry ----
 from app.services.agent_registry import agent_registry
+
 AGENTS = get_agents()
 
 # ---- Mount all routers ----
@@ -158,8 +191,8 @@ load_llm_config(llm_client, settings)
 
 # ---- Load saved adapters and register as agents ----
 from app.adapters.adapter_agent import AdapterAgent
-from app.routers.adapters import load_saved_adapters, create_adapter, ADAPTER_CLASSES
 from app.adapters.registry import adapter_registry as _ar
+from app.routers.adapters import ADAPTER_CLASSES, create_adapter, load_saved_adapters
 
 load_saved_adapters()
 

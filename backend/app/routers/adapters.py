@@ -11,16 +11,17 @@
 - GET  /api/proxy/status — 查询代理状态
 """
 
+import asyncio
 import json
 import logging
-import asyncio
 import os
-import sys
 import shlex
 import subprocess
-from pydantic import BaseModel
+import sys
 from typing import Optional
+
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.adapters.base import AdapterConfig
 from app.adapters.registry import adapter_registry
@@ -48,7 +49,7 @@ except ImportError as e:
     logger.warning(f"CozeAdapter unavailable: {e}")
 
 try:
-    from app.adapters.self_deployed_adapter import SelfDeployedAdapter, DifyAdapter
+    from app.adapters.self_deployed_adapter import DifyAdapter, SelfDeployedAdapter
     ADAPTER_CLASSES["self_deployed"] = SelfDeployedAdapter
     ADAPTER_CLASSES["dify"] = DifyAdapter
 except ImportError as e:
@@ -94,8 +95,8 @@ def create_adapter(agent_id: str, config_dict: dict, save: bool = True) -> bool:
 
     # 同步更新 AGENTS 字典中的 AdapterAgent 包装器
     try:
-        from app.services.agent_orchestrator import get_agents
         from app.adapters.adapter_agent import AdapterAgent
+        from app.services.agent_orchestrator import get_agents
         agents = get_agents()
         if agent_id in agents:
             old = agents[agent_id]

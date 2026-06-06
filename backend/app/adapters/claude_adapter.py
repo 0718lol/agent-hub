@@ -9,14 +9,17 @@
 
 import json
 import logging
-import httpx
 from typing import AsyncGenerator
 
-from app.adapters.base import AgentAdapter, AdapterConfig
+import httpx
+
+from app.adapters.base import AdapterConfig, AgentAdapter
 from app.adapters.tool_converter import (
-    get_project_tools, to_claude_tools,
-    parse_claude_tool_use, execute_tool,
+    execute_tool,
+    get_project_tools,
+    parse_claude_tool_use,
     supports_tool_calling,
+    to_claude_tools,
 )
 
 logger = logging.getLogger("claude_adapter")

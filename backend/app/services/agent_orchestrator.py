@@ -12,14 +12,14 @@ import uuid
 from typing import Any
 
 from app.core.database import (
+    async_get_messages_cached,
+    async_save_message_cached,
     get_messages,
     get_pending_hil_checkpoint,
     resolve_hil_checkpoint,
     save_artifact,
     save_message,
     update_latest_artifact_quality,
-    async_get_messages_cached,
-    async_save_message_cached,
 )
 from app.core.llm_client import llm_client
 from app.core.metrics import metrics

@@ -8,10 +8,11 @@
 
 import json
 import logging
-import httpx
 from typing import AsyncGenerator
 
-from app.adapters.base import AgentAdapter, AdapterConfig
+import httpx
+
+from app.adapters.base import AdapterConfig, AgentAdapter
 
 logger = logging.getLogger("coze_adapter")
 

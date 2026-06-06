@@ -8,10 +8,11 @@ Dify 为默认实现，其他平台通过继承并重写 _build_body / _parse_ev
 
 import json
 import logging
-import httpx
 from typing import AsyncGenerator
 
-from app.adapters.base import AgentAdapter, AdapterConfig
+import httpx
+
+from app.adapters.base import AdapterConfig, AgentAdapter
 
 logger = logging.getLogger("self_deployed_adapter")
 

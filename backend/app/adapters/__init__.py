@@ -12,7 +12,7 @@
 前端通过统一的 WebSocket 流式消息接收结果，无需感知底层 Agent 类型。
 """
 
-from app.adapters.base import AgentAdapter, AdapterConfig, AdapterResult
+from app.adapters.base import AdapterConfig, AdapterResult, AgentAdapter
 from app.adapters.registry import adapter_registry
 
 __all__ = ["AgentAdapter", "AdapterConfig", "AdapterResult", "adapter_registry"]

@@ -1,7 +1,8 @@
 """Conversation and message CRUD endpoints."""
-from pydantic import BaseModel
 from typing import Optional
+
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 
 from app.core.async_wrappers import (
     async_clear_messages,
@@ -10,8 +11,14 @@ from app.core.async_wrappers import (
     async_search_messages,
 )
 from app.core.database import (
-    get_messages, get_conversations, clear_messages, search_messages, create_conversation,
-    async_get_messages_cached, async_get_conversations_cached, async_clear_messages_cached,
+    async_clear_messages_cached,
+    async_get_conversations_cached,
+    async_get_messages_cached,
+    clear_messages,
+    create_conversation,
+    get_conversations,
+    get_messages,
+    search_messages,
 )
 
 router = APIRouter(tags=["conversations"])

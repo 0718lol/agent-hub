@@ -7,7 +7,7 @@
 import logging
 from typing import AsyncGenerator
 
-from app.adapters.base import AgentAdapter, AdapterConfig
+from app.adapters.base import AdapterConfig, AgentAdapter
 
 logger = logging.getLogger("self_built_adapter")
 

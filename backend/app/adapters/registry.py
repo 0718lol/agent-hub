@@ -7,11 +7,12 @@
 - 持久化适配器配置到 JSON 文件
 """
 
-import os
 import json
 import logging
+import os
 from typing import Optional
-from app.adapters.base import AgentAdapter, AdapterConfig
+
+from app.adapters.base import AdapterConfig, AgentAdapter
 
 logger = logging.getLogger("adapter_registry")
 

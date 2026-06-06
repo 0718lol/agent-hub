@@ -3,6 +3,7 @@ import time
 
 import redis.asyncio as aioredis
 from redis.asyncio import ConnectionPool
+
 from app.core.config import settings
 
 logger = logging.getLogger("redis_client")

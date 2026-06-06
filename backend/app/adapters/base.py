@@ -7,7 +7,7 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import AsyncGenerator, Any, Optional
+from typing import Any, AsyncGenerator, Optional
 
 logger = logging.getLogger("adapter_base")
 

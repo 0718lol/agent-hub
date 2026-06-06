@@ -19,9 +19,9 @@
     await cache.delete_pattern("msg:conv_123:*")
 """
 import json
-import time
 import logging
-from typing import Optional, Any
+import time
+from typing import Any, Optional
 
 logger = logging.getLogger("redis_cache")
 

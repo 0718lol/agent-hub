@@ -9,14 +9,17 @@
 
 import json
 import logging
-import httpx
 from typing import AsyncGenerator
 
-from app.adapters.base import AgentAdapter, AdapterConfig
+import httpx
+
+from app.adapters.base import AdapterConfig, AgentAdapter
 from app.adapters.tool_converter import (
-    get_project_tools, to_openai_tools,
-    parse_openai_tool_calls, execute_tool,
+    execute_tool,
+    get_project_tools,
+    parse_openai_tool_calls,
     supports_tool_calling,
+    to_openai_tools,
 )
 
 logger = logging.getLogger("codex_adapter")
