@@ -13,6 +13,41 @@ from typing import Any
 logger = logging.getLogger("tool_converter")
 
 
+def supports_tool_calling(model: str = "", api_url: str = "") -> bool:
+    """探测 API 是否支持工具调用（function calling / tool_use）。
+
+    基于模型名和 API 地址的启发式判断：
+    - Claude 系列：所有模型都支持 tool_use
+    - OpenAI：gpt-4o, gpt-4-turbo, gpt-3.5-turbo 等支持
+    - DeepSeek：deepseek-chat, deepseek-reasoner 支持
+    - Qwen：qwen-plus, qwen-turbo, qwen-max 支持
+    - 其他：默认不支持，需要用户手动选择 agent 模式
+    """
+    m = (model or "").lower()
+    u = (api_url or "").lower()
+
+    # Claude 系列
+    if "claude" in m or "anthropic" in u:
+        return True
+
+    # OpenAI 系列
+    if any(k in m for k in ("gpt-4o", "gpt-4-turbo", "gpt-4-1106", "gpt-3.5-turbo", "o1", "o3")):
+        return True
+    if "openai" in u:
+        return True
+
+    # DeepSeek
+    if "deepseek" in m:
+        return True
+
+    # Qwen / 通义千问
+    if any(k in m for k in ("qwen-plus", "qwen-turbo", "qwen-max", "qwen-long")):
+        return True
+
+    # 未知模型，不支持
+    return False
+
+
 def get_project_tools(enabled_tools: list[str] = None) -> list[dict]:
     """获取项目中已注册的工具，返回原始定义。"""
     try:

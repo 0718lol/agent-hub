@@ -1,21 +1,18 @@
-import React, { useState, useMemo, useCallback, useRef } from 'react'
-import { Plus, Settings, Pin, MoreHorizontal, X, PanelLeftClose, PanelLeftOpen, ChevronRight, Search, Bot, Wrench, BookOpen, Cpu, FolderOpen, Hammer, Trash2, Lock, Edit3 } from 'lucide-react'
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { Plus, Settings, Pin, MoreHorizontal, X, PanelLeftClose, PanelLeftOpen, ChevronRight, Search, Bot, Cpu, Globe, Trash2, Lock, Edit3 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useTabStore } from '../../stores/tabStore'
 import SettingsPanel from './SettingsPanel'
 import IconAvatar from '../IconAvatar'
-import AgentCreator from '../Chat/AgentCreator'
-
-/* 资源子类定义 */
-const RESOURCE_CATEGORIES = [
-  { key: 'skills', label: '技能', icon: Wrench },
-  { key: 'models', label: '模型', icon: Cpu },
-]
+import AgentSelector from '../Chat/AgentSelector'
+import LocalAgentSelector from '../Chat/LocalAgentSelector'
 
 export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
   const conversations = useChatStore((s) => s.conversations)
   const agents = useAgentStore((s) => s.agents)
+  const adapterStatus = useAgentStore((s) => s.adapterStatus)
+  const fetchAdapterStatus = useAgentStore((s) => s.fetchAdapterStatus)
   const togglePin = useChatStore((s) => s.togglePin)
   const archiveConversation = useChatStore((s) => s.archiveConversation)
   const reorderConversations = useChatStore((s) => s.reorderConversations)
@@ -29,7 +26,12 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
 
   const [collapsed, setCollapsed] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [showCreator, setShowCreator] = useState(false)
+  const [settingsTab, setSettingsTab] = useState('llm')
+  const [settingsEditAgent, setSettingsEditAgent] = useState(null)
+  const [showAgentMenu, setShowAgentMenu] = useState(false)
+  const [showSelector, setShowSelector] = useState(false)
+  const [showLocalSelector, setShowLocalSelector] = useState(false)
+  const addBtnRef = useRef(null)
   const [contextMenu, setContextMenu] = useState(null)
   const [dragIndex, setDragIndex] = useState(null)
   const [confirmDeleteAgentId, setConfirmDeleteAgentId] = useState(null)
@@ -39,27 +41,61 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
 
   // 分组折叠状态
   const [agentsExpanded, setAgentsExpanded] = useState(true)
-  const [resourcesExpanded, setResourcesExpanded] = useState(true)
-  const [resourceExpanded, setResourceExpanded] = useState({})
+  const [subExpanded, setSubExpanded] = useState({ self: true, external: true, local: true })
   const [searchQuery, setSearchQuery] = useState('')
 
   // 新对话计数器，用于生成默认名称 "新对话1", "新对话2" ...
   const convCounterRef = useRef(1)
 
+  // 启动时加载适配器状态
+  useEffect(() => { fetchAdapterStatus() }, [])
+
   // PM 不可删除的 ID
   const PM_ID = 'agent_pm'
 
-  // 智能体列表：PM 常驻第一，其余按 agentStore 顺序，排除 builder
+  // 智能体列表：PM 常驻第一，其余按 agentStore 顺序，排除 builder，加上已配置的本地 Agent
   const sidebarAgents = useMemo(() => {
     const visible = agents.filter((a) =>
       a.agent_id !== 'agent_builder' &&
       !useAgentStore.getState().deletedPresetIds.includes(a.agent_id)
     )
+    // 追加已配置的本地 Agent（不在 preset 列表中的）
+    const presetIds = new Set(visible.map((a) => a.agent_id))
+    for (const [agentId, status] of Object.entries(adapterStatus)) {
+      if (status.adapter_type === 'self_deployed' && status.configured && !presetIds.has(agentId)) {
+        visible.push({
+          agent_id: agentId,
+          name: status.display_name || status.name || agentId,
+          role: status.display_desc || status.model || '本地 Agent',
+          avatar: status.display_avatar || null,
+          status: 'idle',
+          agent_type: 'external',
+          adapter_type: 'self_deployed',
+        })
+      }
+    }
     // PM 固定第一位
     const pm = visible.find((a) => a.agent_id === PM_ID)
     const rest = visible.filter((a) => a.agent_id !== PM_ID)
     return pm ? [pm, ...rest] : rest
-  }, [agents])
+  }, [agents, adapterStatus])
+
+  // 分类：自建 / 外部 / 本地
+  const agentGroups = useMemo(() => {
+    const selfBuilt = []
+    const external = []
+    const local = []
+    for (const a of sidebarAgents) {
+      if (a.agent_type === 'self') {
+        selfBuilt.push(a)
+      } else if (a.adapter_type === 'self_deployed' || a.agent_id.startsWith('local_agent_')) {
+        local.push(a)
+      } else {
+        external.push(a)
+      }
+    }
+    return { self: selfBuilt, external, local }
+  }, [sidebarAgents])
 
   // 当前激活 agent 的历史对话（过滤 + 搜索）
   const historyConversations = useMemo(() => {
@@ -122,10 +158,6 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
     return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
   }
 
-  const toggleResource = (key) => {
-    setResourceExpanded((prev) => ({ ...prev, [key]: !prev[key] }))
-  }
-
   // HTML5 Drag
   const handleDragStart = useCallback((e, index) => {
     setDragIndex(index)
@@ -162,24 +194,17 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
             </div>
           </div>
 
-          <div className="sidebar-section">
-            <div className="sidebar-section-header" style={{ justifyContent: 'center' }} title="资源">
-              <FolderOpen size={20} style={{ color: 'var(--text-secondary)' }} />
-            </div>
-          </div>
-
           <div style={{ flex: 1 }} />
 
           <div className="sidebar-footer">
-            <div className="sidebar-footer-item" onClick={() => setShowSettings(true)} title="设置" style={{ justifyContent: 'center' }}>
+            <div className="sidebar-footer-item" onClick={() => { setSettingsTab('llm'); setShowSettings(true) }} title="设置" style={{ justifyContent: 'center' }}>
               <Settings size={16} />
             </div>
           </div>
         </div>
 
         {/* Modals */}
-        {showCreator && <AgentCreator onClose={() => setShowCreator(false)} onBack={() => setShowCreator(false)} />}
-        {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+        {showSettings && <SettingsPanel onClose={() => { setShowSettings(false); setSettingsEditAgent(null) }} defaultTab={settingsTab} editAgentId={settingsEditAgent} />}
       </>
     )
   }
@@ -202,15 +227,19 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
         <div className="sidebar-scroll">
         {/* ===== 智能体分组 ===== */}
         <div className="sidebar-section">
-          <div className="sidebar-section-header" onClick={() => setAgentsExpanded(!agentsExpanded)}>
-            <div className="sidebar-section-title" style={{ fontSize: 'var(--text-sm)', textTransform: 'none', letterSpacing: 0 }}>
-              <ChevronRight size={14} className={`sidebar-section-chevron ${agentsExpanded ? 'open' : ''}`} />
-              <Bot size={16} />
+          <div className="sidebar-section-header" onClick={() => setAgentsExpanded(!agentsExpanded)} style={{ padding: '10px var(--space-3)' }}>
+            <div className="sidebar-section-title" style={{ fontSize: 15, fontWeight: 600, textTransform: 'none', letterSpacing: 0 }}>
+              <ChevronRight size={15} className={`sidebar-section-chevron ${agentsExpanded ? 'open' : ''}`} />
+              <Bot size={17} />
               <span>智能体</span>
             </div>
             <button
+              ref={addBtnRef}
               className="sidebar-section-add"
-              onClick={(e) => { e.stopPropagation(); setShowCreator(true) }}
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowAgentMenu(prev => !prev)
+              }}
               title="新建Agent"
               onMouseEnter={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect()
@@ -224,129 +253,98 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
 
           {agentsExpanded && (
             <div style={{ paddingBottom: 'var(--space-1)' }}>
-              {sidebarAgents.map((agent) => {
-                const isActive = activeAgentId === agent.agent_id
-                const isAgentRunning = openTabs.some((t) => t.agentId === agent.agent_id)
+              {[
+                { key: 'self', label: '自建 Agent', icon: Bot, items: agentGroups.self },
+                { key: 'external', label: '外部 Agent', icon: Globe, items: agentGroups.external },
+                { key: 'local', label: '本地 Agent', icon: Cpu, items: agentGroups.local },
+              ].filter((g) => g.items.length > 0).map((group) => {
+                const GroupIcon = group.icon
+                const isOpen = subExpanded[group.key]
                 return (
-                  <div
-                    key={agent.agent_id}
-                    className={`conversation-item ${isActive ? 'active' : ''}`}
-                    style={{ paddingLeft: 'var(--space-5)' }}
-                    onClick={() => {
-                      // 生成唯一对话 ID
-                      const convId = `conv_${agent.agent_id}_${Date.now()}`
-                      // 计算 "新对话N" 名称（不与该 agent 已有对话重名）
-                      const agentConvs = useChatStore.getState().conversations.filter(
-                        (c) => c.agentId === agent.agent_id && !c.archived
-                      )
-                      const usedNames = new Set(agentConvs.map((c) => c.name))
-                      let n = agentConvs.length + 1
-                      let convName = `新对话${n}`
-                      while (usedNames.has(convName)) {
-                        n++
-                        convName = `新对话${n}`
-                      }
-                      // 创建本地对话
-                      useChatStore.getState().addConversation({
-                        id: convId,
-                        type: 'single',
-                        agentId: agent.agent_id,
-                        name: convName,
-                        avatar: null,
-                        messages: [],
-                        pinned: false,
-                        unread: false,
-                        updatedAt: Date.now(),
-                      })
-                      // 同步到后端
-                      fetch('/api/conversations', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          id: convId,
-                          type: 'single',
-                          name: convName,
-                          agent_id: agent.agent_id,
-                        }),
-                      }).catch(() => {})
-                      openTab(convId, convName, agent.agent_id)
-                    }}
-                  >
-                    <div className="conv-avatar" style={{ width: 32, height: 32 }}>
-                      <IconAvatar agentId={agent.agent_id} size={18} />
-                    </div>
-                    <div className="conv-info">
-                      <div className="conv-name">{agent.name}</div>
-                      <div className="conv-status conv-status-idle">{agent.role}</div>
-                    </div>
-                    <span className="online-dot" style={{ background: isAgentRunning ? 'var(--green)' : 'var(--red, #ef4444)' }} title={isAgentRunning ? '运行中' : '已停止'} />
-                    {agent.agent_id.startsWith('agent_custom_') ? (
-                      <button
-                        className="agent-row-delete"
-                        onClick={(e) => handleDeleteAgent(e, agent.agent_id)}
-                        title="删除"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    ) : (
-                      <span className="agent-row-lock" title="默认agent不允许删除">
-                        <Lock size={14} />
-                      </span>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* ===== 资源分组 ===== */}
-        <div className="sidebar-section">
-          <div className="sidebar-section-header" onClick={() => setResourcesExpanded(!resourcesExpanded)}>
-            <div className="sidebar-section-title" style={{ fontSize: 'var(--text-sm)', textTransform: 'none', letterSpacing: 0 }}>
-              <ChevronRight size={14} className={`sidebar-section-chevron ${resourcesExpanded ? 'open' : ''}`} />
-              <FolderOpen size={16} />
-              <span>资源</span>
-            </div>
-            <button className="sidebar-section-add" onClick={(e) => e.stopPropagation()} title="资源" style={{ visibility: 'hidden' }}>
-              <Plus size={14} />
-            </button>
-          </div>
-
-          {resourcesExpanded && (
-            <div style={{ paddingBottom: 'var(--space-1)' }}>
-              {RESOURCE_CATEGORIES.map((cat) => {
-                const isOpen = resourceExpanded[cat.key] || false
-                const CatIcon = cat.icon
-                const addTitle = `新建${cat.label}`
-                return (
-                  <div key={cat.key}>
+                  <div key={group.key}>
                     <div
                       className="sidebar-section-header"
-                      onClick={() => toggleResource(cat.key)}
-                      style={{ paddingLeft: 'var(--space-5)' }}
+                      onClick={() => setSubExpanded((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}
+                      style={{ padding: '8px var(--space-3) 8px var(--space-4)' }}
                     >
-                      <div className="sidebar-section-title" style={{ fontSize: 'var(--text-xs)' }}>
-                        <ChevronRight size={12} className={`sidebar-section-chevron ${isOpen ? 'open' : ''}`} />
-                        <CatIcon size={14} />
-                        <span style={{ textTransform: 'none', letterSpacing: 0 }}>{cat.label}</span>
+                      <div className="sidebar-section-title" style={{ fontSize: 14, fontWeight: 500 }}>
+                        <ChevronRight size={14} className={`sidebar-section-chevron ${isOpen ? 'open' : ''}`} />
+                        <GroupIcon size={15} />
+                        <span style={{ textTransform: 'none', letterSpacing: 0 }}>{group.label}</span>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 3 }}>({group.items.length})</span>
                       </div>
-                      <button
-                        className="sidebar-section-add"
-                        onClick={(e) => e.stopPropagation()}
-                        title={addTitle}
-                        onMouseEnter={(e) => {
-                          const rect = e.currentTarget.getBoundingClientRect()
-                          setTooltip({ text: addTitle, x: rect.left + rect.width / 2, y: rect.top - 8 })
-                        }}
-                        onMouseLeave={() => setTooltip(null)}
-                      >
-                        <Plus size={14} />
-                      </button>
                     </div>
                     {isOpen && (
-                      <div style={{ padding: '0 var(--space-4) var(--space-1)', fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                        {/* 子类内容预留 */}
+                      <div style={{ maxHeight: 185, overflowY: 'auto', scrollbarWidth: 'thin' }}>
+                        {group.items.map((agent) => {
+                          const isActive = activeAgentId === agent.agent_id
+                          const isAgentRunning = openTabs.some((t) => t.agentId === agent.agent_id)
+                          return (
+                            <div
+                              key={agent.agent_id}
+                              className={`conversation-item ${isActive ? 'active' : ''}`}
+                              style={{ paddingLeft: 'var(--space-6)' }}
+                              onClick={() => {
+                                const agentConvs = useChatStore.getState().conversations
+                                  .filter((c) => c.agentId === agent.agent_id && !c.archived)
+                                  .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+                                if (agentConvs.length > 0) {
+                                  const latest = agentConvs[0]
+                                  const existingTab = openTabs.find((t) => t.convId === latest.id)
+                                  if (existingTab) {
+                                    useTabStore.getState().setActiveTab(existingTab.id)
+                                  } else {
+                                    openTab(latest.id, latest.name, agent.agent_id)
+                                  }
+                                } else {
+                                  const convId = `conv_${agent.agent_id}_${Date.now()}`
+                                  const convName = '新对话1'
+                                  useChatStore.getState().addConversation({
+                                    id: convId, type: 'single', agentId: agent.agent_id,
+                                    name: convName, avatar: null, messages: [],
+                                    pinned: false, unread: false, updatedAt: Date.now(),
+                                  })
+                                  fetch('/api/conversations', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ id: convId, type: 'single', name: convName, agent_id: agent.agent_id }),
+                                  }).catch(() => {})
+                                  openTab(convId, convName, agent.agent_id)
+                                }
+                              }}
+                            >
+                              <div className="conv-avatar" style={{ width: 32, height: 32 }}>
+                                {agent.avatar ? (
+                                  agent.avatar.startsWith('/') || agent.avatar.startsWith('http') ? (
+                                    <img src={agent.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
+                                  ) : (
+                                    <span style={{ fontSize: 18 }}>{agent.avatar}</span>
+                                  )
+                                ) : (
+                                  <IconAvatar agentId={agent.agent_id} size={18} />
+                                )}
+                              </div>
+                              <div className="conv-info">
+                                <div className="conv-name">{agent.name}</div>
+                                <div className="conv-status conv-status-idle">{agent.role}</div>
+                              </div>
+                              <span className="online-dot" style={{ background: isAgentRunning ? 'var(--green)' : 'var(--red, #ef4444)' }} title={isAgentRunning ? '运行中' : '已停止'} />
+                              {agent.agent_id.startsWith('agent_custom_') ? (
+                                <button
+                                  className="agent-row-delete"
+                                  onClick={(e) => handleDeleteAgent(e, agent.agent_id)}
+                                  title="删除"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              ) : (
+                                <span className="agent-row-lock" title="默认agent不允许删除">
+                                  <Lock size={14} />
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -386,7 +384,31 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
           />
         </div>
 
-        <div className="sidebar-history-label">历史对话</div>
+        <div className="sidebar-history-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>历史对话</span>
+          {historyConversations.length > 0 && (
+            <button
+              onClick={() => {
+                if (!window.confirm(`确定删除当前 Agent 下的 ${historyConversations.length} 条对话？`)) return
+                const { closeTab } = useTabStore.getState()
+                for (const conv of historyConversations) {
+                  // 关闭对应标签
+                  const tab = openTabs.find((t) => t.convId === conv.id)
+                  if (tab) closeTab(tab.id)
+                  // 归档对话
+                  useChatStore.getState().archiveConversation(conv.id)
+                }
+              }}
+              style={{
+                background: 'none', border: 'none', color: 'var(--text-muted)',
+                fontSize: 'var(--text-xs)', cursor: 'pointer', padding: '2px 4px',
+              }}
+              title="清空当前 Agent 的所有历史对话"
+            >
+              清空
+            </button>
+          )}
+        </div>
 
         <div className="sidebar-history-list">
           {historyConversations.length === 0 && !searchQuery.trim() ? null : historyConversations.length === 0 ? (
@@ -445,7 +467,7 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
 
         {/* Footer */}
         <div className="sidebar-footer">
-          <div className="sidebar-footer-item" onClick={() => setShowSettings(true)}>
+          <div className="sidebar-footer-item" onClick={() => { setSettingsTab('llm'); setShowSettings(true) }}>
             <Settings size={16} />
             <span>设置</span>
           </div>
@@ -456,7 +478,7 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
       {contextMenu && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={closeContextMenu} />
-          <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+          <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y, zIndex: 1000 }}>
             <button className="context-menu-item" onClick={() => { togglePin(contextMenu.convId); closeContextMenu() }}>
               <Pin size={14} />
               {conversations.find((c) => c.id === contextMenu.convId)?.pinned ? '取消置顶' : '置顶'}
@@ -469,17 +491,104 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
               <Edit3 size={14} />
               重命名
             </button>
-            <button className="context-menu-item danger" onClick={() => { archiveConversation(contextMenu.convId); closeContextMenu() }}>
+            <button className="context-menu-item danger" onClick={() => {
+              archiveConversation(contextMenu.convId)
+              // 关闭对应的标签页
+              const tab = openTabs.find((t) => t.convId === contextMenu.convId)
+              if (tab) useTabStore.getState().closeTab(tab.id)
+              closeContextMenu()
+            }}>
               <X size={14} />
-              归档
+              删除
             </button>
           </div>
         </>
       )}
 
-      {/* Modals */}
-      {showCreator && <AgentCreator onClose={() => setShowCreator(false)} onBack={() => setShowCreator(false)} />}
-      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+      {/* 创建 Agent 下拉浮窗 */}
+      {showAgentMenu && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onClick={() => setShowAgentMenu(false)} />
+          <div
+            className="agent-create-menu"
+            style={{
+              position: 'fixed',
+              top: addBtnRef.current ? addBtnRef.current.getBoundingClientRect().bottom + 4 : 0,
+              left: addBtnRef.current ? addBtnRef.current.getBoundingClientRect().right : 0,
+              zIndex: 999,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="agent-create-menu-item"
+              onClick={() => {
+                setShowAgentMenu(false)
+                setShowSelector(true)
+              }}
+            >
+              <Bot size={16} />
+              <div>
+                <div className="menu-item-title">选择职业模板</div>
+                <div className="menu-item-desc">从预设或自定义 Agent 中选择</div>
+              </div>
+            </button>
+            <button
+              className="agent-create-menu-item"
+              onClick={() => {
+                setShowAgentMenu(false)
+                setShowLocalSelector(true)
+              }}
+            >
+              <Cpu size={16} />
+              <div>
+                <div className="menu-item-title">接入本地 Agent</div>
+                <div className="menu-item-desc">OpenCode / 自定义 HTTP 服务</div>
+              </div>
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Agent 选择弹窗 */}
+      {showSelector && (
+        <AgentSelector
+          onSelect={(agentId) => {
+            const convId = `conv_${agentId}_${Date.now()}`
+            const agentConvs = useChatStore.getState().conversations.filter(
+              (c) => c.agentId === agentId && !c.archived
+            )
+            const n = agentConvs.length + 1
+            const convName = `新对话${n}`
+            useChatStore.getState().addConversation({
+              id: convId, type: 'single', agentId, name: convName,
+              messages: [], pinned: false, unread: false, updatedAt: Date.now(),
+            })
+            fetch('/api/conversations', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: convId, type: 'single', name: convName, agent_id: agentId }),
+            }).catch(() => {})
+            openTab(convId, convName, agentId)
+            setShowSelector(false)
+          }}
+          onClose={() => setShowSelector(false)}
+        />
+      )}
+
+      {/* 本地 Agent 选择弹窗 */}
+      {showLocalSelector && (
+        <LocalAgentSelector
+          onSelect={() => setShowLocalSelector(false)}
+          onClose={() => setShowLocalSelector(false)}
+          onOpenSettings={(agentId) => {
+            setSettingsTab('adapters')
+            setSettingsEditAgent(agentId || null)
+            setShowSettings(true)
+          }}
+        />
+      )}
+
+      {showSettings && <SettingsPanel onClose={() => { setShowSettings(false); setSettingsEditAgent(null) }} defaultTab={settingsTab} editAgentId={settingsEditAgent} />}
 
       {/* 重命名弹窗 */}
       {renameDialog && (

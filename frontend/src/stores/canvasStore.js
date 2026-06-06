@@ -62,6 +62,10 @@ export const useCanvasStore = create((set) => ({
     set((state) => ({ tasks: state.tasks.map((t) => t.id === taskId ? { ...t, status: newStatus } : t) })),
   addTask: (task) =>
     set((state) => ({ tasks: [...state.tasks, { ...task, id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2) }] })),
+  deleteTask: (taskId) =>
+    set((state) => ({ tasks: state.tasks.filter((t) => t.id !== taskId) })),
+  changeTaskStatus: (taskId, newStatus) =>
+    set((state) => ({ tasks: state.tasks.map((t) => t.id === taskId ? { ...t, status: newStatus } : t) })),
   updateTaskByAgent: (agentId, status) =>
     set((state) => ({ tasks: state.tasks.map((t) => t.assignee === agentId ? { ...t, status } : t) })),
 

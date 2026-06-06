@@ -16,6 +16,7 @@ from app.adapters.base import AgentAdapter, AdapterConfig
 from app.adapters.tool_converter import (
     get_project_tools, to_claude_tools,
     parse_claude_tool_use, execute_tool,
+    supports_tool_calling,
 )
 
 logger = logging.getLogger("claude_adapter")
@@ -34,8 +35,16 @@ class ClaudeAdapter(AgentAdapter):
 
     def __init__(self, config: AdapterConfig):
         super().__init__(config)
-        self.api_url = config.api_url or ANTHROPIC_API_URL
-        self.api_key = config.api_key
+        base = config.api_url or ""
+        if base:
+            # 用户提供的是 base_url，自动拼接 /v1/messages
+            base = base.rstrip("/")
+            if not base.endswith("/v1/messages"):
+                base = base + "/v1/messages"
+            self.api_url = base
+        else:
+            self.api_url = ANTHROPIC_API_URL
+        self.api_key = (config.api_key or "").strip()
         self.model = config.model or "claude-sonnet-4-20250514"
 
     def validate_config(self) -> tuple[bool, str]:
@@ -54,6 +63,7 @@ class ClaudeAdapter(AgentAdapter):
         """流式调用 Claude API，支持工具循环。"""
 
         valid, err = self.validate_config()
+        logger.info(f"[ClaudeAdapter] stream_reply called: valid={valid}, err={err}")
         if not valid:
             yield f"[Claude 适配器错误: {err}]"
             return
@@ -62,21 +72,37 @@ class ClaudeAdapter(AgentAdapter):
         messages = []
         if history:
             for msg in history[-20:]:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if content:
+                role = msg.get("role", "user") or msg.get("sender", "user")
+                if role == "user":
+                    role = "user"
+                elif role:
+                    role = "assistant"
+                raw_content = msg.get("content", "")
+                # content 可能是字符串或字典，统一提取为字符串
+                if isinstance(raw_content, dict):
+                    content = raw_content.get("text", str(raw_content))
+                elif isinstance(raw_content, str):
+                    content = raw_content
+                else:
+                    content = str(raw_content) if raw_content else ""
+                if content and content.strip():
                     messages.append({"role": role, "content": content})
         messages.append({"role": "user", "content": message})
 
-        # 获取工具定义
+        # 获取工具定义 — 根据 tool_mode 决定是否注入
         claude_tools = None
-        if tools:
-            claude_tools = to_claude_tools(tools)
-        else:
-            # 自动注入项目工具
-            project_tools = get_project_tools()
-            if project_tools:
-                claude_tools = to_claude_tools(project_tools)
+        _mode = self.config.tool_mode
+        _should_use_tools = (
+            _mode == "agent"
+            or (_mode == "auto" and supports_tool_calling(self.model, self.api_url))
+        )
+        if _should_use_tools:
+            if tools:
+                claude_tools = to_claude_tools(tools)
+            else:
+                project_tools = get_project_tools()
+                if project_tools:
+                    claude_tools = to_claude_tools(project_tools)
 
         # 工具循环
         for round_num in range(MAX_TOOL_ROUNDS + 1):

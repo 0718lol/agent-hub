@@ -6,10 +6,17 @@
 - POST /api/adapters — 创建/更新适配器配置
 - DELETE /api/adapters/{agent_id} — 删除适配器
 - POST /api/adapters/{agent_id}/test — 测试适配器连接
+- POST /api/proxy/start — 启动本地 Agent 代理
+- POST /api/proxy/stop — 停止本地 Agent 代理
+- GET  /api/proxy/status — 查询代理状态
 """
 
 import json
 import logging
+import asyncio
+import os
+import sys
+import subprocess
 from pydantic import BaseModel
 from typing import Optional
 from fastapi import APIRouter
@@ -74,11 +81,35 @@ def create_adapter(agent_id: str, config_dict: dict, save: bool = True) -> bool:
         model=config_dict.get("model", ""),
         timeout=config_dict.get("timeout", 60),
         max_retries=config_dict.get("max_retries", 2),
+        tool_mode=config_dict.get("tool_mode", "agent"),
         extra=config_dict.get("extra", {}),
+        display_name=config_dict.get("display_name", ""),
+        display_avatar=config_dict.get("display_avatar", ""),
+        display_desc=config_dict.get("display_desc", ""),
     )
 
     adapter = adapter_cls(config)
     adapter_registry.register(agent_id, adapter)
+
+    # 同步更新 AGENTS 字典中的 AdapterAgent 包装器
+    try:
+        from app.services.agent_orchestrator import get_agents
+        from app.adapters.adapter_agent import AdapterAgent
+        agents = get_agents()
+        if agent_id in agents:
+            old = agents[agent_id]
+            agents[agent_id] = AdapterAgent(
+                agent_id=agent_id,
+                name=getattr(old, 'name', adapter.name),
+                adapter=adapter,
+                avatar=getattr(old, 'avatar', '🤖'),
+                role=getattr(old, 'role', adapter.description),
+                system_prompt=getattr(old, 'system_prompt', ''),
+            )
+            logger.info(f"Updated AGENTS entry for {agent_id}")
+    except Exception as e:
+        logger.debug(f"Could not update AGENTS for {agent_id}: {e}")
+
     if save:
         adapter_registry.save_config(agent_id, config_dict)
     return True
@@ -104,7 +135,11 @@ class AdapterCreateRequest(BaseModel):
     api_url: str = ""
     model: str = ""
     timeout: int = 60
+    tool_mode: str = "agent"  # "agent" | "text" | "auto"
     extra: dict = {}
+    display_name: str = ""    # 自定义显示名称
+    display_avatar: str = ""  # 自定义头像
+    display_desc: str = ""    # 自定义简介
 
 
 class AdapterTestRequest(BaseModel):
@@ -138,7 +173,11 @@ async def create_or_update_adapter(req: AdapterCreateRequest):
         "api_url": req.api_url,
         "model": req.model,
         "timeout": req.timeout,
+        "tool_mode": req.tool_mode,
         "extra": req.extra,
+        "display_name": req.display_name,
+        "display_avatar": req.display_avatar,
+        "display_desc": req.display_desc,
     }
 
     success = create_adapter(req.agent_id, config_dict)
@@ -173,6 +212,120 @@ async def test_adapter(agent_id: str, req: AdapterTestRequest):
             response += chunk
             if len(response) > 500:
                 break
+        # 检查响应是否包含错误标记
+        if response.startswith("[") and "错误" in response:
+            return {"status": "error", "error": response.strip("[]")}
+        if response.startswith("[") and "error" in response.lower():
+            return {"status": "error", "error": response.strip("[]")}
         return {"status": "ok", "response": response[:500]}
     except Exception as e:
-        return {"error": str(e)[:200]}
+        return {"status": "error", "error": str(e)[:500]}
+
+
+# ---- 本地 Agent 代理管理 ----
+
+_proxy_processes: dict[str, asyncio.subprocess.Process] = {}
+PROXY_PORT = 4097
+OPENCODE_PORT = 4098
+
+
+@router.post("/proxy/start")
+async def start_proxy():
+    """启动本地 Agent 代理（OpenCode serve + Node.js proxy）。"""
+    if "proxy" in _proxy_processes:
+        return {"status": "already_running", "port": PROXY_PORT}
+
+    # 项目根目录
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    proxy_script = os.path.join(project_root, "app", "proxy", "opencode_proxy.mjs")
+
+    if not os.path.exists(proxy_script):
+        return {"error": f"代理脚本不存在: {proxy_script}"}
+
+    try:
+        env = {**os.environ, "NODE_TLS_REJECT_UNAUTHORIZED": "0"}
+        si = subprocess.STARTUPINFO() if sys.platform == "win32" else None
+        if si:
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        # 清理可能残留的旧进程
+        for port in [OPENCODE_PORT, PROXY_PORT]:
+            try:
+                out = subprocess.check_output(
+                    f'netstat -ano | findstr ":{port}" | findstr LISTEN',
+                    shell=True, text=True, stderr=subprocess.DEVNULL,
+                ).strip()
+                if out:
+                    pid = out.split()[-1]
+                    subprocess.run(f"taskkill /F /PID {pid}", shell=True,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    await asyncio.sleep(1)
+            except Exception:
+                pass
+
+        # 1. 启动 opencode serve
+        opencode_proc = subprocess.Popen(
+            f"opencode serve --port {OPENCODE_PORT}",
+            shell=True, env=env, startupinfo=si,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        _proxy_processes["opencode"] = opencode_proc
+        await asyncio.sleep(3)
+
+        if opencode_proc.poll() is not None:
+            return {"error": "opencode serve 启动失败，请检查 OpenCode 是否已安装"}
+
+        # 2. 启动 Node.js 代理
+        proxy_proc = subprocess.Popen(
+            f'node "{proxy_script}" --port {PROXY_PORT} --opencode-url http://127.0.0.1:{OPENCODE_PORT}',
+            shell=True, env=env, cwd=project_root, startupinfo=si,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        _proxy_processes["proxy"] = proxy_proc
+        await asyncio.sleep(2)
+
+        if proxy_proc.poll() is not None:
+            stderr = proxy_proc.stderr.read().decode(errors="ignore")
+            return {"error": f"代理启动失败: {stderr[:300]}"}
+
+        return {"status": "started", "port": PROXY_PORT}
+
+    except FileNotFoundError as e:
+        return {"error": f"找不到可执行文件: {e}"}
+    except Exception as e:
+        return {"error": f"启动失败: {type(e).__name__}: {str(e)[:200]}"}
+
+
+@router.post("/proxy/stop")
+async def stop_proxy():
+    """停止本地 Agent 代理。"""
+    stopped = []
+    for name, proc in _proxy_processes.items():
+        try:
+            proc.terminate()
+            if sys.platform == "win32":
+                # Windows: taskkill 杀掉整个进程树
+                subprocess.run(f"taskkill /F /T /PID {proc.pid}", shell=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stopped.append(name)
+        except Exception:
+            pass
+    _proxy_processes.clear()
+    return {"status": "stopped", "stopped": stopped}
+
+
+@router.get("/proxy/status")
+async def proxy_status():
+    """查询代理运行状态。"""
+    running = {}
+    for name, proc in list(_proxy_processes.items()):
+        if proc.poll() is not None:
+            _proxy_processes.pop(name, None)
+        else:
+            running[name] = True
+    return {
+        "running": len(running) > 0,
+        "processes": list(running.keys()),
+        "proxy_port": PROXY_PORT,
+        "opencode_port": OPENCODE_PORT,
+    }

@@ -27,10 +27,15 @@ class CozeAdapter(AgentAdapter):
 
     def __init__(self, config: AdapterConfig):
         super().__init__(config)
-        self.api_url = config.api_url or COZE_API_URL
-        self.api_key = config.api_key
+        base = (config.api_url or COZE_API_URL).rstrip("/")
+        if not base.endswith("/v3/chat"):
+            base = base + "/v3/chat"
+        self.api_url = base
+        self.api_key = (config.api_key or "").strip()
         self.bot_id = config.extra.get("bot_id", "")
         self.user_id = config.extra.get("user_id", "agenthub_user")
+        # 存储 AgentHub conversation_id → Coze conversation_id 的映射
+        self._conv_map: dict[str, str] = {}
 
     def validate_config(self) -> tuple[bool, str]:
         if not self.api_key:
@@ -59,25 +64,55 @@ class CozeAdapter(AgentAdapter):
             "Content-Type": "application/json",
         }
 
+        # 构建消息列表，传入历史上下文
+        additional_messages = []
+        if history:
+            for msg in history[-20:]:
+                role = msg.get("role") or msg.get("sender", "user")
+                if role == "assistant":
+                    msg_type = "answer"
+                else:
+                    role = "user"
+                    msg_type = "question"
+                raw_content = msg.get("content", "")
+                if isinstance(raw_content, dict):
+                    content = raw_content.get("text", str(raw_content))
+                elif isinstance(raw_content, str):
+                    content = raw_content
+                else:
+                    content = str(raw_content) if raw_content else ""
+                if content and content.strip():
+                    additional_messages.append({
+                        "role": role,
+                        "content": content,
+                        "content_type": "text",
+                        "type": msg_type,
+                    })
+        additional_messages.append({
+            "role": "user",
+            "content": message,
+            "content_type": "text",
+            "type": "question",
+        })
+
         body = {
             "bot_id": self.bot_id,
             "user_id": self.user_id,
-            "additional_messages": [
-                {"role": "user", "content": message, "content_type": "text"}
-            ],
+            "additional_messages": additional_messages,
             "stream": True,
             "auto_save_history": True,
+            "parameters": {},
         }
 
-        # Coze 使用 conversation_id 管理会话
-        if conversation_id:
-            body["conversation_id"] = conversation_id
+        # 传入 Coze 侧的 conversation_id 以延续对话
+        if conversation_id and conversation_id in self._conv_map:
+            body["conversation_id"] = self._conv_map[conversation_id]
 
         try:
             async with httpx.AsyncClient(timeout=self.config.timeout) as client:
                 async with client.stream(
                     "POST",
-                    f"{self.api_url}/v3/chat",
+                    self.api_url,
                     headers=headers,
                     json=body,
                 ) as resp:
@@ -88,11 +123,16 @@ class CozeAdapter(AgentAdapter):
                         yield f"[Coze API 错误: HTTP {resp.status_code}: {error_body[:200]}]"
                         return
 
+                    current_event_type = ""
                     async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
+                        # Coze SSE 格式：event:xxx 在前一行，data:xxx 在后一行
+                        if line.startswith("event:"):
+                            current_event_type = line[6:].strip()
                             continue
-                        data_str = line[6:].strip()
-                        if data_str == "[DONE]":
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == '"[DONE]"' or data_str == "[DONE]":
                             break
 
                         try:
@@ -100,17 +140,33 @@ class CozeAdapter(AgentAdapter):
                         except json.JSONDecodeError:
                             continue
 
-                        event_type = event.get("type", "")
+                        # 优先用 event: 行的类型，回退到 JSON 内的 type
+                        event_type = current_event_type or event.get("type", "")
+                        current_event_type = ""
 
-                        # 文本消息增量
+                        # 捕获 Coze 侧的 conversation_id（可能在多个事件中返回）
+                        coze_conv_id = event.get("conversation_id", "")
+                        if coze_conv_id and conversation_id and conversation_id not in self._conv_map:
+                            self._conv_map[conversation_id] = coze_conv_id
+
+                        # 文本消息增量（流式模式）
                         if event_type == "conversation.message.delta":
                             msg = event.get("delta", {})
-                            if msg.get("type") == "answer":
-                                yield msg.get("content", "")
+                            if msg.get("type") in ("answer", "follow_up"):
+                                content = msg.get("content", "")
+                                if content:
+                                    yield content
+
+                        # 完整消息（非流式或 completed 事件）
+                        elif event_type == "conversation.message.completed":
+                            msg_type = event.get("type", "")
+                            if msg_type in ("answer", "follow_up"):
+                                content = event.get("content", "")
+                                if content:
+                                    yield content
 
                         # 工具调用
                         elif event_type == "conversation.chat.requires_action":
-                            # Coze 工具调用由平台内部处理，通常不需要用户提交结果
                             pass
 
                         # 错误
@@ -121,4 +177,5 @@ class CozeAdapter(AgentAdapter):
         except httpx.TimeoutException:
             yield "\n[Coze API 超时，请稍后重试]"
         except Exception as e:
+            logger.warning(f"Coze API error: {e}")
             yield f"\n[Coze API 错误: {str(e)[:200]}]"

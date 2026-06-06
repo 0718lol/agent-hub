@@ -1,6 +1,6 @@
 import React from 'react'
 import { useCanvasStore } from '../../stores/canvasStore'
-import AgentDAG from '../Canvas/AgentDAG'
+import AgentFlow from '../Canvas/AgentFlow'
 import TaskBoard from '../Canvas/TaskBoard'
 import DiffViewer from '../Canvas/DiffViewer'
 import WebPreview from '../Canvas/WebPreview'
@@ -36,7 +36,7 @@ export default function CanvasPanel() {
         ))}
       </div>
       <div className="canvas-content">
-        {activeTab === 'dag' && <AgentDAG />}
+        {activeTab === 'dag' && <AgentFlow />}
         {activeTab === 'tasks' && <TaskBoard />}
         {activeTab === 'diff' && <DiffViewer />}
         {activeTab === 'preview' && <WebPreview />}

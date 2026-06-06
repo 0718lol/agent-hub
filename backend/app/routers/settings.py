@@ -55,6 +55,26 @@ async def update_llm_settings(s: LLMSettings):
     return {"status": "ok", "configured": llm_client.is_configured()}
 
 
+@router.post("/settings/llm/test")
+async def test_llm_connection():
+    """测试当前 LLM 配置的连通性，发送一条最短消息验证 API 可用。"""
+    if not llm_client.is_configured():
+        return {"success": False, "error": "LLM 未配置（缺少 API Key 或 Base URL）"}
+
+    try:
+        response_text = ""
+        async for chunk in llm_client.chat_stream(
+            [{"role": "user", "content": "hi"}],
+            system="Reply with only 'ok'.",
+        ):
+            response_text += chunk
+            if len(response_text) > 20:
+                break
+        return {"success": True, "response": response_text.strip()[:50]}
+    except Exception as e:
+        return {"success": False, "error": str(e)[:500]}
+
+
 @router.get("/settings/hil")
 async def get_hil_settings_api():
     return get_hil_settings()

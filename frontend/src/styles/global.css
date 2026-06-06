@@ -992,7 +992,14 @@ body {
 }
 
 .more-popup {
-  min-width: 100px;
+  min-width: max-content;
+  width: auto;
+}
+
+/* Task card hover: show delete button */
+.task-card:hover .task-delete-btn,
+[draggable]:hover .task-delete-btn {
+  display: flex !important;
 }
 
 .online-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
@@ -1998,6 +2005,7 @@ body {
   transform: translate(-50%, -50%);
   min-width: 480px;
   max-width: min(720px, 90vw);
+  height: 75vh;
   max-height: 80vh;
   background: var(--bg-primary);
   border: 1px solid var(--border);
@@ -2471,6 +2479,39 @@ body {
 }
 .agent-create-textarea:focus { border-color: var(--accent); }
 .agent-create-textarea::placeholder { color: var(--text-muted); }
+
+/* 创建 Agent 下拉浮窗 */
+.agent-create-menu {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-1);
+  min-width: 220px;
+  animation: scaleUp 0.15s var(--ease-out);
+}
+
+.agent-create-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  background: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  transition: background 0.15s;
+}
+
+.agent-create-menu-item:hover { background: var(--bg-secondary); }
+.agent-create-menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.agent-create-menu-item:disabled:hover { background: none; }
+.agent-create-menu-item .menu-item-title { font-size: var(--text-sm); font-weight: 500; }
+.agent-create-menu-item .menu-item-desc { font-size: var(--text-xs); color: var(--text-muted); margin-top: 2px; }
 
 /* Agent Creator — 独立弹窗，z-index 高于选择器 */
 .agent-creator-overlay {

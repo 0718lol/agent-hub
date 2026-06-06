@@ -1,16 +1,86 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Sun, Moon, Trash2, Key, ExternalLink, Check, X, Loader } from 'lucide-react'
+import { Sun, Moon, Trash2, Key, ExternalLink, Check, X, Loader, Upload } from 'lucide-react'
 import { useThemeStore } from '../../stores/themeStore'
 import { useChatStore } from '../../stores/chatStore'
 import IconAvatar from '../IconAvatar'
 
-export default function SettingsPanel({ onClose }) {
+function AvatarUploadField({ value, onChange }) {
+  const [preview, setPreview] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef(null)
+  const previewRef = useRef(null)
+
+  useEffect(() => {
+    return () => { if (previewRef.current) URL.revokeObjectURL(previewRef.current) }
+  }, [])
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      if (previewRef.current) URL.revokeObjectURL(previewRef.current)
+      const url = URL.createObjectURL(file)
+      previewRef.current = url
+      setPreview(url)
+      const formData = new FormData()
+      formData.append('file', file)
+      const resp = await fetch('/api/upload', { method: 'POST', body: formData })
+      const data = await resp.json()
+      if (data.status === 'uploaded') onChange(data.url)
+    } catch {}
+    setUploading(false)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const avatarSrc = preview || (value && (value.startsWith('/') || value.startsWith('http')) ? value : null)
+
+  return (
+    <div>
+      {avatarSrc && (
+        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <img src={avatarSrc} alt="" style={{ width: 48, height: 48, borderRadius: 8, objectFit: 'cover', border: '2px solid var(--accent)' }} />
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{uploading ? '上传中...' : '已设置头像'}</span>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <button
+          onClick={() => fileRef.current?.click()}
+          style={{
+            flex: 'none', display: 'flex', alignItems: 'center', gap: 4,
+            padding: '9px 12px', borderRadius: 8, fontSize: 12,
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            color: 'var(--text-primary)', cursor: 'pointer', fontFamily: 'inherit',
+          }}
+          type="button"
+        >
+          <Upload size={14} />
+          本地上传
+        </button>
+        <input
+          value={preview ? '' : value || ''}
+          onChange={(e) => { onChange(e.target.value); setPreview(null) }}
+          placeholder="或输入 emoji / 图片 URL"
+          style={{
+            flex: 1, padding: '9px 12px',
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            borderRadius: 8, fontSize: 13, color: 'var(--text-primary)',
+            outline: 'none', fontFamily: 'inherit',
+          }}
+        />
+        <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} style={{ display: 'none' }} />
+      </div>
+    </div>
+  )
+}
+
+export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
   const theme = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
   const activeId = useChatStore((s) => s.activeConversationId)
   const clearMessages = useChatStore((s) => s.clearMessages)
 
-  const [tab, setTab] = useState('llm') // 'llm' | 'quality' | 'prompt'
+  const [tab, setTab] = useState(defaultTab || 'llm') // 'llm' | 'quality' | 'prompt'
   const [provider, setProvider] = useState('openai')
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
@@ -25,6 +95,8 @@ export default function SettingsPanel({ onClose }) {
   const [activeProvider, setActiveProvider] = useState('')
   const [activeModel, setActiveModel] = useState('')
   const [highlightPresets, setHighlightPresets] = useState(false)
+  const [testingLlm, setTestingLlm] = useState(false)
+  const [llmTestMsg, setLlmTestMsg] = useState(null) // { success, response/error }
   const presetsRef = useRef(null)
 
   // Ollama integration states
@@ -160,7 +232,7 @@ export default function SettingsPanel({ onClose }) {
     if (tab === 'cron') fetchCronTasks()
     if (tab === 'knowledge') fetchKnowledgeDocs()
     if (tab === 'other') { fetchRuntimeTools(); fetchKnowledgeDocs() }
-    if (tab === 'adapters') fetchAdapters()
+    if (tab === 'adapters') { fetchAdapters(); fetchProxyStatus() }
   }, [tab])
 
   // Knowledge base state
@@ -283,6 +355,19 @@ export default function SettingsPanel({ onClose }) {
       setMsg('保存失败，请检查后端是否运行')
     }
     setSaving(false)
+  }
+
+  const handleTestLlm = async () => {
+    setTestingLlm(true)
+    setLlmTestMsg(null)
+    try {
+      const resp = await fetch('/api/settings/llm/test', { method: 'POST' })
+      const data = await resp.json()
+      setLlmTestMsg(data)
+    } catch {
+      setLlmTestMsg({ success: false, error: '网络错误，请检查后端是否运行' })
+    }
+    setTestingLlm(false)
   }
 
   const handleSaveQuality = async () => {
@@ -433,8 +518,36 @@ export default function SettingsPanel({ onClose }) {
   const [adapterLoading, setAdapterLoading] = useState(false)
   const [adapterMsg, setAdapterMsg] = useState('')
   const [adapterEditing, setAdapterEditing] = useState(null) // agent_id being edited
-  const [adapterForm, setAdapterForm] = useState({ api_key: '', api_url: '', model: '' })
+  const [adapterForm, setAdapterForm] = useState({ api_key: '', api_url: '', model: '', tool_mode: 'agent', bot_id: '', user_id: '', platform: 'opencode', display_name: '', display_avatar: '', display_desc: '' })
   const [testingAdapter, setTestingAdapter] = useState(null)
+  const [proxyRunning, setProxyRunning] = useState(false)
+  const [proxyLoading, setProxyLoading] = useState(false)
+
+  // 自动打开指定 Agent 的编辑表单
+  useEffect(() => {
+    if (editAgentId && tab === 'adapters') {
+      if (adapters.length === 0) {
+        fetchAdapters()
+        return
+      }
+      const adapter = adapters.find((a) => a.agent_id === editAgentId)
+      if (adapter) {
+        setAdapterEditing(editAgentId)
+        setAdapterForm({
+          api_key: '',
+          api_url: '',
+          model: adapter.model || '',
+          tool_mode: adapter.tool_mode || 'agent',
+          bot_id: adapter.extra?.bot_id || '',
+          user_id: adapter.extra?.user_id || '',
+          platform: adapter.extra?.platform || 'opencode',
+          display_name: adapter.display_name || '',
+          display_avatar: adapter.display_avatar || '',
+          display_desc: adapter.display_desc || '',
+        })
+      }
+    }
+  }, [editAgentId, tab, adapters])
 
   const ADAPTER_META = {
     claude_code: {
@@ -442,18 +555,30 @@ export default function SettingsPanel({ onClose }) {
       icon: '/avatars/claude-code.svg',
       description: 'Anthropic 最强代码 Agent，支持原生工具调用',
       fields: [
-        { key: 'api_key', label: 'Anthropic API Key', placeholder: 'sk-ant-api03-...', type: 'password' },
-        { key: 'model', label: '模型', placeholder: 'claude-sonnet-4-20250514', type: 'text' },
+        { key: 'api_key', label: 'API Key', placeholder: 'sk-...', type: 'password' },
+        { key: 'api_url', label: 'API 地址（可选，中转站填这里）', placeholder: '请输入 API 地址', type: 'text' },
+        { key: 'model', label: '模型', placeholder: '请输入模型名称', type: 'text' },
+        { key: 'tool_mode', label: '工具模式', type: 'select', options: [
+          { value: 'agent', label: 'Agent 回复（调用 Agent API，需 Agent 平台 Key）' },
+          { value: 'text', label: 'LLM 回复（调用通用模型 API，需模型 Key）' },
+          { value: 'auto', label: '自动探测（根据模型判断）' },
+        ]},
       ],
       helpUrl: 'https://console.anthropic.com/settings/keys',
     },
     codex: {
       name: 'Codex',
       icon: '/avatars/codex.svg',
-      description: 'OpenAI Assistants API 代码 Agent，支持代码解释器和文件搜索',
+      description: 'OpenAI 兼容 Chat Completions API（支持 DeepSeek/Qwen 等国产模型）',
       fields: [
-        { key: 'api_key', label: 'OpenAI Assistants API Key', placeholder: 'sk-proj-...', type: 'password' },
-        { key: 'model', label: '模型', placeholder: 'gpt-4o', type: 'text' },
+        { key: 'api_key', label: 'API Key', placeholder: 'sk-...', type: 'password' },
+        { key: 'api_url', label: 'API 地址', placeholder: '请输入 API 地址', type: 'text' },
+        { key: 'model', label: '模型', placeholder: '请输入模型名称', type: 'text' },
+        { key: 'tool_mode', label: '工具模式', type: 'select', options: [
+          { value: 'agent', label: 'Agent 回复（调用 Agent API，需 Agent 平台 Key）' },
+          { value: 'text', label: 'LLM 回复（调用通用模型 API，需模型 Key）' },
+          { value: 'auto', label: '自动探测（根据模型判断）' },
+        ]},
       ],
       helpUrl: 'https://platform.openai.com/api-keys',
     },
@@ -463,9 +588,31 @@ export default function SettingsPanel({ onClose }) {
       description: '字节跳动 Agent 平台，支持插件和工作流',
       fields: [
         { key: 'api_key', label: 'Coze API Key', placeholder: 'pat_...', type: 'password' },
+        { key: 'bot_id', label: 'Bot ID', placeholder: '输入 Coze Bot ID', type: 'text' },
+        { key: 'user_id', label: 'User ID', placeholder: 'agenthub_user', type: 'text' },
         { key: 'api_url', label: 'API 地址（可选）', placeholder: 'https://api.coze.cn', type: 'text' },
       ],
       helpUrl: 'https://www.coze.cn/docs/guides/authentication',
+      docUrl: 'https://acnhwabh9muv.feishu.cn/wiki/PDYlwz6Axi0FHQkTsz0coRydn6g?from=from_copylink',
+    },
+    self_deployed: {
+      name: '本地 Agent',
+      icon: null,
+      description: '自部署 Agent — 支持 OpenCode、Dify、自定义 HTTP 服务等',
+      fields: [
+        { key: 'display_name', label: 'Agent 名称', placeholder: '我的本地 Agent', type: 'text' },
+        { key: 'display_avatar', label: '头像', placeholder: '输入 emoji 或图片 URL', type: 'text' },
+        { key: 'display_desc', label: '简介', placeholder: '简短描述 Agent 的功能', type: 'text' },
+        { key: 'api_url', label: '服务地址', placeholder: 'http://localhost:4097/v1/chat/completions', type: 'text' },
+        { key: 'api_key', label: 'API Key（可选）', placeholder: '如需认证填入', type: 'password' },
+        { key: 'model', label: '模型名（可选）', placeholder: '如需指定模型填入', type: 'text' },
+        { key: 'platform', label: '平台类型', type: 'select', options: [
+          { value: 'opencode', label: 'OpenCode（OpenAI 兼容格式）' },
+          { value: 'dify', label: 'Dify' },
+          { value: 'generic', label: '通用 HTTP 服务' },
+        ]},
+      ],
+      helpUrl: '',
     },
   }
 
@@ -479,10 +626,57 @@ export default function SettingsPanel({ onClose }) {
     setAdapterLoading(false)
   }
 
+  const fetchProxyStatus = async () => {
+    try {
+      const resp = await fetch('/api/proxy/status')
+      const data = await resp.json()
+      setProxyRunning(data.running || false)
+    } catch {}
+  }
+
+  const handleStartProxy = async () => {
+    setProxyLoading(true)
+    try {
+      const resp = await fetch('/api/proxy/start', { method: 'POST' })
+      const data = await resp.json()
+      if (data.status === 'started' || data.status === 'already_running') {
+        setProxyRunning(true)
+        setAdapterMsg(`本地 Agent 代理已启动 (端口 ${data.port})`)
+      } else {
+        setAdapterMsg(`启动失败: ${data.error || '未知错误'}`)
+      }
+    } catch {
+      setAdapterMsg('启动失败，请检查后端是否运行')
+    }
+    setProxyLoading(false)
+    setTimeout(() => setAdapterMsg(''), 5000)
+  }
+
+  const handleStopProxy = async () => {
+    setProxyLoading(true)
+    try {
+      await fetch('/api/proxy/stop', { method: 'POST' })
+      setProxyRunning(false)
+      setAdapterMsg('本地 Agent 代理已停止')
+    } catch {
+      setAdapterMsg('停止失败')
+    }
+    setProxyLoading(false)
+    setTimeout(() => setAdapterMsg(''), 3000)
+  }
+
   const handleSaveAdapter = async (agentId) => {
     const meta = ADAPTER_META[agentId]
     if (!meta) return
-    const adapterType = agentId === 'claude_code' ? 'claude' : agentId === 'codex' ? 'codex' : 'coze'
+    const adapterType = agentId === 'claude_code' ? 'claude' : agentId === 'codex' ? 'codex' : agentId === 'coze' ? 'coze' : 'self_deployed'
+    const extra = {}
+    if (agentId === 'coze') {
+      if (adapterForm.bot_id) extra.bot_id = adapterForm.bot_id
+      if (adapterForm.user_id) extra.user_id = adapterForm.user_id
+    }
+    if (agentId === 'self_deployed') {
+      if (adapterForm.platform) extra.platform = adapterForm.platform
+    }
     try {
       const resp = await fetch('/api/adapters', {
         method: 'POST',
@@ -494,13 +688,18 @@ export default function SettingsPanel({ onClose }) {
           api_key: adapterForm.api_key,
           api_url: adapterForm.api_url,
           model: adapterForm.model,
+          tool_mode: adapterForm.tool_mode || 'agent',
+          extra,
+          display_name: adapterForm.display_name || '',
+          display_avatar: adapterForm.display_avatar || '',
+          display_desc: adapterForm.display_desc || '',
         }),
       })
       const data = await resp.json()
       if (data.status === 'ok') {
         setAdapterMsg(`${meta.name} 配置已保存`)
         setAdapterEditing(null)
-        setAdapterForm({ api_key: '', api_url: '', model: '' })
+        setAdapterForm({ api_key: '', api_url: '', model: '', tool_mode: 'agent', bot_id: '', user_id: '', platform: 'opencode', display_name: '', display_avatar: '', display_desc: '' })
         fetchAdapters()
       } else {
         setAdapterMsg(`保存失败: ${data.error || '未知错误'}`)
@@ -520,10 +719,11 @@ export default function SettingsPanel({ onClose }) {
         body: JSON.stringify({ message: '你好，请简单介绍一下你自己。' }),
       })
       const data = await resp.json()
-      if (data.status === 'ok') {
-        setAdapterMsg(`测试成功: ${data.response?.slice(0, 100) || '正常响应'}`)
+      const isError = data.status === 'error' || data.error || (data.response && data.response.includes('错误'))
+      if (data.status === 'ok' && !isError) {
+        setAdapterMsg(`✅ 测试成功: ${data.response?.slice(0, 100) || '正常响应'}`)
       } else {
-        setAdapterMsg(`测试失败: ${data.error || '未知错误'}`)
+        setAdapterMsg(`❌ 测试失败: ${data.error || data.response || '未知错误'}`)
       }
     } catch {
       setAdapterMsg('测试失败，请检查网络连接')
@@ -535,7 +735,7 @@ export default function SettingsPanel({ onClose }) {
   // Light theme styles
   const labelStyle = {
     fontSize: 13,
-    color: '#6b7280',
+    color: 'var(--text-secondary)',
     marginBottom: 6,
     display: 'block',
     fontWeight: 500,
@@ -547,15 +747,15 @@ export default function SettingsPanel({ onClose }) {
     alignItems: 'center',
     padding: '12px 14px',
     borderRadius: 10,
-    background: '#f9fafb',
-    border: '1px solid #e5e7eb',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
   }
 
   const btnStyle = {
     width: '100%',
     padding: '12px',
     borderRadius: 10,
-    background: '#4f46e5',
+    background: 'var(--accent)',
     border: 'none',
     color: 'white',
     fontSize: 14,
@@ -568,10 +768,10 @@ export default function SettingsPanel({ onClose }) {
   const inputStyle = {
     width: '100%',
     padding: '10px 14px',
-    background: 'white',
-    border: '1px solid #d1d5db',
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
     borderRadius: 8,
-    color: '#1f2937',
+    color: 'var(--text-primary)',
     fontSize: 13,
     outline: 'none',
     fontFamily: 'inherit',
@@ -586,17 +786,17 @@ export default function SettingsPanel({ onClose }) {
     }} onClick={onClose}>
       <div className="settings-modal-scroll" style={{
         width: 500, maxHeight: '88vh', overflow: 'auto',
-        background: 'white',
-        border: '1px solid #e5e7eb',
+        background: 'var(--bg-primary)',
+        border: '1px solid var(--border)',
         borderRadius: 16, padding: 28,
         boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
         scrollbarWidth: 'none', msOverflowStyle: 'none',
       }} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 18, color: '#1f2937', fontWeight: 600 }}>设置</h2>
+          <h2 style={{ margin: 0, fontSize: 18, color: 'var(--text-primary)', fontWeight: 600 }}>设置</h2>
           <button onClick={onClose} style={{
-            background: 'none', border: 'none', color: '#9ca3af',
+            background: 'none', border: 'none', color: 'var(--text-muted)',
             fontSize: 20, cursor: 'pointer', padding: '0 4px',
           }}>×</button>
         </div>
@@ -607,13 +807,13 @@ export default function SettingsPanel({ onClose }) {
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             padding: '12px 14px', borderRadius: 10,
-            background: '#f9fafb', border: '1px solid #e5e7eb',
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {theme === 'light' ? <Sun size={16} color="#f59e0b" /> : <Moon size={16} color="#6366f1" />}
+              {theme === 'light' ? <Sun size={16} color="var(--orange)" /> : <Moon size={16} color="var(--accent)" />}
               <div>
-                <div style={{ fontSize: 14, color: '#1f2937', fontWeight: 500 }}>界面主题</div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 500 }}>界面主题</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                   {theme === 'light' ? '浅色模式' : '深色模式'}
                 </div>
               </div>
@@ -625,21 +825,21 @@ export default function SettingsPanel({ onClose }) {
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             padding: '12px 14px', borderRadius: 10,
-            background: '#f9fafb', border: '1px solid #e5e7eb',
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Trash2 size={16} color="#ef4444" />
+              <Trash2 size={16} color="var(--red)" />
               <div>
-                <div style={{ fontSize: 14, color: '#1f2937', fontWeight: 500 }}>清空当前会话历史</div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>删除所有消息，不可恢复</div>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 500 }}>清空当前会话历史</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>删除所有消息，不可恢复</div>
               </div>
             </div>
             <button
               onClick={handleClearHistory}
               style={{
                 padding: '6px 14px', borderRadius: 8, fontSize: 12,
-                background: '#fef2f2', border: '1px solid #fecaca',
-                color: '#ef4444', cursor: 'pointer', fontWeight: 500,
+                background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)',
+                color: 'var(--red)', cursor: 'pointer', fontWeight: 500,
               }}
             >
               清空
@@ -648,12 +848,12 @@ export default function SettingsPanel({ onClose }) {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: '#f3f4f6', borderRadius: 10, padding: 4 }}>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: 'var(--bg-tertiary)', borderRadius: 10, padding: 4 }}>
           {tabs.map((t) => (
             <button key={t.id} onClick={() => { setTab(t.id); setMsg('') }} style={{
               flex: 1, padding: '8px 12px', borderRadius: 8, fontSize: 12,
-              background: tab === t.id ? '#4f46e5' : 'transparent',
-              border: 'none', color: tab === t.id ? 'white' : '#6b7280',
+              background: tab === t.id ? 'var(--accent)' : 'transparent',
+              border: 'none', color: tab === t.id ? 'white' : 'var(--text-secondary)',
               cursor: 'pointer', fontWeight: tab === t.id ? 600 : 400,
               transition: 'all 0.2s',
             }}>{t.label}</button>
@@ -665,9 +865,9 @@ export default function SettingsPanel({ onClose }) {
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: configured ? '#ecfdf5' : '#fffbeb',
-              border: `1px solid ${configured ? '#a7f3d0' : '#fde68a'}`,
-              fontSize: 13, color: configured ? '#059669' : '#d97706',
+              background: configured ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)',
+              border: `1px solid ${configured ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.2)'}`,
+              fontSize: 13, color: configured ? 'var(--green)' : 'var(--orange)',
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
             }}>
               <span style={{ flex: 1, minWidth: 0 }}>
@@ -679,8 +879,8 @@ export default function SettingsPanel({ onClose }) {
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                   <button onClick={handleDisconnect} disabled={saving} style={{
                     padding: '4px 10px', borderRadius: 6, fontSize: 11,
-                    background: 'white', border: '1px solid #a7f3d0',
-                    color: '#059669', cursor: 'pointer', fontWeight: 500,
+                    background: 'var(--bg-primary)', border: '1px solid rgba(16, 185, 129, 0.25)',
+                    color: 'var(--green)', cursor: 'pointer', fontWeight: 500,
                     whiteSpace: 'nowrap',
                   }}>断开接入</button>
                   <button onClick={() => {
@@ -689,7 +889,7 @@ export default function SettingsPanel({ onClose }) {
                     setTimeout(() => setHighlightPresets(false), 1500)
                   }} style={{
                     padding: '4px 10px', borderRadius: 6, fontSize: 11,
-                    background: '#059669', border: '1px solid #059669',
+                    background: 'var(--green)', border: '1px solid var(--green)',
                     color: 'white', cursor: 'pointer', fontWeight: 500,
                     whiteSpace: 'nowrap',
                   }}>切换 LLM</button>
@@ -701,8 +901,8 @@ export default function SettingsPanel({ onClose }) {
             <div ref={presetsRef} style={{
               marginBottom: 20, padding: highlightPresets ? '8px' : 0,
               borderRadius: 8,
-              background: highlightPresets ? '#ecfdf5' : 'transparent',
-              border: highlightPresets ? '1px solid #a7f3d0' : '1px solid transparent',
+              background: highlightPresets ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
+              border: highlightPresets ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid transparent',
               transition: 'all 0.3s',
             }}>
               <label style={labelStyle}>快速选择</label>
@@ -710,8 +910,8 @@ export default function SettingsPanel({ onClose }) {
                 {presets.map((p) => (
                   <button key={p.label} onClick={() => applyPreset(p)} style={{
                     padding: '6px 12px', borderRadius: 6, fontSize: 12,
-                    background: '#eef2ff', border: '1px solid #c7d2fe',
-                    color: '#4f46e5', cursor: 'pointer',
+                    background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)',
+                    color: 'var(--accent)', cursor: 'pointer',
                   }}>{p.label}</button>
                 ))}
               </div>
@@ -729,9 +929,9 @@ export default function SettingsPanel({ onClose }) {
                     }
                   }} style={{
                     flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
-                    background: provider === p ? '#4f46e5' : '#f9fafb',
-                    border: `1px solid ${provider === p ? '#4f46e5' : '#e5e7eb'}`,
-                    color: provider === p ? 'white' : '#6b7280',
+                    background: provider === p ? 'var(--accent)' : 'var(--bg-secondary)',
+                    border: `1px solid ${provider === p ? 'var(--accent)' : 'var(--border)'}`,
+                    color: provider === p ? 'white' : 'var(--text-secondary)',
                     cursor: 'pointer', fontWeight: provider === p ? 600 : 400,
                   }}>
                     {p === 'openai' ? 'OpenAI 兼容' : p === 'anthropic' ? 'Anthropic' : 'Ollama 本地'}
@@ -774,9 +974,9 @@ export default function SettingsPanel({ onClose }) {
                     disabled={ollamaLoading}
                     style={{
                       padding: '10px 14px',
-                      background: '#eef2ff',
-                      border: '1px solid #c7d2fe',
-                      color: '#4f46e5',
+                      background: 'rgba(99, 102, 241, 0.08)',
+                      border: '1px solid rgba(99, 102, 241, 0.25)',
+                      color: 'var(--accent)',
                       borderRadius: 8,
                       cursor: 'pointer',
                       fontSize: 12,
@@ -793,7 +993,7 @@ export default function SettingsPanel({ onClose }) {
                   placeholder="model-name" style={inputStyle} />
               )}
               {provider === 'ollama' && ollamaError && (
-                <div style={{ marginTop: 6, fontSize: 11, color: '#d97706' }}>
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--orange)' }}>
                   ⚠️ {ollamaError}
                 </div>
               )}
@@ -812,8 +1012,8 @@ export default function SettingsPanel({ onClose }) {
                 <label style={labelStyle}>Temperature: {temperature}</label>
                 <input type="range" min="0" max="1" step="0.1" value={temperature}
                   onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                  style={{ width: '100%', accentColor: '#4f46e5' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#9ca3af' }}>
+                  style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)' }}>
                   <span>精确</span><span>创意</span>
                 </div>
               </div>
@@ -825,25 +1025,53 @@ export default function SettingsPanel({ onClose }) {
               </div>
             </div>
 
-            <button onClick={handleSave} disabled={saving} style={btnStyle}>
-              {saving ? '保存中...' : '保存配置'}
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={handleSave} disabled={saving} style={{ ...btnStyle, flex: 1 }}>
+                {saving ? '保存中...' : '保存配置'}
+              </button>
+              <button
+                onClick={handleTestLlm}
+                disabled={testingLlm}
+                style={{
+                  padding: '12px 16px', borderRadius: 10, fontSize: 14, fontWeight: 600,
+                  background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                  color: 'var(--text-primary)', cursor: testingLlm ? 'default' : 'pointer',
+                  opacity: testingLlm ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6,
+                  transition: 'all 0.2s',
+                }}
+              >
+                {testingLlm ? <><Loader size={14} style={{ animation: 'spin 1s linear infinite' }} /> 测试中...</> : '测试连通'}
+              </button>
+            </div>
+            {llmTestMsg && (
+              <div style={{
+                marginTop: 10, padding: '10px 14px', borderRadius: 8, fontSize: 13,
+                background: llmTestMsg.success ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                border: `1px solid ${llmTestMsg.success ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                color: llmTestMsg.success ? 'var(--green)' : 'var(--red)',
+              }}>
+                {llmTestMsg.success ? `✅ 连通成功: ${llmTestMsg.response}` : `❌ ${llmTestMsg.error}`}
+              </div>
+            )}
           </>
         )}
 
         {/* ====== TAB: Adapters (外部 Agent) ====== */}
         {tab === 'adapters' && (
           <>
-            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: '#eef2ff', border: '1px solid #c7d2fe', fontSize: 12, color: '#4f46e5' }}>
-              配置对应 Agent 专属平台 API Key 即可启用，该类专属 API 同时承载大模型推理与 Agent 工具调度双重能力，区别于通用大模型 API，配置完成后可在对话列表选用 Claude Code、Codex 等外部 Agent。
+            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', fontSize: 12, color: 'var(--accent)', lineHeight: 1.8 }}>
+              配置 API Key 即可启用外部 Agent。<br />
+              「Agent 回复」— 调用 Agent 平台 API（如 Claude Code、Coze），具备工具调用、多轮推理等完整能力，需 Agent 平台 Key。<br />
+              「LLM 回复」— 调用通用大模型 API（如 DeepSeek、Qwen），仅做纯文本对话，需模型 Key。<br />
+              「自动探测」— 根据模型名和地址自动判断。
             </div>
 
             {adapterMsg && (
               <div style={{
                 padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13,
-                background: adapterMsg.includes('成功') || adapterMsg.includes('已保存') ? '#ecfdf5' : '#fef2f2',
-                border: `1px solid ${adapterMsg.includes('成功') || adapterMsg.includes('已保存') ? '#a7f3d0' : '#fecaca'}`,
-                color: adapterMsg.includes('成功') || adapterMsg.includes('已保存') ? '#059669' : '#dc2626',
+                background: adapterMsg.startsWith('✅') ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                border: `1px solid ${adapterMsg.startsWith('✅') ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`,
+                color: adapterMsg.startsWith('✅') ? 'var(--green)' : 'var(--red)',
               }}>{adapterMsg}</div>
             )}
 
@@ -854,54 +1082,77 @@ export default function SettingsPanel({ onClose }) {
 
               return (
                 <div key={agentId} style={{
-                  border: '1px solid #e5e7eb', borderRadius: 12, marginBottom: 16,
+                  border: '1px solid var(--border)', borderRadius: 12, marginBottom: 16,
                   overflow: 'hidden',
                 }}>
                   {/* 头部 */}
                   <div style={{
                     display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px',
-                    background: isConfigured ? '#f0fdf4' : '#f9fafb',
-                    borderBottom: isEditing ? '1px solid #e5e7eb' : 'none',
+                    background: isConfigured ? 'rgba(16, 185, 129, 0.06)' : 'var(--bg-secondary)',
+                    borderBottom: isEditing ? '1px solid var(--border)' : 'none',
                   }}>
                     <div style={{
                       width: 36, height: 36, borderRadius: 8,
-                      background: '#f3f4f6', border: '1px solid #e5e7eb',
+                      background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       overflow: 'hidden', flexShrink: 0,
                     }}>
                       <IconAvatar agentId={agentId} size={20} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: '#1f2937' }}>{meta.name}</div>
-                      <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>{meta.description}</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{meta.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{meta.description}</div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                       {isConfigured ? (
-                        <span style={{ fontSize: 11, color: '#059669', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ fontSize: 11, color: 'var(--green)', display: 'flex', alignItems: 'center', gap: 4 }}>
                           <Check size={12} /> 已配置
                         </span>
                       ) : (
-                        <span style={{ fontSize: 11, color: '#9ca3af' }}>未配置</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>未配置</span>
+                      )}
+                      {agentId === 'self_deployed' && (
+                        <button
+                          onClick={() => proxyRunning ? handleStopProxy() : handleStartProxy()}
+                          disabled={proxyLoading}
+                          style={{
+                            padding: '4px 10px', borderRadius: 6, fontSize: 11,
+                            background: proxyRunning ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+                            border: `1px solid ${proxyRunning ? 'rgba(239, 68, 68, 0.3)' : 'rgba(16, 185, 129, 0.3)'}`,
+                            color: proxyRunning ? 'var(--red, #ef4444)' : 'var(--green)',
+                            cursor: proxyLoading ? 'default' : 'pointer',
+                            fontWeight: 500,
+                          }}
+                        >
+                          {proxyLoading ? '处理中...' : proxyRunning ? '停止代理' : '启动代理'}
+                        </button>
                       )}
                       <button
                         onClick={() => {
                           if (isEditing) {
                             setAdapterEditing(null)
-                            setAdapterForm({ api_key: '', api_url: '', model: '' })
+                            setAdapterForm({ api_key: '', api_url: '', model: '', tool_mode: 'agent', bot_id: '', user_id: '', platform: 'opencode', display_name: '', display_avatar: '', display_desc: '' })
                           } else {
                             setAdapterEditing(agentId)
                             setAdapterForm({
                               api_key: '',
                               api_url: '',
                               model: adapter?.model || '',
+                              tool_mode: adapter?.tool_mode || 'agent',
+                              bot_id: adapter?.extra?.bot_id || '',
+                              user_id: adapter?.extra?.user_id || '',
+                              platform: adapter?.extra?.platform || 'opencode',
+                              display_name: adapter?.display_name || '',
+                              display_avatar: adapter?.display_avatar || '',
+                              display_desc: adapter?.display_desc || '',
                             })
                           }
                         }}
                         style={{
                           padding: '5px 12px', borderRadius: 6, fontSize: 12,
-                          background: isEditing ? '#f3f4f6' : '#4f46e5',
-                          border: isEditing ? '1px solid #e5e7eb' : '1px solid #4f46e5',
-                          color: isEditing ? '#6b7280' : 'white',
+                          background: isEditing ? 'var(--bg-tertiary)' : 'var(--accent)',
+                          border: isEditing ? '1px solid var(--border)' : '1px solid var(--accent)',
+                          color: isEditing ? 'var(--text-secondary)' : 'white',
                           cursor: 'pointer', fontWeight: 500,
                         }}
                       >
@@ -912,24 +1163,46 @@ export default function SettingsPanel({ onClose }) {
 
                   {/* 编辑表单 */}
                   {isEditing && (
-                    <div style={{ padding: '16px', background: 'white' }}>
+                    <div style={{ padding: '16px', background: 'var(--bg-primary)' }}>
                       {meta.fields.map((field) => (
                         <div key={field.key} style={{ marginBottom: 12 }}>
-                          <label style={{ fontSize: 12, color: '#6b7280', marginBottom: 4, display: 'block', fontWeight: 500 }}>
+                          <label style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4, display: 'block', fontWeight: 500 }}>
                             {field.label}
                           </label>
-                          <input
-                            type={field.type}
-                            value={adapterForm[field.key]}
-                            onChange={(e) => setAdapterForm({ ...adapterForm, [field.key]: e.target.value })}
-                            placeholder={field.placeholder}
-                            style={{
-                              width: '100%', padding: '9px 12px',
-                              background: '#f9fafb', border: '1px solid #e5e7eb',
-                              borderRadius: 8, fontSize: 13, color: '#1f2937',
-                              outline: 'none', fontFamily: 'inherit',
-                            }}
-                          />
+                          {field.key === 'display_avatar' && (agentId === 'self_deployed' || agentId.startsWith('local_agent_')) ? (
+                            <AvatarUploadField
+                              value={adapterForm.display_avatar}
+                              onChange={(val) => setAdapterForm({ ...adapterForm, display_avatar: val })}
+                            />
+                          ) : field.type === 'select' ? (
+                            <select
+                              value={adapterForm[field.key] || field.options[0]?.value || ''}
+                              onChange={(e) => setAdapterForm({ ...adapterForm, [field.key]: e.target.value })}
+                              style={{
+                                width: '100%', padding: '9px 12px',
+                                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                                borderRadius: 8, fontSize: 13, color: 'var(--text-primary)',
+                                outline: 'none', fontFamily: 'inherit',
+                              }}
+                            >
+                              {field.options.map((opt) => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type={field.type}
+                              value={adapterForm[field.key]}
+                              onChange={(e) => setAdapterForm({ ...adapterForm, [field.key]: e.target.value })}
+                              placeholder={field.placeholder}
+                              style={{
+                                width: '100%', padding: '9px 12px',
+                                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                                borderRadius: 8, fontSize: 13, color: 'var(--text-primary)',
+                                outline: 'none', fontFamily: 'inherit',
+                              }}
+                            />
+                          )}
                         </div>
                       ))}
                       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
@@ -937,7 +1210,7 @@ export default function SettingsPanel({ onClose }) {
                           onClick={() => handleSaveAdapter(agentId)}
                           style={{
                             padding: '8px 20px', borderRadius: 8, fontSize: 13,
-                            background: '#4f46e5', border: 'none', color: 'white',
+                            background: 'var(--accent)', border: 'none', color: 'white',
                             cursor: 'pointer', fontWeight: 600,
                           }}
                         >
@@ -949,8 +1222,8 @@ export default function SettingsPanel({ onClose }) {
                             disabled={testingAdapter === agentId}
                             style={{
                               padding: '8px 16px', borderRadius: 8, fontSize: 13,
-                              background: '#ecfdf5', border: '1px solid #a7f3d0',
-                              color: '#059669', cursor: 'pointer', fontWeight: 500,
+                              background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)',
+                              color: 'var(--green)', cursor: 'pointer', fontWeight: 500,
                               display: 'flex', alignItems: 'center', gap: 4,
                             }}
                           >
@@ -965,13 +1238,28 @@ export default function SettingsPanel({ onClose }) {
                           rel="noopener noreferrer"
                           style={{
                             padding: '8px 16px', borderRadius: 8, fontSize: 13,
-                            background: '#f3f4f6', border: '1px solid #e5e7eb',
-                            color: '#6b7280', cursor: 'pointer', fontWeight: 500,
+                            background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+                            color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 500,
                             textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4,
                           }}
                         >
                           <ExternalLink size={12} /> 获取 Key
                         </a>
+                        {meta.docUrl && (
+                          <a
+                            href={meta.docUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              padding: '8px 16px', borderRadius: 8, fontSize: 13,
+                              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+                              color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 500,
+                              textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4,
+                            }}
+                          >
+                            <ExternalLink size={12} /> 配置文档
+                          </a>
+                        )}
                       </div>
                     </div>
                   )}
@@ -984,15 +1272,15 @@ export default function SettingsPanel({ onClose }) {
         {/* ====== TAB: Quality Gate ====== */}
         {tab === 'quality' && (
           <>
-            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: '#eef2ff', border: '1px solid #c7d2fe', fontSize: 12, color: '#4f46e5' }}>
+            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', fontSize: 12, color: 'var(--accent)' }}>
               质量门会自动评估 Agent 输出，不达标时触发重写或择优选择
             </div>
 
             {/* Enable toggle */}
             <div style={{ ...rowStyle, marginBottom: 16 }}>
               <div>
-                <div style={{ fontSize: 14, color: '#1f2937', fontWeight: 500 }}>启用质量门</div>
-                <div style={{ fontSize: 12, color: '#9ca3af' }}>关闭后 Agent 直接输出不评估</div>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 500 }}>启用质量门</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>关闭后 Agent 直接输出不评估</div>
               </div>
               <ToggleSwitch checked={qEnabled} onChange={setQEnabled} />
             </div>
@@ -1004,9 +1292,9 @@ export default function SettingsPanel({ onClose }) {
                 {[1, 2, 3].map((n) => (
                   <button key={n} onClick={() => setBestOfN(n)} style={{
                     flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
-                    background: bestOfN === n ? '#4f46e5' : '#f9fafb',
-                    border: `1px solid ${bestOfN === n ? '#4f46e5' : '#e5e7eb'}`,
-                    color: bestOfN === n ? 'white' : '#6b7280',
+                    background: bestOfN === n ? 'var(--accent)' : 'var(--bg-secondary)',
+                    border: `1px solid ${bestOfN === n ? 'var(--accent)' : 'var(--border)'}`,
+                    color: bestOfN === n ? 'white' : 'var(--text-secondary)',
                     cursor: 'pointer', fontWeight: bestOfN === n ? 600 : 400,
                   }}>
                     {n === 1 ? '关闭' : `${n} 候选`}
@@ -1014,7 +1302,7 @@ export default function SettingsPanel({ onClose }) {
                 ))}
               </div>
               {bestOfN > 1 && (
-                <div style={{ marginTop: 6, fontSize: 11, color: '#d97706' }}>
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--orange)' }}>
                   ⚠️ 将消耗 {bestOfN}x Token，适合高质量关键输出
                 </div>
               )}
@@ -1027,9 +1315,9 @@ export default function SettingsPanel({ onClose }) {
                 {[0, 1, 2].map((n) => (
                   <button key={n} onClick={() => setMaxRetries(n)} style={{
                     flex: 1, padding: '10px', borderRadius: 8, fontSize: 13,
-                    background: maxRetries === n ? '#4f46e5' : '#f9fafb',
-                    border: `1px solid ${maxRetries === n ? '#4f46e5' : '#e5e7eb'}`,
-                    color: maxRetries === n ? 'white' : '#6b7280',
+                    background: maxRetries === n ? 'var(--accent)' : 'var(--bg-secondary)',
+                    border: `1px solid ${maxRetries === n ? 'var(--accent)' : 'var(--border)'}`,
+                    color: maxRetries === n ? 'white' : 'var(--text-secondary)',
                     cursor: 'pointer', fontWeight: maxRetries === n ? 600 : 400,
                   }}>
                     {n === 0 ? '不重写' : `${n} 次`}
@@ -1041,8 +1329,8 @@ export default function SettingsPanel({ onClose }) {
             {/* LLM Judge */}
             <div style={{ ...rowStyle, marginBottom: 20 }}>
               <div>
-                <div style={{ fontSize: 14, color: '#1f2937', fontWeight: 500 }}>LLM 深度评审</div>
-                <div style={{ fontSize: 12, color: '#9ca3af' }}>用 LLM 做语义级质量评分（额外消耗 Token）</div>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 500 }}>LLM 深度评审</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>用 LLM 做语义级质量评分（额外消耗 Token）</div>
               </div>
               <ToggleSwitch checked={useLlmJudge} onChange={setUseLlmJudge} />
             </div>
@@ -1056,7 +1344,7 @@ export default function SettingsPanel({ onClose }) {
         {/* ====== TAB: Prompt Layers ====== */}
         {tab === 'prompt' && (
           <>
-            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: '#eef2ff', border: '1px solid #c7d2fe', fontSize: 12, color: '#4f46e5' }}>
+            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', fontSize: 12, color: 'var(--accent)' }}>
               Prompt 按层级注入，每层可独立开关。高层级（约束）优先级最高。
             </div>
 
@@ -1064,17 +1352,17 @@ export default function SettingsPanel({ onClose }) {
               <div key={layer.id} style={{
                 ...rowStyle,
                 marginBottom: 10, padding: '12px 14px', borderRadius: 10,
-                background: layer.enabled ? '#f9fafb' : '#f3f4f6',
-                border: `1px solid ${layer.enabled ? '#e5e7eb' : '#e5e7eb'}`,
+                background: layer.enabled ? 'var(--bg-secondary)' : 'var(--bg-tertiary)',
+                border: `1px solid ${layer.enabled ? 'var(--border)' : 'var(--border)'}`,
                 opacity: layer.enabled ? 1 : 0.5,
               }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, color: '#1f2937', fontWeight: 500 }}>
-                    <span style={{ fontSize: 11, color: '#4f46e5', marginRight: 6 }}>L{layer.level}</span>
+                  <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
+                    <span style={{ fontSize: 11, color: 'var(--accent)', marginRight: 6 }}>L{layer.level}</span>
                     {layer.id}
-                    {layer.has_condition && <span style={{ fontSize: 10, color: '#d97706', marginLeft: 6 }}>条件注入</span>}
+                    {layer.has_condition && <span style={{ fontSize: 10, color: 'var(--orange)', marginLeft: 6 }}>条件注入</span>}
                   </div>
-                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
                     {layer.content_preview}
                   </div>
                 </div>
@@ -1089,13 +1377,13 @@ export default function SettingsPanel({ onClose }) {
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: '#eef2ff', border: '1px solid #c7d2fe',
-              fontSize: 13, color: '#4338ca', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)',
+              fontSize: 13, color: 'var(--accent)', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
               <span>Always-on 离线常驻自治 — 网页关闭后 Agent 仍能后台自主开发</span>
               <button onClick={fetchCronTasks} disabled={cronLoading} style={{
                 padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                background: '#4f46e5', color: 'white', border: 'none', cursor: 'pointer',
+                background: 'var(--accent)', color: 'white', border: 'none', cursor: 'pointer',
                 opacity: cronLoading ? 0.6 : 1,
               }}>{cronLoading ? '...' : '刷新'}</button>
             </div>
@@ -1105,34 +1393,34 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>当前后台自治作业</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '25vh', overflowY: 'auto' }}>
                 {cronTasks.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: '16px 0', fontSize: 12 }}>
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px 0', fontSize: 12 }}>
                     暂无活动中的后台自治作业
                   </div>
                 ) : (
                   cronTasks.map((t) => (
                     <div key={t.id} style={{
-                      padding: '10px 14px', borderRadius: 10, background: '#f9fafb',
-                      border: `1px solid ${t.status === 'running' ? '#a78bfa' : t.status === 'active' ? '#a7f3d0' : '#fde68a'}`,
+                      padding: '10px 14px', borderRadius: 10, background: 'var(--bg-secondary)',
+                      border: `1px solid ${t.status === 'running' ? 'var(--accent)' : t.status === 'active' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.2)'}`,
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: '#1f2937' }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
                           {t.status === 'running' ? '🔵' : t.status === 'active' ? '🟢' : '🟡'} {t.agent_id}
                         </span>
-                        <span style={{ fontSize: 10, color: '#6b7280' }}>每 {t.interval_seconds}s</span>
+                        <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>每 {t.interval_seconds}s</span>
                       </div>
-                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 8 }}>{t.task_prompt.slice(0, 60)}...</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8 }}>{t.task_prompt.slice(0, 60)}...</div>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button onClick={() => handleToggleCronTask(t.id, t.status)} disabled={saving} style={{
                           padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                          background: '#f3f4f6', border: '1px solid #d1d5db', color: '#374151',
+                          background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)',
                         }}>{t.status === 'active' ? '暂停' : '恢复'}</button>
                         <button onClick={() => handleRunCronTaskNow(t.id)} disabled={saving || t.status === 'running'} style={{
                           padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                          background: '#eef2ff', border: '1px solid #c7d2fe', color: '#4338ca',
+                          background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', color: 'var(--accent)',
                         }}>立即执行</button>
                         <button onClick={() => handleDeleteCronTask(t.id)} disabled={saving} style={{
                           padding: '3px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                          background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626',
+                          background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', color: 'var(--red)',
                         }}>删除</button>
                       </div>
                     </div>
@@ -1142,7 +1430,7 @@ export default function SettingsPanel({ onClose }) {
             </div>
 
             {/* Create Form */}
-            <div style={{ padding: '16px', borderRadius: 12, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+            <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
               <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>创建新离线自治任务</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ display: 'flex', gap: 10 }}>
@@ -1191,8 +1479,8 @@ export default function SettingsPanel({ onClose }) {
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: '#eef2ff', border: '1px solid #c7d2fe',
-              fontSize: 13, color: '#4338ca',
+              background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)',
+              fontSize: 13, color: 'var(--accent)',
             }}>
               Agent 可通过 <code>[tool_call:name]</code> 标签调用以下工具，系统自动执行并返回结果
             </div>
@@ -1202,35 +1490,35 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>已注册工具 ({rtTools.length})</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {rtLoading ? (
-                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: 16, fontSize: 12 }}>加载中...</div>
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 16, fontSize: 12 }}>加载中...</div>
                 ) : rtTools.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: 16, fontSize: 12 }}>暂无工具</div>
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 16, fontSize: 12 }}>暂无工具</div>
                 ) : (
                   rtTools.map((tool) => (
                     <div key={tool.name} style={{
-                      padding: '12px 14px', borderRadius: 10, background: '#f9fafb',
-                      border: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '12px 14px', borderRadius: 10, background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     }}>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#1f2937' }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
                           {tool.icon} {tool.name}
                         </div>
-                        <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
                           {tool.description}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <span style={{
                           fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                          background: tool.enabled ? '#ecfdf5' : '#fef2f2',
-                          color: tool.enabled ? '#059669' : '#dc2626',
-                          border: `1px solid ${tool.enabled ? '#a7f3d0' : '#fecaca'}`,
+                          background: tool.enabled ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                          color: tool.enabled ? 'var(--green)' : 'var(--red)',
+                          border: `1px solid ${tool.enabled ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`,
                         }}>{tool.enabled ? '启用' : '禁用'}</span>
                         <button onClick={() => handleToggleRtTool(tool.name)} style={{
                           padding: '4px 10px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                          background: tool.enabled ? '#fef2f2' : '#ecfdf5',
-                          border: `1px solid ${tool.enabled ? '#fecaca' : '#a7f3d0'}`,
-                          color: tool.enabled ? '#dc2626' : '#059669',
+                          background: tool.enabled ? 'rgba(239, 68, 68, 0.08)' : 'rgba(16, 185, 129, 0.08)',
+                          border: `1px solid ${tool.enabled ? 'rgba(239, 68, 68, 0.25)' : 'rgba(16, 185, 129, 0.25)'}`,
+                          color: tool.enabled ? 'var(--red)' : 'var(--green)',
                         }}>{tool.enabled ? '禁用' : '启用'}</button>
                       </div>
                     </div>
@@ -1240,7 +1528,7 @@ export default function SettingsPanel({ onClose }) {
             </div>
 
             {/* Test Tool */}
-            <div style={{ padding: '16px', borderRadius: 12, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+            <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
               <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>工具测试</label>
               <div style={{ marginBottom: 10 }}>
                 <select
@@ -1261,21 +1549,21 @@ export default function SettingsPanel({ onClose }) {
                 />
               </div>
               <button onClick={handleTestRtTool} disabled={saving || !rtTestName} style={{
-                ...btnStyle, background: '#059669',
+                ...btnStyle, background: 'var(--green)',
                 opacity: (saving || !rtTestName) ? 0.6 : 1,
               }}>执行测试</button>
               {rtTestResult && (
                 <div style={{
                   marginTop: 12, padding: '10px', borderRadius: 8,
-                  background: rtTestResult.success ? '#f0fdf4' : '#fef2f2',
-                  border: `1px solid ${rtTestResult.success ? '#bbf7d0' : '#fecaca'}`,
+                  background: rtTestResult.success ? 'rgba(16, 185, 129, 0.06)' : 'rgba(239, 68, 68, 0.08)',
+                  border: `1px solid ${rtTestResult.success ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.25)'}`,
                   maxHeight: '25vh', overflowY: 'auto',
                 }}>
-                  <div style={{ fontSize: 11, color: rtTestResult.success ? '#166534' : '#dc2626', fontWeight: 600, marginBottom: 4 }}>
+                  <div style={{ fontSize: 11, color: rtTestResult.success ? 'var(--green)' : 'var(--red)', fontWeight: 600, marginBottom: 4 }}>
                     {rtTestResult.success ? '✅ 成功' : '❌ 失败'} {rtTestResult.usage?.time_ms ? `(${rtTestResult.usage.time_ms}ms)` : ''}
                   </div>
                   <pre style={{
-                    fontSize: 11, color: '#374151', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                    fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
                     margin: 0, maxHeight: '20vh', overflow: 'auto',
                   }}>
                     {JSON.stringify(rtTestResult.data || rtTestResult.error, null, 2)}
@@ -1287,13 +1575,13 @@ export default function SettingsPanel({ onClose }) {
             {/* ===== 知识库管理 ===== */}
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: '#f0fdf4', border: '1px solid #bbf7d0',
-              fontSize: 13, color: '#166534', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.3)',
+              fontSize: 13, color: 'var(--green)', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
               <span>知识库已索引 <b>{kbStats.total_chunks || 0}</b> 个知识块，Agent 回复时自动检索注入</span>
               <button onClick={fetchKnowledgeDocs} disabled={kbLoading} style={{
                 padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                background: '#16a34a', color: 'white', border: 'none', cursor: 'pointer',
+                background: 'var(--green)', color: 'white', border: 'none', cursor: 'pointer',
                 opacity: kbLoading ? 0.6 : 1,
               }}>{kbLoading ? '...' : '刷新'}</button>
             </div>
@@ -1303,11 +1591,11 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>上传文档 (支持 txt/md/pdf/docx/json/csv)</label>
               <label style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px',
-                borderRadius: 10, border: '2px dashed #d1d5db', cursor: 'pointer',
-                background: kbUploading ? '#f3f4f6' : 'white', transition: 'all 0.2s',
+                borderRadius: 10, border: '2px dashed var(--border)', cursor: 'pointer',
+                background: kbUploading ? 'var(--bg-tertiary)' : 'white', transition: 'all 0.2s',
               }}>
                 <input type="file" accept=".txt,.md,.pdf,.docx,.json,.csv" onChange={handleKbUpload} style={{ display: 'none' }} />
-                <span style={{ fontSize: 13, color: '#6b7280' }}>
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
                   {kbUploading ? '正在处理...' : '点击选择文件上传到知识库'}
                 </span>
               </label>
@@ -1318,24 +1606,24 @@ export default function SettingsPanel({ onClose }) {
               <label style={labelStyle}>已入库文档</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '25vh', overflowY: 'auto' }}>
                 {kbDocs.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: '#9ca3af', padding: '16px 0', fontSize: 12 }}>
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '16px 0', fontSize: 12 }}>
                     暂无文档，请上传文件到知识库
                   </div>
                 ) : (
                   kbDocs.map((doc) => (
                     <div key={doc.id} style={{
-                      padding: '10px 14px', borderRadius: 10, background: '#f9fafb',
-                      border: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '10px 14px', borderRadius: 10, background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     }}>
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 500, color: '#1f2937' }}>{doc.filename}</div>
-                        <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{doc.filename}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                           {doc.chunk_count} 块 | {doc.char_count} 字符
                         </div>
                       </div>
                       <button onClick={() => handleKbDelete(doc.id)} disabled={saving} style={{
                         padding: '4px 10px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-                        background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626',
+                        background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', color: 'var(--red)',
                       }}>删除</button>
                     </div>
                   ))
@@ -1344,7 +1632,7 @@ export default function SettingsPanel({ onClose }) {
             </div>
 
             {/* Test Query */}
-            <div style={{ padding: '16px', borderRadius: 12, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+            <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
               <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>检索测试</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
@@ -1355,7 +1643,7 @@ export default function SettingsPanel({ onClose }) {
                   placeholder="输入查询语句测试知识库检索..."
                 />
                 <button onClick={handleKbQuery} disabled={saving || !kbQuery.trim()} style={{
-                  padding: '8px 16px', borderRadius: 8, background: '#4f46e5',
+                  padding: '8px 16px', borderRadius: 8, background: 'var(--accent)',
                   border: 'none', color: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer',
                   opacity: saving ? 0.6 : 1,
                 }}>检索</button>
@@ -1363,14 +1651,14 @@ export default function SettingsPanel({ onClose }) {
               {kbResults && (
                 <div style={{ marginTop: 12, maxHeight: '20vh', overflowY: 'auto' }}>
                   {kbResults.length === 0 ? (
-                    <div style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', padding: 8 }}>未找到相关内容</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 8 }}>未找到相关内容</div>
                   ) : (
                     kbResults.map((r, i) => (
                       <div key={i} style={{
-                        padding: '8px 10px', borderRadius: 6, background: 'white', border: '1px solid #e5e7eb',
-                        marginBottom: 6, fontSize: 12, color: '#374151',
+                        padding: '8px 10px', borderRadius: 6, background: 'var(--bg-primary)', border: '1px solid var(--border)',
+                        marginBottom: 6, fontSize: 12, color: 'var(--text-secondary)',
                       }}>
-                        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginBottom: 4 }}>
                           相关度: {r.score} | 来源: {r.metadata?.filename || '未知'}
                         </div>
                         {r.text?.slice(0, 200)}{r.text?.length > 200 ? '...' : ''}
@@ -1388,13 +1676,13 @@ export default function SettingsPanel({ onClose }) {
           <>
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-              background: '#fef3c7', border: '1px solid #fde68a',
-              fontSize: 13, color: '#b45309',
+              background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.2)',
+              fontSize: 13, color: 'var(--orange)',
             }}>
               🔒 全局安全门禁与 API/WebSocket 会话密钥管理
             </div>
 
-            <div style={{ padding: '16px', borderRadius: 12, background: '#f9fafb', border: '1px solid #e5e7eb', marginBottom: 20 }}>
+            <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>
               <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>API Secret 密钥配置</label>
               
               <div style={{ marginBottom: 16 }}>
@@ -1411,8 +1699,8 @@ export default function SettingsPanel({ onClose }) {
                     onClick={() => setShowToken(!showToken)}
                     style={{
                       padding: '10px 12px',
-                      background: '#f3f4f6',
-                      border: '1px solid #d1d5db',
+                      background: 'var(--bg-tertiary)',
+                      border: '1px solid var(--border)',
                       borderRadius: 8,
                       cursor: 'pointer',
                       fontSize: 14,
@@ -1426,7 +1714,7 @@ export default function SettingsPanel({ onClose }) {
                     {showToken ? '👁️' : '👁️‍🗨️'}
                   </button>
                 </div>
-                <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, lineHeight: 1.4 }}>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
                   密钥将保存在您的浏览器本地 LocalStorage 中。在开启后端 <code>AGENTHUB_API_SECRET</code> 保护时，前端所有的 Fetch 和 WebSocket 请求将自动注入此凭证以完成双向身份鉴权。
                 </p>
               </div>
@@ -1437,7 +1725,7 @@ export default function SettingsPanel({ onClose }) {
                     localStorage.setItem('agenthub_api_secret', securityToken);
                     setMsg('安全凭证保存成功！所有 API 与实时会话已安全对齐。');
                   }}
-                  style={{ ...btnStyle, flex: 1, background: '#4f46e5' }}
+                  style={{ ...btnStyle, flex: 1, background: 'var(--accent)' }}
                 >
                   保存密钥
                 </button>
@@ -1447,14 +1735,14 @@ export default function SettingsPanel({ onClose }) {
                     setSecurityToken('');
                     setMsg('安全凭证已成功清除，浏览器当前处于无凭证访问状态。');
                   }}
-                  style={{ ...btnStyle, flex: 1, background: '#f3f4f6', border: '1px solid #d1d5db', color: '#374151' }}
+                  style={{ ...btnStyle, flex: 1, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
                 >
                   清除密钥
                 </button>
               </div>
             </div>
 
-            <div style={{ padding: '14px', borderRadius: 10, background: '#f9fafb', border: '1px solid #e5e7eb', fontSize: 12, color: '#4b5563', lineHeight: 1.5 }}>
+            <div style={{ padding: '14px', borderRadius: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
               <b>💡 物理安全说明：</b>
               <br />
               - 当密钥清除且后端未设置密钥时，系统默认激活 <b>Localhost 纯物理环回防火墙</b>，阻止任何外界物理设备访问此编排系统。
@@ -1468,9 +1756,9 @@ export default function SettingsPanel({ onClose }) {
         {msg && (
           <div style={{
             marginTop: 16, padding: '10px 14px', borderRadius: 8,
-            background: msg.includes('成功') || msg.includes('已保存') ? '#ecfdf5' : '#fef2f2',
-            border: `1px solid ${msg.includes('成功') || msg.includes('已保存') ? '#a7f3d0' : '#fecaca'}`,
-            fontSize: 13, color: msg.includes('成功') || msg.includes('已保存') ? '#059669' : '#dc2626',
+            background: msg.includes('成功') || msg.includes('已保存') ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+            border: `1px solid ${msg.includes('成功') || msg.includes('已保存') ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`,
+            fontSize: 13, color: msg.includes('成功') || msg.includes('已保存') ? 'var(--green)' : 'var(--red)',
           }}>{msg}</div>
         )}
       </div>
@@ -1482,13 +1770,13 @@ function ToggleSwitch({ checked, onChange }) {
   return (
     <div onClick={() => onChange(!checked)} style={{
       width: 44, height: 24, borderRadius: 12, cursor: 'pointer',
-      background: checked ? '#4f46e5' : '#d1d5db',
-      border: `1px solid ${checked ? '#4f46e5' : '#d1d5db'}`,
+      background: checked ? 'var(--accent)' : 'var(--border)',
+      border: `1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
       position: 'relative', transition: 'all 0.2s', flexShrink: 0,
     }}>
       <div style={{
         width: 18, height: 18, borderRadius: 9,
-        background: 'white', position: 'absolute', top: 2,
+        background: 'var(--bg-primary)', position: 'absolute', top: 2,
         left: checked ? 22 : 3, transition: 'left 0.2s',
         boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
       }} />

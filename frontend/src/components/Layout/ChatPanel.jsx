@@ -11,7 +11,7 @@ import ChatPanelHeader from './ChatPanelHeader'
 import ChatPanelContent from './ChatPanelContent'
 import TabBar from './TabBar'
 import TaskBoard from '../Canvas/TaskBoard'
-import AgentDAG from '../Canvas/AgentDAG'
+import AgentFlow from '../Canvas/AgentFlow'
 import { wsClient } from '../../utils/websocket'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import IconAvatar from '../IconAvatar'
@@ -351,8 +351,8 @@ export default function ChatPanel({ onToggleSidebar }) {
                 <X size={16} />
               </button>
             </div>
-            <div className="task-popup-body">
-              <AgentDAG />
+            <div className="task-popup-body" style={{ padding: 0, minHeight: 0 }}>
+              <AgentFlow />
             </div>
           </div>
         </>

@@ -167,6 +167,8 @@ load_saved_adapters()
 _DEFAULT_ADAPTERS = {
     "claude_code": {"adapter_type": "claude", "name": "Claude Code", "avatar": "/avatars/claude-code.svg"},
     "codex": {"adapter_type": "codex", "name": "Codex", "avatar": "/avatars/codex.svg"},
+    "coze": {"adapter_type": "coze", "name": "Coze", "avatar": "🤖"},
+    "self_deployed": {"adapter_type": "self_deployed", "name": "本地 Agent", "avatar": "🔧"},
 }
 for _aid, _meta in _DEFAULT_ADAPTERS.items():
     if _aid not in _ar._adapters:
@@ -187,7 +189,9 @@ for _aid, _adapter in _ar._adapters.items():
             avatar=_meta.get("avatar", "🤖"),
             role=_adapter.description,
         )
-        logger.info(f"Registered adapter agent: {_aid} ({_adapter.adapter_type})")
+_registered = [a for a in AGENTS if a in _ar._adapters]
+if _registered:
+    logger.info(f"外部 Agent 已注册: {', '.join(_registered)}")
 
 
 # ---- Root & health endpoints ----

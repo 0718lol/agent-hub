@@ -1,7 +1,7 @@
 import React from 'react'
 import { GitGraph, ChevronRight } from 'lucide-react'
 import { useCanvasStore } from '../../stores/canvasStore'
-import AgentDAG from '../Canvas/AgentDAG'
+import AgentFlow from '../Canvas/AgentFlow'
 
 export default function InlineDAGCard() {
   const nodes = useCanvasStore((s) => s.dagNodes)
@@ -22,7 +22,7 @@ export default function InlineDAGCard() {
         <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
       </summary>
       <div style={{ height: 240, marginTop: 8 }}>
-        <AgentDAG compact />
+        <AgentFlow compact />
       </div>
     </details>
   )

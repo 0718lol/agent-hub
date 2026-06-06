@@ -1,4 +1,4 @@
-import React, { useState, memo } from 'react'
+import React, { useState, useRef, useEffect, memo } from 'react'
 import { Code2, GitBranch, LayoutList, Menu, Search, PanelRightClose, MoreHorizontal, Share2, Building2, Wrench, BookOpen } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
@@ -14,7 +14,20 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
   const slidePanelContent = useCanvasStore((s) => s.slidePanelContent)
   const toggleSlidePanel = useCanvasStore((s) => s.toggleSlidePanel)
 
-  const [moreHover, setMoreHover] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef(null)
+
+  // 点击外部关闭菜单
+  useEffect(() => {
+    if (!moreOpen) return
+    const handleClickOutside = (e) => {
+      if (moreRef.current && !moreRef.current.contains(e.target)) {
+        setMoreOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [moreOpen])
 
   if (!conv) return null
 
@@ -83,22 +96,6 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
         )}
         <button
           className="header-icon-btn"
-          onClick={onToggleTask}
-          style={taskOpen ? { color: 'var(--accent)' } : undefined}
-        >
-          <LayoutList size={20} />
-          <span className="icon-tooltip">任务看板</span>
-        </button>
-        <button
-          className="header-icon-btn"
-          onClick={onToggleDag}
-          style={dagOpen ? { color: 'var(--accent)' } : undefined}
-        >
-          <GitBranch size={20} />
-          <span className="icon-tooltip">协作图</span>
-        </button>
-        <button
-          className="header-icon-btn"
           onClick={() => toggleSlidePanel('tools')}
           style={slidePanelOpen && slidePanelContent === 'tools' ? { color: 'var(--accent)' } : undefined}
         >
@@ -127,17 +124,34 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
             {slidePanelOpen && slidePanelContent === 'code' ? '收起侧边栏' : '展开侧边栏'}
           </span>
         </button>
-        <div
-          className="header-icon-btn-wrapper"
-          onMouseEnter={() => setMoreHover(true)}
-          onMouseLeave={() => setMoreHover(false)}
-        >
-          <button className="header-icon-btn">
+        <div className="header-icon-btn-wrapper" ref={moreRef}>
+          <button
+            className="header-icon-btn"
+            onClick={() => setMoreOpen(!moreOpen)}
+            style={moreOpen ? { color: 'var(--accent)' } : undefined}
+          >
             <MoreHorizontal size={20} />
           </button>
-          {moreHover && (
+          {moreOpen && (
             <div className="header-popup more-popup">
-              <button className="header-popup-item" onClick={() => setMoreHover(false)}>
+              <button
+                className="header-popup-item"
+                style={taskOpen ? { color: 'var(--accent)' } : undefined}
+                onClick={() => { onToggleTask(); setMoreOpen(false) }}
+              >
+                <LayoutList size={16} />
+                <span>任务看板</span>
+              </button>
+              <button
+                className="header-popup-item"
+                style={dagOpen ? { color: 'var(--accent)' } : undefined}
+                onClick={() => { onToggleDag(); setMoreOpen(false) }}
+              >
+                <GitBranch size={16} />
+                <span>协作图</span>
+              </button>
+              <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+              <button className="header-popup-item" onClick={() => setMoreOpen(false)}>
                 <Share2 size={16} />
                 <span>分享</span>
               </button>

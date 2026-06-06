@@ -21,7 +21,11 @@ class AdapterConfig:
     model: str = ""             # 模型名称
     timeout: int = 60           # 请求超时（秒）
     max_retries: int = 2        # 最大重试次数
+    tool_mode: str = "agent"    # "agent" | "text" | "auto" — 工具注入模式
     extra: dict = field(default_factory=dict)  # 平台特定配置
+    display_name: str = ""      # 自定义显示名称（可选）
+    display_avatar: str = ""    # 自定义头像 URL/emoji（可选）
+    display_desc: str = ""      # 自定义简介（可选）
 
 
 @dataclass
@@ -85,10 +89,15 @@ class AgentAdapter(ABC):
         """返回适配器当前状态（供前端查询）。"""
         valid, err = self.validate_config()
         return {
-            "name": self.name,
+            "name": self.config.display_name or self.name,
             "adapter_type": self.adapter_type,
-            "description": self.description,
+            "description": self.config.display_desc or self.description,
             "configured": valid,
             "error": err if not valid else "",
             "model": self.config.model,
+            "tool_mode": self.config.tool_mode,
+            "extra": self.config.extra,
+            "display_name": self.config.display_name,
+            "display_avatar": self.config.display_avatar,
+            "display_desc": self.config.display_desc,
         }

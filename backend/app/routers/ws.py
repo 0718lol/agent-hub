@@ -76,6 +76,8 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             text = content.get("text", "")
             target_agent = content.get("target_agent")
 
+            logger.debug(f"conv={conversation_id} type={msg_type} sender={sender} target_agent={target_agent} text={text[:60]}")
+
             # Intercept user interaction response if there's a pending interactive judge wait
             is_active_hil = conversation_id in _pending_interactions
 

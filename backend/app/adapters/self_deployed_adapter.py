@@ -17,22 +17,22 @@ logger = logging.getLogger("self_deployed_adapter")
 
 
 class SelfDeployedAdapter(AgentAdapter):
-    """自部署 Agent 通用适配器 — 默认支持 Dify。"""
+    """自部署 Agent 通用适配器 — 支持 OpenCode、Dify 及任意 HTTP 服务。"""
 
-    name = "自部署 Agent"
+    name = "本地 Agent"
     adapter_type = "self_deployed"
-    description = "自部署 Agent (Dify/LangFlow/Flowise 等)"
+    description = "自部署 Agent — OpenCode/Dify/自定义 HTTP 服务"
 
     def __init__(self, config: AdapterConfig):
         super().__init__(config)
         self.api_url = config.api_url  # 内网 URL
         self.api_key = config.api_key
-        self.platform = config.extra.get("platform", "dify")
+        self.platform = config.extra.get("platform", "opencode")
         self.user_id = config.extra.get("user_id", "agenthub_user")
 
     def validate_config(self) -> tuple[bool, str]:
         if not self.api_url:
-            return False, "未配置自部署 Agent URL"
+            return False, "未配置服务地址"
         return True, ""
 
     async def stream_reply(
@@ -53,11 +53,12 @@ class SelfDeployedAdapter(AgentAdapter):
         headers = self._build_headers()
         body = self._build_body(message, history, conversation_id)
 
+        endpoint = self._get_endpoint()
         try:
-            async with httpx.AsyncClient(timeout=self.config.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.config.timeout, verify=False) as client:
                 async with client.stream(
                     "POST",
-                    self._get_endpoint(),
+                    endpoint,
                     headers=headers,
                     json=body,
                 ) as resp:
@@ -68,11 +69,19 @@ class SelfDeployedAdapter(AgentAdapter):
                         yield f"[自部署 Agent 错误: HTTP {resp.status_code}: {error_body[:200]}]"
                         return
 
+                    current_event_type = ""
                     async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
+                        # 兼容 event: 行格式
+                        if line.startswith("event:"):
+                            current_event_type = line[6:].strip()
                             continue
-                        data_str = line[6:].strip()
-                        if data_str == "[DONE]":
+                        if line.startswith("data:"):
+                            data_str = line[5:].lstrip()
+                        elif line.startswith("data: "):
+                            data_str = line[6:].strip()
+                        else:
+                            continue
+                        if data_str in ("[DONE]", '"[DONE]"'):
                             break
 
                         try:
@@ -80,15 +89,20 @@ class SelfDeployedAdapter(AgentAdapter):
                         except json.JSONDecodeError:
                             continue
 
-                        text = self._parse_event(event)
+                        event_type = current_event_type or event.get("type", "")
+                        current_event_type = ""
+                        text = self._parse_event(event, event_type)
                         if text:
                             yield text
 
-        except httpx.ConnectError:
+        except httpx.ConnectError as e:
+            print(f"[LOCAL-DEBUG] ConnectError: {e}")
             yield f"\n[无法连接到自部署 Agent: {self.api_url}]"
         except httpx.TimeoutException:
+            print("[LOCAL-DEBUG] Timeout")
             yield "\n[自部署 Agent 超时，请稍后重试]"
         except Exception as e:
+            print(f"[LOCAL-DEBUG] Exception: {type(e).__name__}: {e}")
             yield f"\n[自部署 Agent 错误: {str(e)[:200]}]"
 
     def _build_headers(self) -> dict:
@@ -100,14 +114,17 @@ class SelfDeployedAdapter(AgentAdapter):
 
     def _get_endpoint(self) -> str:
         """获取 API 端点 URL。"""
-        if self.platform == "dify":
-            return f"{self.api_url}/v1/chat-messages"
-        elif self.platform == "langflow":
-            return f"{self.api_url}/api/v1/run"
-        elif self.platform == "flowise":
-            return f"{self.api_url}/api/v1/prediction"
-        else:
-            return f"{self.api_url}/v1/chat-messages"
+        base = self.api_url.rstrip("/")
+        suffix_map = {
+            "dify": "/v1/chat-messages",
+            "langflow": "/api/v1/run",
+            "flowise": "/api/v1/prediction",
+            "opencode": "/v1/chat/completions",
+        }
+        suffix = suffix_map.get(self.platform, "")
+        if suffix and not base.endswith(suffix):
+            return base + suffix
+        return base
 
     def _build_body(self, message: str, history: list[dict], conversation_id: str) -> dict:
         """构建请求体（按平台区分）。"""
@@ -131,31 +148,67 @@ class SelfDeployedAdapter(AgentAdapter):
                 "question": message,
                 "streaming": True,
             }
+        elif self.platform == "opencode":
+            # OpenAI 兼容格式（OpenCode、vLLM、Ollama 等）
+            messages = []
+            if history:
+                for msg in history[-20:]:
+                    role = msg.get("role") or msg.get("sender", "user")
+                    role = "assistant" if role == "assistant" else "user"
+                    raw_content = msg.get("content", "")
+                    if isinstance(raw_content, dict):
+                        content = raw_content.get("text", str(raw_content))
+                    elif isinstance(raw_content, str):
+                        content = raw_content
+                    else:
+                        content = str(raw_content) if raw_content else ""
+                    if content and content.strip():
+                        messages.append({"role": role, "content": content})
+            messages.append({"role": "user", "content": message})
+            return {
+                "model": self.config.model or "default",
+                "messages": messages,
+                "stream": True,
+            }
         else:
-            # 通用格式
+            # 通用格式：用户自定义
             return {
                 "message": message,
                 "conversation_id": conversation_id or "",
                 "stream": True,
             }
 
-    def _parse_event(self, event: dict) -> str:
+    def _parse_event(self, event: dict, event_type: str = "") -> str:
         """解析 SSE 事件，提取文本。"""
         if self.platform == "dify":
-            event_type = event.get("event", "")
-            if event_type == "agent_message":
-                return event.get("answer", "")
-            elif event_type == "message":
+            et = event_type or event.get("event", "")
+            if et in ("agent_message", "message"):
                 return event.get("answer", "")
         elif self.platform == "langflow":
-            event_type = event.get("event", "")
-            if event_type == "end":
+            et = event_type or event.get("event", "")
+            if et == "end":
                 return event.get("outputs", {}).get("message", "")
         elif self.platform == "flowise":
             return event.get("data", "")
+        elif self.platform == "opencode":
+            # OpenAI 兼容格式：choices[0].delta.content
+            choices = event.get("choices", [])
+            if choices:
+                delta = choices[0].get("delta", {})
+                content = delta.get("content") or ""
+                if content:
+                    return content
+            # 兼容 OpenCode 自定义事件格式
+            if event_type == "message.text" or event.get("type") == "message.text":
+                return event.get("text") or event.get("content") or ""
+            if event_type == "message.delta":
+                return event.get("delta", {}).get("text") or event.get("text") or ""
         else:
-            # 通用：尝试提取 text/answer/content
-            return event.get("text") or event.get("answer") or event.get("content") or ""
+            # 通用：尝试多种字段
+            return (event.get("text") or event.get("answer") or event.get("content")
+                    or event.get("delta", {}).get("content")
+                    or event.get("message", {}).get("content")
+                    or event.get("data", {}).get("content") or "")
         return ""
 
 

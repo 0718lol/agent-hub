@@ -100,8 +100,8 @@ def parse_create_agent_tag(buffer: str) -> tuple[dict | None, str]:
 
 
 def get_agents() -> dict:
-    """Return the current agent registry dict."""
-    return agent_registry.get_agent_dict()
+    """Return the current agent registry dict (direct reference, not a copy)."""
+    return agent_registry._agents
 # ============================================================
 # Custom Agent helpers
 # ============================================================
@@ -291,7 +291,9 @@ async def stream_agent_reply(
 
     try:
         # ---- Best-of-N: parallel multi-candidate generation ----
-        if quality_gate.enabled and quality_gate.best_of_n > 1 and agent.agent_id not in ("agent_builder", "agent_pm"):
+        # 外部 Agent（AdapterAgent）走标准流式路径，不走 Best-of-N
+        _is_external = hasattr(agent, 'adapter')
+        if quality_gate.enabled and quality_gate.best_of_n > 1 and agent.agent_id not in ("agent_builder", "agent_pm") and not _is_external:
             await manager.broadcast(conversation_id, {
                 "type": "message",
                 "conversation_id": conversation_id,
@@ -328,7 +330,7 @@ async def stream_agent_reply(
             })
 
         # ---- Standard streaming mode ----
-        _use_stream = not (quality_gate.enabled and quality_gate.best_of_n > 1
+        _use_stream = _is_external or not (quality_gate.enabled and quality_gate.best_of_n > 1
                            and agent.agent_id not in ("agent_builder", "agent_pm"))
         if _use_stream:
             async for chunk in agent.stream_reply(effective_text, history=history, conversation_id=conversation_id):
@@ -527,8 +529,8 @@ async def stream_agent_reply(
     if not raw_text:
         raw_text = full_text
 
-    # ---- Format validation layer ----
-    if not stopped and full_text and full_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）"):
+    # ---- Format validation layer (skip for external agents) ----
+    if not stopped and not _is_external and full_text and full_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）"):
         is_valid, reason = validate_agent_output(full_text, agent.agent_id)
         if not is_valid:
             logger.warning(f"Agent {agent.agent_id} format check failed: {reason}")
@@ -565,8 +567,8 @@ async def stream_agent_reply(
                         "stream": True,
                     })
 
-    # ---- Auto self-reflection & retry ----
-    if not stopped and agent.agent_id not in ("agent_builder", "agent_pm"):
+    # ---- Auto self-reflection & retry (skip for external agents) ----
+    if not stopped and agent.agent_id not in ("agent_builder", "agent_pm") and not _is_external:
         eval_result = await evaluate_and_retry(
             conversation_id=conversation_id,
             agent=agent,
@@ -642,6 +644,7 @@ async def stream_agent_reply(
 
 async def run_target_agent_flow(conversation_id: str, agent, text: str):
     """Background generation flow when user targets a specific agent."""
+    logger.info(f"run_target_agent_flow: conv={conversation_id}, agent={agent.agent_id}")
     AGENTS = get_agents()
     stop_event = asyncio.Event()
     _stop_events[conversation_id] = stop_event

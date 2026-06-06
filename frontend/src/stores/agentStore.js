@@ -6,6 +6,8 @@ const PRESET_AGENTS = [
   { agent_id: 'agent_pm', name: 'PM 小助手', role: '产品经理 · 需求分析与任务拆解', status: 'idle', agent_type: 'self' },
   { agent_id: 'claude_code', name: 'Claude Code', role: 'Anthropic 最强代码 Agent · 原生工具调用', status: 'idle', agent_type: 'external', adapter_type: 'claude', avatar: '/avatars/claude-code.png' },
   { agent_id: 'codex', name: 'Codex', role: 'OpenAI Assistants API · 代码解释器', status: 'idle', agent_type: 'external', adapter_type: 'codex', avatar: '/avatars/codex.png' },
+  { agent_id: 'coze', name: 'Coze', role: '字节跳动 Agent 平台 · 插件与工作流', status: 'idle', agent_type: 'external', adapter_type: 'coze', avatar: '/avatars/coze.png' },
+  { agent_id: 'self_deployed', name: '本地 Agent', role: '自部署 Agent · OpenCode/自定义 HTTP 服务', status: 'idle', agent_type: 'external', adapter_type: 'self_deployed', avatar: null },
   { agent_id: 'agent_frontend', name: '前端工程师', role: '前端开发 · React/TypeScript', status: 'idle', agent_type: 'self' },
   { agent_id: 'agent_backend', name: '后端工程师', role: '后端开发 · API/数据库', status: 'idle', agent_type: 'self' },
   { agent_id: 'agent_tester', name: '测试工程师', role: '测试 · 用例设计/Bug追踪', status: 'idle', agent_type: 'self' },
