@@ -55,6 +55,9 @@ def init_db():
     except Exception as e:
         _db_logger.warning(f"Failed to set WAL mode during init_db(): {e}")
 
+    # 先确保所有表存在，再执行后续查询
+    SQLModel.metadata.create_all(engine)
+
     try:
         from alembic import command
         from alembic.config import Config
@@ -65,7 +68,7 @@ def init_db():
             alembic_cfg.set_main_option('sqlalchemy.url', f'sqlite:///{DB_PATH}')
         command.upgrade(alembic_cfg, 'head')
     except Exception:
-        SQLModel.metadata.create_all(engine)
+        pass
 
     # 增量迁移：给 knowledge_docs 表添加 knowledge_base_id 列（如果不存在）
     try:
