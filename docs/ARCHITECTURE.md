@@ -291,7 +291,32 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - Langfuse 集成：完成的 Trace 自动异步导出到 Langfuse（需配置环境变量）
 - Dashboard 数据：提供 Agent 统计、Best-of-N 命中率、沙盒执行成功率、质量门禁通过率
 
-### 3.14 前端 Canvas 组件
+### 3.14 Reflexion 自我进化引擎
+
+- **位置**: backend/app/core/reflexion_engine.py
+- **核心类**: ReflexionEngine
+
+**功能定位**: Agent 从失败中自动学习的自我进化引擎，通过结构化反思提取教训，并在后续任务中自动注入历史经验，实现无需人工干预的持续改进。
+
+**核心方法**:
+
+| 方法            | 说明                                                         |
+| --------------- | ------------------------------------------------------------ |
+| reflect()       | 结构化反思，LLM 分析失败原因并提取可复用教训                 |
+| get_context()   | 获取反思上下文，将历史教训格式化为可注入提示词的内容         |
+| should_retry()  | 重试判断，基于历史反思决定是否值得再次尝试                   |
+
+**集成点**:
+- 在 `agent_orchestrator.py` 中的质量评估后触发反思，当质量门禁检测不通过时自动调用 `reflect()` 分析失败原因
+- Agent 生成代码前通过 `get_context()` 自动注入历史教训，提高生成质量
+
+**技术特点**:
+- 滑动窗口记忆：每个 Agent 最多保留 10 条反思记录，自动淘汰旧记录
+- 纯内存存储：反思数据不持久化，避免敏感信息泄露
+- 零外部依赖：纯 Python 实现，不引入额外框架
+- 异常隔离：所有反思操作在 try/except 中执行，不影响主流程
+
+### 3.15 前端 Canvas 组件
 
 - **位置**: frontend/src/components/Canvas/
 
@@ -313,7 +338,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - DiffViewer 内置零依赖 Diff 算法，支持 Lookahead 行移位检测
 - AgentFlow 基于 @xyflow/react 实现可拖拽的节点连线图
 
-### 3.15 DesktopPet 桌面宠物系统
+### 3.16 DesktopPet 桌面宠物系统
 
 - **位置**: frontend/src/components/AgentCharacter/DesktopPet.jsx + DesktopPet.css
 - **依赖**: AgentCharacter、DraggableFloating、PetMiniChat 组件
@@ -326,7 +351,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - 迷你聊天：双击宠物打开 PetMiniChat 快捷对话窗口
 - 虚拟办公室联动：监听 agenthub:open-office 等自定义事件，与 VirtualOffice 视图协同
 
-### 3.16 事件流系统
+### 3.17 事件流系统
 
 - **位置**: backend/app/core/event_stream.py
 - **单例**: EventStreamManager (全局变量 event_stream_manager)
@@ -347,7 +372,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - 工具调用格式化：自动将 ActionCallEvent 转换为 [tool_call:name]{params}[/tool_call] 协议格式
 - 错误标准化：失败的 ObservationEvent 自动包装为 {"error": ...} 结构
 
-### 3.17 子进程安全模块
+### 3.18 子进程安全模块
 
 - **位置**: backend/app/core/subprocess_security.py
 
@@ -366,7 +391,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - kill-on-job-close：Job Object 设置 KILL_ON_JOB_CLOSE 标志，确保父进程退出时子进程自动终止
 - Windows 进程树终止：使用 taskkill /F /T /PID 杀掉整个进程树
 
-### 3.18 代码沙盒管理器
+### 3.19 代码沙盒管理器
 
 - **位置**: backend/app/core/sandbox_manager.py
 - **单例**: SandboxManager (全局变量 sandbox_manager)
@@ -387,7 +412,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - 支持语言：Python、JavaScript/TypeScript、Shell/Bash
 - stdin 注入：支持通过 stdin 管道传入标准输入数据
 
-### 3.19 AST 安全解释器
+### 3.20 AST 安全解释器
 
 - **位置**: backend/app/core/ast_interpreter.py
 - **类**: SafeASTInterpreter
@@ -408,7 +433,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - 输出缓冲：print() 重定向到内部 StringIO 缓冲区，不污染 sys.stdout
 - 支持语法：变量赋值、算术运算、布尔逻辑、比较、if/for/while、列表/字典/集合字面量、切片
 
-### 3.20 仓库结构扫描器
+### 3.21 仓库结构扫描器
 
 - **位置**: backend/app/core/repo_map.py
 - **单例**: CodebaseMapScanner (全局变量 codebase_map_scanner)
@@ -421,7 +446,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - 目录过滤：自动跳过 .git、node_modules、__pycache__、dist 等目录
 - 输出格式：Markdown 嵌套列表，包含文件路径、imports、functions、classes/methods
 
-### 3.21 StreamPipeline 流式管线
+### 3.22 StreamPipeline 流式管线
 
 - **位置**: backend/app/core/pipeline.py
 
@@ -442,7 +467,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - 实时广播：thinking 标签内容实时推送到前端气泡，代码块实时推送到 DiffViewer/WebPreview
 - 未闭合标签容错：finalize() 阶段将未闭合的标签内容回退为普通文本
 
-### 3.22 缓存抽象层
+### 3.23 缓存抽象层
 
 - **位置**: backend/app/core/cache.py
 - **单例**: RedisCache (全局变量 cache)
@@ -463,7 +488,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - 内存 LRU：最多 512 条，超限时自动清理过期项
 - 静默降级：Redis 连接失败时自动标记断开并回退到内存缓存，绝不抛出异常
 
-### 3.23 Async CRUD 包装器
+### 3.24 Async CRUD 包装器
 
 - **位置**: backend/app/core/async_wrappers.py
 
@@ -474,7 +499,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - 零阻塞：所有数据库 I/O 在独立线程中执行
 - 调用透明：异步函数签名与同步原函数一一对应
 
-### 3.24 语音录制 Hook
+### 3.25 语音录制 Hook
 
 - **位置**: frontend/src/utils/useVoiceRecorder.js
 
@@ -486,14 +511,14 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - 录音时长计时：通过 setInterval 实时更新 duration 状态
 - 错误处理：区分权限拒绝（NotAllowedError）和设备缺失（NotFoundError）
 
-### 3.25 浏览器 Agent 架构
+### 3.26 浏览器 Agent 架构
 
 - `browser_manager.py`：Playwright 单例管理器，管理浏览器实例的创建、复用和销毁
 - `browser_agent_tools.py`：7 个浏览器工具（打开网页、提取内容、截图、点击、输入、滚动、关闭）
 - `browser_agent.py`：专用浏览器 Agent，基于 Playwright 实现网页自动化操作
 - 集成：错误检测 + 自动路由，当浏览器操作失败时自动重试或降级处理
 
-### 3.26 输出校验架构
+### 3.27 输出校验架构
 
 - `output_validator.py`：基于 Pydantic 模型的输出校验器，支持自动重试机制
 - 四层防御体系：
@@ -502,7 +527,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
   3. **校验重试** — Pydantic 校验失败时自动重试，最多 N 次
   4. **浏览器兜底** — 当结构化输出失败时，通过浏览器 Agent 解析网页获取数据
 
-### 3.27 Git 集成
+### 3.28 Git 集成
 
 - `git_tools.py`：提供 Git 操作工具集（commit、push、create PR）
 - 安全措施：
@@ -510,7 +535,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
   - **命令白名单** — 仅允许安全的 Git 子命令
   - **超时控制** — 设置命令执行超时，防止阻塞
 
-### 3.28 LLM 客户端
+### 3.29 LLM 客户端
 
 - **位置**: backend/app/core/llm_client.py
 - **传输**: httpx 异步 HTTP 客户端
@@ -521,7 +546,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
   - 配置持久化 (config_persistence.py) — LLM 设置保存/加载
   - 错误自定义 (LLMAPIError) — 携带状态码和消息
 
-### 3.29 数据层
+### 3.30 数据层
 
 - **数据库**: SQLite + SQLModel (SQLAlchemy ORM)
 - **位置**: backend/app/core/database.py + backend/app/core/_engine.py
