@@ -7,6 +7,9 @@ import SettingsPanel from './SettingsPanel'
 import IconAvatar from '../IconAvatar'
 import AgentSelector from '../Chat/AgentSelector'
 import LocalAgentSelector from '../Chat/LocalAgentSelector'
+import SidebarAgentSection from './SidebarAgentSection'
+import SidebarHistorySection from './SidebarHistorySection'
+import SidebarFooter from './SidebarFooter'
 
 export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
   const conversations = useChatStore((s) => s.conversations)
@@ -225,253 +228,41 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
         </div>
 
         <div className="sidebar-scroll">
-        {/* ===== 智能体分组 ===== */}
-        <div className="sidebar-section">
-          <div className="sidebar-section-header" onClick={() => setAgentsExpanded(!agentsExpanded)} style={{ padding: '10px var(--space-3)' }}>
-            <div className="sidebar-section-title" style={{ fontSize: 15, fontWeight: 600, textTransform: 'none', letterSpacing: 0 }}>
-              <ChevronRight size={15} className={`sidebar-section-chevron ${agentsExpanded ? 'open' : ''}`} />
-              <Bot size={17} />
-              <span>智能体</span>
-            </div>
-            <button
-              ref={addBtnRef}
-              className="sidebar-section-add"
-              onClick={(e) => {
-                e.stopPropagation()
-                setShowAgentMenu(prev => !prev)
-              }}
-              title="新建Agent"
-              onMouseEnter={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect()
-                setTooltip({ text: '新建Agent', x: rect.left + rect.width / 2, y: rect.top - 8 })
-              }}
-              onMouseLeave={() => setTooltip(null)}
-            >
-              <Plus size={14} />
-            </button>
-          </div>
+        <SidebarAgentSection
+          agentsExpanded={agentsExpanded}
+          setAgentsExpanded={setAgentsExpanded}
+          subExpanded={subExpanded}
+          setSubExpanded={setSubExpanded}
+          agentGroups={agentGroups}
+          activeAgentId={activeAgentId}
+          openTabs={openTabs}
+          openTab={openTab}
+          handleDeleteAgent={handleDeleteAgent}
+          addBtnRef={addBtnRef}
+          setShowAgentMenu={setShowAgentMenu}
+          setTooltip={setTooltip}
+        />
 
-          {agentsExpanded && (
-            <div style={{ paddingBottom: 'var(--space-1)' }}>
-              {[
-                { key: 'self', label: '自建 Agent', icon: Bot, items: agentGroups.self },
-                { key: 'external', label: '外部 Agent', icon: Globe, items: agentGroups.external },
-                { key: 'local', label: '本地 Agent', icon: Cpu, items: agentGroups.local },
-              ].filter((g) => g.items.length > 0).map((group) => {
-                const GroupIcon = group.icon
-                const isOpen = subExpanded[group.key]
-                return (
-                  <div key={group.key}>
-                    <div
-                      className="sidebar-section-header"
-                      onClick={() => setSubExpanded((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}
-                      style={{ padding: '8px var(--space-3) 8px var(--space-4)' }}
-                    >
-                      <div className="sidebar-section-title" style={{ fontSize: 14, fontWeight: 500 }}>
-                        <ChevronRight size={14} className={`sidebar-section-chevron ${isOpen ? 'open' : ''}`} />
-                        <GroupIcon size={15} />
-                        <span style={{ textTransform: 'none', letterSpacing: 0 }}>{group.label}</span>
-                        <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 3 }}>({group.items.length})</span>
-                      </div>
-                    </div>
-                    {isOpen && (
-                      <div style={{ maxHeight: 185, overflowY: 'auto', scrollbarWidth: 'thin' }}>
-                        {group.items.map((agent) => {
-                          const isActive = activeAgentId === agent.agent_id
-                          const isAgentRunning = openTabs.some((t) => t.agentId === agent.agent_id)
-                          return (
-                            <div
-                              key={agent.agent_id}
-                              className={`conversation-item ${isActive ? 'active' : ''}`}
-                              style={{ paddingLeft: 'var(--space-6)' }}
-                              onClick={() => {
-                                const agentConvs = useChatStore.getState().conversations
-                                  .filter((c) => c.agentId === agent.agent_id && !c.archived)
-                                  .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-                                if (agentConvs.length > 0) {
-                                  const latest = agentConvs[0]
-                                  const existingTab = openTabs.find((t) => t.convId === latest.id)
-                                  if (existingTab) {
-                                    useTabStore.getState().setActiveTab(existingTab.id)
-                                  } else {
-                                    openTab(latest.id, latest.name, agent.agent_id)
-                                  }
-                                } else {
-                                  const convId = `conv_${agent.agent_id}_${Date.now()}`
-                                  const convName = '新对话1'
-                                  useChatStore.getState().addConversation({
-                                    id: convId, type: 'single', agentId: agent.agent_id,
-                                    name: convName, avatar: null, messages: [],
-                                    pinned: false, unread: false, updatedAt: Date.now(),
-                                  })
-                                  fetch('/api/conversations', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ id: convId, type: 'single', name: convName, agent_id: agent.agent_id }),
-                                  }).catch(() => {})
-                                  openTab(convId, convName, agent.agent_id)
-                                }
-                              }}
-                            >
-                              <div className="conv-avatar" style={{ width: 32, height: 32 }}>
-                                {agent.avatar ? (
-                                  agent.avatar.startsWith('/') || agent.avatar.startsWith('http') ? (
-                                    <img src={agent.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
-                                  ) : (
-                                    <span style={{ fontSize: 18 }}>{agent.avatar}</span>
-                                  )
-                                ) : (
-                                  <IconAvatar agentId={agent.agent_id} size={18} />
-                                )}
-                              </div>
-                              <div className="conv-info">
-                                <div className="conv-name">{agent.name}</div>
-                                <div className="conv-status conv-status-idle">{agent.role}</div>
-                              </div>
-                              <span className="online-dot" style={{ background: isAgentRunning ? 'var(--green)' : 'var(--red, #ef4444)' }} title={isAgentRunning ? '运行中' : '已停止'} />
-                              {agent.agent_id.startsWith('agent_custom_') ? (
-                                <button
-                                  className="agent-row-delete"
-                                  onClick={(e) => handleDeleteAgent(e, agent.agent_id)}
-                                  title="删除"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              ) : (
-                                <span className="agent-row-lock" title="默认agent不允许删除">
-                                  <Lock size={14} />
-                                </span>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
+        <SidebarHistorySection
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          historyConversations={historyConversations}
+          openTabs={openTabs}
+          openTab={openTab}
+          handleContextMenu={handleContextMenu}
+          handleDragStart={handleDragStart}
+          handleDragOver={handleDragOver}
+          handleDrop={handleDrop}
+          formatTime={formatTime}
+          activeAgentId={activeAgentId}
+          convCounterRef={convCounterRef}
+        />
         </div>
 
-        {/* ===== 新对话 + 搜索 + 历史对话 ===== */}
-        <div className="sidebar-new-conv-wrap">
-          <div className="sidebar-new-conv-btn" onClick={() => {
-            if (!activeAgentId) return
-            const convId = `conv_${activeAgentId}_${Date.now()}`
-            const defaultName = `新对话${convCounterRef.current}`
-            convCounterRef.current += 1
-            useChatStore.getState().addConversation({
-              id: convId, type: 'single', agentId: activeAgentId,
-              name: defaultName, avatar: null,
-              messages: [], pinned: false, unread: false, updatedAt: Date.now(),
-            })
-            openTab(convId, defaultName, activeAgentId)
-          }}>
-            <Plus size={16} />
-            <span>新对话</span>
-          </div>
-        </div>
-
-        <div className="sidebar-search-wrap" style={{ position: 'relative' }}>
-          <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-          <input
-            type="text"
-            placeholder="搜索对话..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ paddingLeft: 30 }}
-          />
-        </div>
-
-        <div className="sidebar-history-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span>历史对话</span>
-          {historyConversations.length > 0 && (
-            <button
-              onClick={() => {
-                if (!window.confirm(`确定删除当前 Agent 下的 ${historyConversations.length} 条对话？`)) return
-                const { closeTab } = useTabStore.getState()
-                for (const conv of historyConversations) {
-                  // 关闭对应标签
-                  const tab = openTabs.find((t) => t.convId === conv.id)
-                  if (tab) closeTab(tab.id)
-                  // 归档对话
-                  useChatStore.getState().archiveConversation(conv.id)
-                }
-              }}
-              style={{
-                background: 'none', border: 'none', color: 'var(--text-muted)',
-                fontSize: 'var(--text-xs)', cursor: 'pointer', padding: '2px 4px',
-              }}
-              title="清空当前 Agent 的所有历史对话"
-            >
-              清空
-            </button>
-          )}
-        </div>
-
-        <div className="sidebar-history-list">
-          {historyConversations.length === 0 && !searchQuery.trim() ? null : historyConversations.length === 0 ? (
-            <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--text-xs)', padding: 'var(--space-3)' }}>
-              无匹配对话
-            </div>
-          ) : (
-            historyConversations.map((conv, i) => {
-              const openConvIds = new Set(openTabs.map((t) => t.convId))
-              return (
-                <div
-                  key={conv.id}
-                  className={`conversation-item ${openConvIds.has(conv.id) ? 'active' : ''}`}
-                  style={{ paddingLeft: 'var(--space-5)' }}
-                  onClick={() => {
-                    const existingTab = openTabs.find((t) => t.convId === conv.id)
-                    if (existingTab) {
-                      // 标签页已存在 → 直接切换到该标签
-                      useTabStore.getState().setActiveTab(existingTab.id)
-                    } else {
-                      // 标签页不存在 → 新建标签并打开该对话
-                      openTab(conv.id, conv.name, conv.agentId)
-                    }
-                  }}
-                  onContextMenu={(e) => handleContextMenu(e, conv.id)}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, i)}
-                  onDragOver={handleDragOver}
-                  onDrop={(e) => handleDrop(e, i)}
-                >
-                  {conv.pinned && <span className="pin-indicator"><Pin size={10} /></span>}
-                  <div className="conv-avatar" style={{ width: 32, height: 32 }}>
-                    <IconAvatar
-                      agentId={conv.type === 'single' ? conv.agentId : undefined}
-                      iconKey={conv.type === 'group' ? 'group' : undefined}
-                      size={18}
-                    />
-                  </div>
-                  <div className="conv-info">
-                    <div className={`conv-name ${conv.unread ? 'unread' : ''}`}>{conv.name}</div>
-                  </div>
-                  <span className="conv-time">{formatTime(conv.updatedAt)}</span>
-                  {conv.unread && <span className="unread-dot" />}
-                  <button
-                    className="conv-menu-btn"
-                    onClick={(e) => { e.stopPropagation(); handleContextMenu(e, conv.id) }}
-                  >
-                    <MoreHorizontal size={14} />
-                  </button>
-                </div>
-              )
-            })
-          )}
-        </div>
-        </div>
-
-        {/* Footer */}
-        <div className="sidebar-footer">
-          <div className="sidebar-footer-item" onClick={() => { setSettingsTab('llm'); setShowSettings(true) }}>
-            <Settings size={16} />
-            <span>设置</span>
-          </div>
-        </div>
+        <SidebarFooter
+          setSettingsTab={setSettingsTab}
+          setShowSettings={setShowSettings}
+        />
       </div>
 
       {/* Context Menu */}
