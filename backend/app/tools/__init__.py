@@ -7,6 +7,7 @@ from . import (
     code_agent_tools,  # noqa: F401
     code_interpreter_tools,  # noqa: F401
     file_ops,  # noqa: F401
+    git_tools,  # noqa: F401
     http_request,  # noqa: F401
     stateful_terminal_tool,  # noqa: F401
     web_search,  # noqa: F401
