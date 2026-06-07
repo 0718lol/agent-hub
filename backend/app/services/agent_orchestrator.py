@@ -24,6 +24,12 @@ from app.core.database import (
 from app.core.llm_client import llm_client
 from app.core.metrics import metrics
 from app.core.output_validator import get_retry_prompt, validate_output
+
+try:
+    from app.core.reflexion_engine import ReflexionEngine
+    _reflexion = ReflexionEngine()
+except Exception:
+    _reflexion = None
 from app.core.quality_gate import quality_gate
 from app.core.quality_retry import evaluate_and_retry
 from app.core.websocket import manager
@@ -322,6 +328,15 @@ async def stream_agent_reply(
     assigned_agents = []
 
     effective_text = user_text
+
+    # Inject reflection context from Reflexion engine
+    if _reflexion:
+        try:
+            _ctx = _reflexion.get_context(agent.agent_id)
+            if _ctx:
+                effective_text = effective_text + chr(10) + chr(10) + _ctx
+        except Exception:
+            pass
     if context:
         effective_text = f"PM 的任务拆解：\n{context}\n\n用户原始需求：{user_text}"
 
