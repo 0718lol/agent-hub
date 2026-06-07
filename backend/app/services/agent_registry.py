@@ -4,6 +4,7 @@ import logging
 
 from app.agents.backend_agent import BackendAgent
 from app.agents.base import BaseAgent
+from app.agents.browser_agent import BrowserAgent
 from app.agents.builder import AgentBuilderAgent
 from app.agents.custom import CustomAgent
 from app.agents.designer import DesignerAgent
@@ -29,6 +30,7 @@ class AgentRegistry:
             "agent_devops": DevopsAgent(),
             "agent_designer": DesignerAgent(),
             "agent_builder": AgentBuilderAgent(),
+            "agent_browser": BrowserAgent(),
         }
         self._agents["agent_pm"].description = "规划需求与分工的PM智能体"
         self._agents["agent_frontend"].description = "开发 React 前端组件的智能体"
@@ -37,6 +39,7 @@ class AgentRegistry:
         self._agents["agent_devops"].description = "配置 Docker 容器和部署的智能体"
         self._agents["agent_designer"].description = "提供 UI/UX 设计及样式美化建议的智能体"
         self._agents["agent_builder"].description = "协助用户创建并注册自定义智能体的助手"
+        self._agents["agent_browser"].description = "查阅文档、搜索解决方案、验证网页效果"
 
         self.load_custom_agents_sync()
 

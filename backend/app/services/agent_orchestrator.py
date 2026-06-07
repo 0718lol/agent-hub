@@ -255,6 +255,56 @@ def validate_agent_output(text: str, agent_id: str) -> tuple[bool, str]:
 
 
 # ============================================================
+# Error detection for browser auto-routing
+# ============================================================
+
+# Error patterns that can be fixed by looking up documentation
+ERROR_PATTERNS = [
+    (r'ModuleNotFoundError.*No module named .(\w+).', 'import_error'),
+    (r'ImportError.*cannot import name .(\w+).', 'import_error'),
+    (r'AttributeError.*has no attribute .(\w+).', 'attribute_error'),
+    (r'TypeError.*unexpected keyword argument .(\w+).', 'type_error'),
+    (r'TypeError.*takes (\d+) positional arguments', 'type_error'),
+    (r'NameError.*name .(\w+). is not defined', 'name_error'),
+    (r'HTTP (\d{3}).*Not Found', 'api_error'),
+    (r'HTTP 422.*Validation', 'api_error'),
+]
+
+
+def detect_fixable_errors(text: str) -> list[dict]:
+    """Detect errors in Agent output that could be fixed by looking up documentation."""
+    errors = []
+    for pattern, error_type in ERROR_PATTERNS:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            errors.append({
+                'type': error_type,
+                'match': match.group(0),
+                'groups': match.groups(),
+            })
+    return errors
+
+
+def should_use_browser(text: str, agent_id: str) -> tuple[bool, str]:
+    """Determine if Agent output suggests browser should be used."""
+    # Don't trigger for BrowserAgent itself
+    if agent_id == 'agent_browser':
+        return False, 'is browser agent'
+    
+    errors = detect_fixable_errors(text)
+    if not errors:
+        return False, 'no fixable errors'
+    
+    # Priority: import > attribute > type > api > name
+    priority = ['import_error', 'attribute_error', 'type_error', 'api_error', 'name_error']
+    for error_type in priority:
+        for error in errors:
+            if error['type'] == error_type:
+                return True, f"{error_type}: {error['match']}"
+    
+    return False, 'no fixable errors'
+
+
+# ============================================================
 # Core streaming reply
 # ============================================================
 
@@ -566,6 +616,46 @@ async def stream_agent_reply(
                         "content": {"text": f"⚠️ 重试后仍不符合要求（{reason2}），已保留当前输出。"},
                         "stream": True,
                     })
+
+    # ---- Browser auto-routing: if Agent output has fixable errors, use BrowserAgent ----
+    if not stopped and not _is_external and full_text and agent.agent_id != 'agent_browser':
+        should_browser, browser_reason = should_use_browser(full_text, agent.agent_id)
+        if should_browser:
+            logger.info(f'Agent {agent.agent_id} output has fixable error: {browser_reason}')
+            await manager.broadcast(conversation_id, {
+                'type': 'message',
+                'conversation_id': conversation_id,
+                'sender': agent.agent_id,
+                'content': {'text': '⚠️ 检测到可修复错误（' + browser_reason + '），正在查文档...'},
+                'stream': True,
+            })
+            # Get BrowserAgent
+            browser_agent = get_agents().get('agent_browser')
+            if browser_agent:
+                # BrowserAgent looks up documentation
+                doc_task = '查阅文档解决以下错误: ' + browser_reason + '. 用户需求: ' + effective_text
+                doc_result = ''
+                try:
+                    async for chunk in browser_agent.stream_reply(doc_task, history=history, conversation_id=conversation_id):
+                        doc_result += chunk
+                except Exception as e:
+                    logger.warning(f'BrowserAgent failed: {e}')
+
+                if doc_result.strip():
+                    # Retry original agent with documentation context
+                    doc_summary = doc_result[:3000]
+                    nl = chr(10)
+                    prefix = chr(26681) + chr(25454) + chr(25991) + chr(26723) + ": "
+                    suffix = nl + nl + chr(35831) + chr(20462) + chr(27491) + chr(20197) + chr(19979) + chr(20195) + chr(30721) + chr(20013) + chr(30340) + chr(38169) + chr(35823) + chr(12290) + chr(29992) + chr(25143) + chr(38656) + chr(27714) + ": "
+                    retry_prompt = prefix + doc_summary + suffix + effective_text
+                    retry_text = ''
+                    async for chunk in agent.stream_reply(retry_prompt, history=history, conversation_id=conversation_id):
+                        if stop_event and stop_event.is_set():
+                            break
+                        retry_text += chunk
+                    if retry_text.strip():
+                        full_text = retry_text.strip()
+                        raw_text = retry_text
 
     # ---- Auto self-reflection & retry (skip for external agents) ----
     if not stopped and agent.agent_id not in ("agent_builder", "agent_pm") and not _is_external:

@@ -3,6 +3,7 @@
 # Import tool modules to trigger auto-registration
 from . import (
     block_editor_tools,  # noqa: F401
+    browser_agent_tools,  # noqa: F401
     browser_tools,  # noqa: F401
     code_agent_tools,  # noqa: F401
     code_interpreter_tools,  # noqa: F401
