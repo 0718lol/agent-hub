@@ -54,3 +54,6 @@ backend/data/agenthub.db
 backend/data/sandbox/
 backend/data/uploads/
 backend/data/chroma_db/
+
+# Test coverage cache
+backend/.coverage
