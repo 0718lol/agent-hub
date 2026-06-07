@@ -60,12 +60,18 @@
 - 格式合规检查确保输出符合预定义的 Pydantic Schema，拒绝非法结构
 - 校验失败自动重试机制，最多重试 N 次后降级为兜底策略，保障 99.9% 格式合规率
 
-## 13. 测试覆盖
+## 13. 代码审查安全
+- 规则引擎检测硬编码密码（password/secret/api_key/token 赋值模式）
+- SQL 注入检测（f-string 拼接 SQL 语句）
+- 命令注入检测（os.system/subprocess 调用中的字符串格式化）
+- 审查评分低于阈值时自动触发自愈重试，直到代码安全合规
+
+## 14. 测试覆盖
 - 304 个后端测试
 - 安全专项测试：SSRF（31）、路径穿越（18）、MCP（6）、加密（5）
 - 输出校验测试（21）
 
-## 14. CI/CD 安全
+## 15. CI/CD 安全
 - GitHub Actions 自动化
 - Ruff lint + pytest + ESLint + Bandit
 - 每次 PR 自动运行

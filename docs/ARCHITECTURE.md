@@ -79,6 +79,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 | agent_devops     | DevopsAgent       | 配置 Docker 容器和部署        |
 | agent_designer   | DesignerAgent     | UI/UX 设计及样式美化建议      |
 | agent_builder    | AgentBuilderAgent | 协助用户创建自定义 Agent      |
+| agent_reviewer   | CodeReviewerAgent | 代码审查（规则引擎 + LLM 审查 + 自愈管道） **[新增]** |
 
 **CustomAgent** (backend/app/agents/custom.py): 支持用户通过 [create_agent:{json}] 标签动态创建自定义 Agent，持久化到数据库。
 
@@ -175,6 +176,8 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 | stateful_terminal_tool.py    | 有状态终端会话     |
 | block_editor_tools.py        | 块编辑器操作       |
 | judge_tools.py               | 质量评判工具       |
+| code_review_rules.py          | 8 条确定性审查规则（硬编码密码、SQL 注入、命令注入等） |
+| code_review_service.py        | 混合审查服务（规则引擎 + LLM）+ 自愈管道               |
 
 工具通过 [tool_call:name]{params}[/tool_call] 协议在 LLM 输出中被识别和执行。
 
