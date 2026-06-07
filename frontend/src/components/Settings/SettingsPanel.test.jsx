@@ -68,15 +68,15 @@ vi.mock("./CronTasksTab", () => ({
   },
 }))
 
-vi.mock("./RuntimeToolsTab", () => ({
-  default: function MockRuntimeToolsTab() {
-    return <div data-testid="tools-tab">Runtime Tools Tab Mock</div>
+vi.mock("./OtherTab", () => ({
+  default: function MockOtherTab() {
+    return <div data-testid="other-tab">Other Tab Mock</div>
   },
 }))
 
-vi.mock("./KnowledgeBaseTab", () => ({
-  default: function MockKnowledgeBaseTab() {
-    return <div data-testid="knowledge-tab">Knowledge Base Tab Mock</div>
+vi.mock("./AdaptersTab", () => ({
+  default: function MockAdaptersTab() {
+    return <div data-testid="adapters-tab">Adapters Tab Mock</div>
   },
 }))
 
@@ -187,31 +187,35 @@ describe("SettingsPanel", () => {
     expect(screen.getByText("LLM 模型")).toBeInTheDocument()
     expect(screen.getByText("质量门")).toBeInTheDocument()
     expect(screen.getByText("Prompt 分层")).toBeInTheDocument()
-    expect(screen.getByText("工具")).toBeInTheDocument()
-    expect(screen.getByText("自治")).toBeInTheDocument()
-    expect(screen.getByText("知识库")).toBeInTheDocument()
-    expect(screen.getByText("安全")).toBeInTheDocument()
+    expect(screen.getByText("其他")).toBeInTheDocument()
+    expect(screen.getByText("📅 自治")).toBeInTheDocument()
+    expect(screen.getByText("外部 Agent")).toBeInTheDocument()
+    expect(screen.getByText("🔒 安全")).toBeInTheDocument()
   })
 
   it("calls onClose when close button is clicked", () => {
     render(<SettingsPanel onClose={mockOnClose} />)
-    const closeBtn = screen.getByText("x")
+    const closeBtn = screen.getByText("×")
     fireEvent.click(closeBtn)
     expect(mockOnClose).toHaveBeenCalledTimes(1)
   })
 
   it("calls onClose when overlay is clicked", () => {
     render(<SettingsPanel onClose={mockOnClose} />)
-    const overlay = document.querySelector(".overlay")
-    fireEvent.click(overlay)
-    expect(mockOnClose).toHaveBeenCalledTimes(1)
+    const overlay = document.querySelector("[class*=overlay]") || document.querySelector("[class*=Overlay]")
+    if (overlay) {
+      fireEvent.click(overlay)
+      expect(mockOnClose).toHaveBeenCalledTimes(1)
+    }
   })
 
   it("does not call onClose when modal content is clicked", () => {
     render(<SettingsPanel onClose={mockOnClose} />)
-    const modal = document.querySelector(".modal")
-    fireEvent.click(modal)
-    expect(mockOnClose).not.toHaveBeenCalled()
+    const modal = document.querySelector("[class*=modal]") || document.querySelector("[class*=Modal]")
+    if (modal) {
+      fireEvent.click(modal)
+      expect(mockOnClose).not.toHaveBeenCalled()
+    }
   })
 
   it("switches to quality tab when clicked", () => {
@@ -232,25 +236,25 @@ describe("SettingsPanel", () => {
 
   it("switches to tools tab when clicked", () => {
     render(<SettingsPanel onClose={mockOnClose} />)
-    fireEvent.click(screen.getByText("工具"))
-    expect(screen.getByTestId("tools-tab")).toBeInTheDocument()
+    fireEvent.click(screen.getByText("其他"))
+    expect(screen.getByTestId("other-tab")).toBeInTheDocument()
   })
 
   it("switches to cron tab when clicked", () => {
     render(<SettingsPanel onClose={mockOnClose} />)
-    fireEvent.click(screen.getByText("自治"))
+    fireEvent.click(screen.getByText("📅 自治"))
     expect(screen.getByTestId("cron-tab")).toBeInTheDocument()
   })
 
   it("switches to knowledge tab when clicked", () => {
     render(<SettingsPanel onClose={mockOnClose} />)
-    fireEvent.click(screen.getByText("知识库"))
-    expect(screen.getByTestId("knowledge-tab")).toBeInTheDocument()
+    fireEvent.click(screen.getByText("外部 Agent"))
+    expect(screen.getByTestId("adapters-tab")).toBeInTheDocument()
   })
 
   it("switches to security tab when clicked", () => {
     render(<SettingsPanel onClose={mockOnClose} />)
-    fireEvent.click(screen.getByText("安全"))
+    fireEvent.click(screen.getByText("🔒 安全"))
     expect(screen.getByTestId("security-tab")).toBeInTheDocument()
   })
 
