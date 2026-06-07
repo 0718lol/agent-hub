@@ -15,7 +15,7 @@ from app.tools.registry import AgentTool, register_tool
 logger = logging.getLogger("browser_tools")
 
 # URL safety configuration
-BLOCKED_HOSTS = {"127.0.0.1", "localhost", "0.0.0.0", "0x7f000001", "169.254.169.254"}
+BLOCKED_HOSTS = {"127.0.0.1", "localhost", "0.0.0.0", "0x7f000001", "169.254.169.254"}  # nosec B104
 BLOCKED_PROTOCOLS = {"file", "ftp", "data", "javascript", "vbscript"}
 PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
                     "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
