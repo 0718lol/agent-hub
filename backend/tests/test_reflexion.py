@@ -8,7 +8,7 @@ class TestReflexionEngine:
     def test_initial_state(self):
         engine = ReflexionEngine()
         assert engine.reflections == {}
-        assert engine.max_reflections == 10
+        assert engine.max_reflections == 20
 
     @pytest.mark.asyncio
     async def test_reflect_stores_lesson(self):

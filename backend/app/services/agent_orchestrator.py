@@ -30,6 +30,12 @@ try:
     _reflexion = ReflexionEngine()
 except Exception:
     _reflexion = None
+
+try:
+    from app.core.skill_library import SkillLibrary
+    _skill_lib = SkillLibrary()
+except Exception:
+    _skill_lib = None
 from app.core.quality_gate import quality_gate
 from app.core.quality_retry import evaluate_and_retry
 from app.core.websocket import manager
@@ -711,6 +717,21 @@ async def stream_agent_reply(
 
     # Don't persist LLM error responses
     is_llm_error = ("[LLM Error" in raw_text) or ("[LLM 调用出错" in raw_text) or ("[Agent 回复出错" in raw_text)
+    # Extract and store successful code as reusable skill
+    if _skill_lib and not is_llm_error and raw_text:
+        try:
+            _extracted = _skill_lib.extract_skills_from_output(raw_text, agent.agent_id)
+            for _skill in _extracted:
+                _skill_lib.add_skill(
+                    skill_id=_skill["id"],
+                    description=_skill["description"],
+                    code=_skill["code"],
+                    agent_id=_skill["agent_id"],
+                    language=_skill.get("language", ""),
+                )
+        except Exception:
+            pass
+
     if not is_llm_error:
         await async_save_message_cached(conversation_id, agent.agent_id, {"text": raw_text}, streaming=False)
 
