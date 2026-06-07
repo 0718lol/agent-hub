@@ -155,7 +155,31 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 
 工具通过 [tool_call:name]{params}[/tool_call] 协议在 LLM 输出中被识别和执行。
 
-### 3.9 LLM 客户端
+### 3.9 浏览器 Agent 架构
+
+- `browser_manager.py`：Playwright 单例管理器，管理浏览器实例的创建、复用和销毁
+- `browser_agent_tools.py`：7 个浏览器工具（打开网页、提取内容、截图、点击、输入、滚动、关闭）
+- `browser_agent.py`：专用浏览器 Agent，基于 Playwright 实现网页自动化操作
+- 集成：错误检测 + 自动路由，当浏览器操作失败时自动重试或降级处理
+
+### 3.10 输出校验架构
+
+- `output_validator.py`：基于 Pydantic 模型的输出校验器，支持自动重试机制
+- 四层防御体系：
+  1. **Tool Calling** — 结构化工具调用，确保输出格式正确
+  2. **Few-shot** — 示例引导，提高输出质量
+  3. **校验重试** — Pydantic 校验失败时自动重试，最多 N 次
+  4. **浏览器兜底** — 当结构化输出失败时，通过浏览器 Agent 解析网页获取数据
+
+### 3.11 Git 集成
+
+- `git_tools.py`：提供 Git 操作工具集（commit、push、create PR）
+- 安全措施：
+  - **路径校验** — 验证仓库路径合法性，防止路径穿越
+  - **命令白名单** — 仅允许安全的 Git 子命令
+  - **超时控制** — 设置命令执行超时，防止阻塞
+
+### 3.12 LLM 客户端
 
 - **位置**: backend/app/core/llm_client.py
 - **传输**: httpx 异步 HTTP 客户端
@@ -166,7 +190,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
   - 配置持久化 (config_persistence.py) — LLM 设置保存/加载
   - 错误自定义 (LLMAPIError) — 携带状态码和消息
 
-### 3.10 数据层
+### 3.13 数据层
 
 - **数据库**: SQLite + SQLModel (SQLAlchemy ORM)
 - **位置**: backend/app/core/database.py + backend/app/core/_engine.py
