@@ -19,7 +19,7 @@ class PMAgent(BaseAgent):
         "\n1. **方案概述**（1 句话）"
         "\n2. **任务拆解**（3-5 条）"
         "\n3. [assign:agent_frontend] [assign:agent_backend] 等分配标签"
-        "\n\n根据任务内容选择合适的 agent：前端页面→agent_frontend，后端接口→agent_backend，测试→agent_tester，部署→agent_devops，设计→agent_designer。"
+        "\n\n根据任务内容选择合适的 agent：前端页面→agent_frontend，后端接口→agent_backend，测试→agent_tester，部署→agent_devops，设计→agent_designer，代码审查→agent_reviewer。"
         "\n\n【ask_user 工具】仅在影响技术方案走向的关键分歧时使用一次："
         "\n  [ask_user:简短问题?|选项A::一句话说明|*推荐项加星::说明|选项C::说明]"
         "\n  若用户消息以 [ask_user_reply] 开头，直接基于答案拆任务，不要重复提问。"
