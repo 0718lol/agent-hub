@@ -316,7 +316,34 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - 零外部依赖：纯 Python 实现，不引入额外框架
 - 异常隔离：所有反思操作在 try/except 中执行，不影响主流程
 
-### 3.15 前端 Canvas 组件
+### 3.15 技能库系统
+
+- **位置**: backend/app/core/skill_library.py
+- **核心类**: SkillLibrary
+
+**功能定位**: Agent 自动积累可复用的代码技能库，基于 ChromaDB 向量存储实现语义检索，让 Agent 在遇到相似任务时自动注入历史成功经验。
+
+**核心方法**:
+
+| 方法 | 说明 |
+|------|------|
+| add_skill() | 添加技能到库中（向量存储 + 内存字典） |
+| search() | 语义检索相关技能（ChromaDB 优先，关键词兜底） |
+| extract_skills_from_output() | 从 Agent 输出中提取可复用代码片段 |
+| get_stats() | 获取库统计信息 |
+
+**技术特点**:
+- 双模式检索：ChromaDB 向量语义搜索 + 关键词匹配兜底，ChromaDB 不可用时自动降级
+- 自动提取：从 Agent 成功输出中自动提取代码块作为技能
+- 滑动窗口：每个 Agent 最多 100 个技能，自动淘汰低优先级技能
+- 零外部依赖（必须）：ChromaDB 为可选依赖，无 ChromaDB 时使用关键词检索
+
+**集成点**:
+- 在 `agent_orchestrator.py` 中，Agent 生成代码前自动检索相关技能注入 prompt
+- Agent 输出通过质量评估后，自动提取代码片段存入技能库
+- 与 Reflexion 引擎协同：反思记录驱动技能提取，技能库提供可复用代码
+
+### 3.16 前端 Canvas 组件
 
 - **位置**: frontend/src/components/Canvas/
 
