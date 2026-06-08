@@ -24,11 +24,11 @@ const MD_COMPONENTS = {
   h1: ({ children }) => <div style={{ fontSize: 16, margin: '0.45em 0 0.25em', fontWeight: 700 }}>{children}</div>,
   h2: ({ children }) => <div style={{ fontSize: 15, margin: '0.45em 0 0.25em', fontWeight: 700 }}>{children}</div>,
   h3: ({ children }) => <div style={{ fontSize: 14, margin: '0.4em 0 0.2em', fontWeight: 600 }}>{children}</div>,
-  strong: ({ children }) => <strong style={{ fontWeight: 700, color: '#f8fafc' }}>{children}</strong>,
+  strong: ({ children }) => <strong style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{children}</strong>,
   em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
   code: ({ children }) => (
     <code style={{
-      background: 'rgba(99,102,241,0.16)', color: '#a5b4fc',
+      background: 'rgba(99,102,241,0.16)', color: 'var(--accent)',
       padding: '1px 6px', borderRadius: 4,
       fontSize: '0.9em', fontFamily: 'Consolas, Monaco, monospace',
     }}>{children}</code>
@@ -37,13 +37,13 @@ const MD_COMPONENTS = {
     <blockquote style={{
       borderLeft: '3px solid rgba(99,102,241,0.45)',
       paddingLeft: 10, margin: '0.45em 0',
-      color: '#94a3b8',
+      color: 'var(--text-secondary)',
     }}>{children}</blockquote>
   ),
   a: ({ children, href }) => (
-    <a href={href} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc', textDecoration: 'underline' }}>{children}</a>
+    <a href={href} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', textDecoration: 'underline' }}>{children}</a>
   ),
-  hr: () => <hr style={{ border: 'none', borderTop: '1px solid rgba(255,255,255,0.08)', margin: '0.6em 0' }} />,
+  hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '0.6em 0' }} />,
 }
 
 const TOOL_ICONS = {

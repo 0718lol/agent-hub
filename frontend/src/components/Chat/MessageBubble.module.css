@@ -30,7 +30,7 @@
   height: 24px;
   border-radius: 6px;
   background: rgba(129, 140, 248, 0.12);
-  color: #818cf8;
+  color: var(--accent);
 }
 
 .toolCallInfo {
@@ -41,12 +41,12 @@
 .toolCallName {
   font-size: 13px;
   font-weight: 600;
-  color: #c7d2fe;
+  color: var(--text-primary);
 }
 
 .toolCallLabel {
   font-size: 10px;
-  color: #818cf8;
+  color: var(--accent);
   opacity: 0.8;
   letter-spacing: 0.5px;
 }
@@ -62,7 +62,7 @@
   font-size: 10px;
   background: rgba(129, 140, 248, 0.15);
   border: 1px solid rgba(129, 140, 248, 0.3);
-  color: #a5b4fc;
+  color: var(--accent);
   padding: 2px 8px;
   border-radius: 10px;
   font-weight: 500;
@@ -75,25 +75,25 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #818cf8;
-  box-shadow: 0 0 6px #818cf8;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
 }
 
 .toolCallChevron {
-  color: #94a3b8;
+  color: var(--text-muted);
   display: flex;
   align-items: center;
 }
 
 .toolCallExpandBody {
   padding: 12px 14px;
-  background: rgba(0, 0, 0, 0.25);
-  border-top: 1px solid rgba(129, 140, 248, 0.08);
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border);
 }
 
 .toolCallArgLabel {
   font-size: 11px;
-  color: #818cf8;
+  color: var(--accent);
   font-weight: 600;
   margin-bottom: 6px;
 }
@@ -101,7 +101,7 @@
 .toolCallArgPre {
   margin: 0;
   font-size: 11px;
-  color: #cbd5e1;
+  color: var(--text-secondary);
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   white-space: pre-wrap;
   word-break: break-all;
@@ -211,7 +211,7 @@
 
 .toolResultBody {
   padding: 12px 14px;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--bg-tertiary);
 }
 
 .toolResultBodySuccess {
@@ -239,11 +239,11 @@
 }
 
 .toolResultPreSuccess {
-  color: #a7f3d0;
+  color: var(--green);
 }
 
 .toolResultPreError {
-  color: #fca5a5;
+  color: var(--red);
 }
 
 /* Preview indicator */
