@@ -125,6 +125,20 @@ class TaskTrace:
         # Export completed trace data asynchronously in the background
         metrics._export_to_langfuse(self)
 
+        # Push trace to SSE subscribers (non-blocking)
+        try:
+            import asyncio
+
+            from app.routers.metrics import push_trace
+            trace_dict = self.to_dict()
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(push_trace(trace_dict))
+            except RuntimeError:
+                pass
+        except Exception:
+            pass
+
         # Reset context variable if it matches this trace
         if active_trace_var.get() == self:
             active_trace_var.set(None)

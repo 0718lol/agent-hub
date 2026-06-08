@@ -9,6 +9,7 @@ export default function TraceView() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Initial fetch for existing traces
     const fetchTraces = async () => {
       try {
         const resp = await fetch('/api/metrics/traces?limit=10')
@@ -18,8 +19,29 @@ export default function TraceView() {
       setLoading(false)
     }
     fetchTraces()
-    const interval = setInterval(fetchTraces, 4000)
-    return () => clearInterval(interval)
+
+    // SSE real-time updates
+    let es = null
+    try {
+      es = new EventSource('/api/metrics/traces/stream')
+      es.onmessage = (e) => {
+        try {
+          const trace = JSON.parse(e.data)
+          if (trace.type === 'connected') return
+          setTraces(prev => {
+            const next = [...prev, trace]
+            return next.length > 50 ? next.slice(-50) : next
+          })
+        } catch {}
+      }
+      es.onerror = () => {
+        // EventSource auto-reconnects, no action needed
+      }
+    } catch {}
+
+    return () => {
+      if (es) es.close()
+    }
   }, [])
 
   if (loading) return <div style={{ padding: 24, color: 'var(--text-muted)' }}>加载 Trace...</div>

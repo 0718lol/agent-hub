@@ -60,6 +60,9 @@ from app.routers import (
     mcp as mcp_router,
 )
 from app.routers import (
+    metrics as metrics_router,
+)
+from app.routers import (
     prompt as prompt_router,
 )
 from app.routers import (
@@ -182,6 +185,7 @@ app.include_router(ws_router.router)
 app.include_router(tools_router.router, prefix="/api")
 app.include_router(knowledge_router.router, prefix="/api")
 app.include_router(adapters_router.router, prefix="/api")
+app.include_router(metrics_router.router, prefix="/api")
 
 # ---- Initialize database ----
 init_db()
