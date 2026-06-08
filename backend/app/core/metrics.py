@@ -35,15 +35,18 @@ class TraceSpan(BaseModel):
     start_time: float
     end_time: float = 0.0
     duration_ms: int = 0
-    status: str = "success"  # success | error
+    status: str = "success"  # success | error | timeout | skipped
+    error: str | None = None  # error message if status is error
     input_data: Any | None = None
     output_data: Any | None = None
     metadata: dict = Field(default_factory=dict)
 
-    def finish(self, output_data: Any = None, status: str = "success", metadata: dict | None = None):
+    def finish(self, output_data: Any = None, status: str = "success", error: str | None = None, metadata: dict | None = None):
         self.end_time = time.time()
         self.duration_ms = int((self.end_time - self.start_time) * 1000)
         self.status = status
+        if error:
+            self.error = error
         if output_data is not None:
             self.output_data = output_data
         if metadata:
