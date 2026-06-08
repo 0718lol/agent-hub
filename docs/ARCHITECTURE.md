@@ -348,6 +348,35 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - **文件**: `backend/app/core/debug_engine.py` + `backend/app/agents/debug_agent.py`
 - **核心类**: DebugEngine、DebugAgent
 
+### 3.16a Agent 导出/导入
+
+- **API**: backend/app/routers/agents.py（导出端点 `GET /api/agents/{agent_id}/export`、导入端点 `POST /api/agents/import`）
+
+**功能定位**: 允许团队成员将自定义 Agent 导出为 JSON 文件并在不同实例间共享，实现 Agent 配置的可移植性和团队协作。
+
+**导出流程**:
+
+| 步骤 | 说明 |
+|------|------|
+| 1. 查询 Agent | 根据 agent_id 从数据库加载自定义 Agent 配置 |
+| 2. 敏感信息过滤 | 自动移除 API Key、用户数据等敏感字段 |
+| 3. 序列化 | 将 Agent 配置（名称、Prompt、工具列表、参数）序列化为 JSON |
+| 4. 生成文件 | 返回带 agent_name.json 文件名的下载响应 |
+
+**导入流程**:
+
+| 步骤 | 说明 |
+|------|------|
+| 1. 解析 JSON | 校验文件格式，提取 Agent 配置字段 |
+| 2. 重名检测 | 若已存在同名 Agent，自动追加数字后缀（如 `_2`、`_3`） |
+| 3. 配置校验 | 使用 Pydantic 模型校验配置合法性 |
+| 4. 持久化 | 保存到数据库，注册到 Agent 注册中心 |
+
+**技术特点**:
+- 敏感信息白名单过滤：导出时移除 `api_key`、`secret`、`token`、`password` 等字段
+- JSON Schema 版本化：导出文件包含 `schema_version` 字段，支持未来格式升级的向后兼容
+- 原子操作：导入失败时自动回滚，不会产生残缺的 Agent 配置
+
 ### 3.16b Agent 决策追踪系统架构
 
 - **核心组件**: TraceSpan（子跨度）+ TraceStep（步骤）+ TaskTrace（完整追踪）

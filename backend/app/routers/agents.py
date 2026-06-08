@@ -105,3 +105,72 @@ async def delete_custom_agent_api(agent_id: str):
     # Invoke the concurrency-safe agent registry
     await agent_registry.unregister_custom_agent(agent_id)
     return {"status": "deleted"}
+
+# ============================================================
+# Agent Export / Import (team sharing)
+# ============================================================
+
+@router.get("/agents/custom/{agent_id}/export")
+async def export_custom_agent(agent_id: str):
+    """Export a custom agent as JSON (filters sensitive data)."""
+    agents = await async_get_custom_agents()
+    agent = next((a for a in agents if a.get("agent_id") == agent_id), None)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Filter sensitive fields
+    export_data = {
+        "version": "1.0",
+        "agent": {
+            "name": agent.get("name", ""),
+            "avatar": agent.get("avatar", ""),
+            "role": agent.get("role", ""),
+            "style": agent.get("style", ""),
+            "system_prompt": agent.get("system_prompt", ""),
+            "tools": agent.get("tools", []),
+        }
+    }
+    return export_data
+
+
+class AgentImportRequest(BaseModel):
+    version: str = "1.0"
+    agent: dict
+
+
+@router.post("/agents/import")
+async def import_custom_agent(body: AgentImportRequest):
+    """Import a custom agent from exported JSON."""
+    agent_data = body.agent
+    
+    # Validate required fields
+    if not agent_data.get("name"):
+        raise HTTPException(status_code=400, detail="Agent name is required")
+    if not agent_data.get("system_prompt"):
+        raise HTTPException(status_code=400, detail="Agent system_prompt is required")
+    
+    # Check for duplicate name
+    existing = await async_get_custom_agents()
+    existing_names = [a.get("name", "") for a in existing]
+    original_name = agent_data["name"]
+    name = original_name
+    if name in existing_names:
+        name = f"{name} (imported)"
+        agent_data["name"] = name
+    
+    # Generate new agent_id
+    agent_id = f"agent_imported_{uuid.uuid4().hex[:8]}"
+    
+    # Register the agent
+    config = {
+        "agent_id": agent_id,
+        "name": agent_data.get("name"),
+        "avatar": agent_data.get("avatar", "🤖"),
+        "role": agent_data.get("role", "Imported Agent"),
+        "style": agent_data.get("style", ""),
+        "system_prompt": agent_data.get("system_prompt"),
+        "tools": agent_data.get("tools", []),
+    }
+    
+    await agent_registry.register_custom_agent(config)
+    return {"status": "imported", "agent": config, "duplicate_renamed": name != original_name}

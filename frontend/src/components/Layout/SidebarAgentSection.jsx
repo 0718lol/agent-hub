@@ -14,6 +14,8 @@ export default function SidebarAgentSection({
   openTabs,
   openTab,
   handleDeleteAgent,
+  handleExportAgent,
+  handleImportAgent,
   addBtnRef,
   setShowAgentMenu,
   setTooltip,
@@ -123,13 +125,23 @@ export default function SidebarAgentSection({
                           </div>
                           <span className="online-dot" style={{ background: isAgentRunning ? 'var(--green)' : 'var(--red, #ef4444)' }} title={isAgentRunning ? '运行中' : '已停止'} />
                           {agent.agent_id.startsWith('agent_custom_') ? (
-                            <button
-                              className="agent-row-delete"
-                              onClick={(e) => handleDeleteAgent(e, agent.agent_id)}
-                              title="删除"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                            <>
+                              <button
+                                className="agent-row-delete"
+                                onClick={(e) => handleExportAgent && handleExportAgent(e, agent)}
+                                title="导出"
+                                style={{ marginRight: 4 }}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                              </button>
+                              <button
+                                className="agent-row-delete"
+                                onClick={(e) => handleDeleteAgent(e, agent.agent_id)}
+                                title="删除"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </>
                           ) : (
                             <span className="agent-row-lock" title="默认agent不允许删除">
                               <Lock size={14} />

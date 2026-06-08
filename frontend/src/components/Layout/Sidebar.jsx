@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
-import { Plus, Settings, Pin, MoreHorizontal, X, PanelLeftClose, PanelLeftOpen, ChevronRight, Search, Bot, Cpu, Globe, Trash2, Lock, Edit3 } from 'lucide-react'
+import { Plus, Settings, Pin, MoreHorizontal, X, PanelLeftClose, PanelLeftOpen, ChevronRight, Search, Bot, Cpu, Globe, Trash2, Lock, Edit3, Download, Upload } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useTabStore } from '../../stores/tabStore'
@@ -152,6 +152,60 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
     }
   }
 
+  const handleExportAgent = async (e, agent) => {
+    e.stopPropagation()
+    try {
+      const resp = await fetch(`/api/agents/custom/${agent.agent_id}/export`)
+      if (!resp.ok) throw new Error('Export failed')
+      const data = await resp.json()
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${agent.name || 'agent'}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Export failed:', err)
+    }
+  }
+
+  const handleImportAgent = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = async (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result)
+        if (!data.agent?.name) {
+          alert('Invalid agent file: missing agent name')
+          return
+        }
+        const resp = await fetch('/api/agents/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        })
+        if (!resp.ok) {
+          const err = await resp.json()
+          alert('Import failed: ' + (err.detail || 'Unknown error'))
+          return
+        }
+        const result = await resp.json()
+        useAgentStore.getState().loadCustomAgents()
+        if (result.duplicate_renamed) {
+          alert(`Agent imported as "${result.agent.name}" (renamed to avoid duplicate)`)
+        }
+      } catch (err) {
+        alert('Invalid JSON file')
+      }
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
   const formatTime = (ts) => {
     if (!ts) return ''
     const d = new Date(ts)
@@ -238,6 +292,8 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
           openTabs={openTabs}
           openTab={openTab}
           handleDeleteAgent={handleDeleteAgent}
+          handleExportAgent={handleExportAgent}
+          handleImportAgent={handleImportAgent}
           addBtnRef={addBtnRef}
           setShowAgentMenu={setShowAgentMenu}
           setTooltip={setTooltip}
