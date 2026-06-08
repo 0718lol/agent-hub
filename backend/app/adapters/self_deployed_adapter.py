@@ -98,14 +98,12 @@ class SelfDeployedAdapter(AgentAdapter):
                         if text:
                             yield text
 
-        except httpx.ConnectError as e:
-            print(f"[LOCAL-DEBUG] ConnectError: {e}")
+        except httpx.ConnectError:
             yield f"\n[无法连接到自部署 Agent: {self.api_url}]"
         except httpx.TimeoutException:
-            print("[LOCAL-DEBUG] Timeout")
             yield "\n[自部署 Agent 超时，请稍后重试]"
         except Exception as e:
-            print(f"[LOCAL-DEBUG] Exception: {type(e).__name__}: {e}")
+            logger.warning(f"self_deployed error: {type(e).__name__}: {e}")
             yield f"\n[自部署 Agent 错误: {str(e)[:200]}]"
 
     def _build_headers(self) -> dict:
