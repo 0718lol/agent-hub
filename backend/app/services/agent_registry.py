@@ -8,6 +8,7 @@ from app.agents.browser_agent import BrowserAgent
 from app.agents.builder import AgentBuilderAgent
 from app.agents.code_reviewer import CodeReviewerAgent
 from app.agents.custom import CustomAgent
+from app.agents.debug_agent import DebugAgent
 from app.agents.designer import DesignerAgent
 from app.agents.devops import DevopsAgent
 from app.agents.frontend import FrontendAgent
@@ -33,6 +34,7 @@ class AgentRegistry:
             "agent_builder": AgentBuilderAgent(),
             "agent_browser": BrowserAgent(),
             "agent_reviewer": CodeReviewerAgent(),
+            "agent_debugger": DebugAgent(),
         }
         self._agents["agent_pm"].description = "规划需求与分工的PM智能体"
         self._agents["agent_frontend"].description = "开发 React 前端组件的智能体"
@@ -43,6 +45,7 @@ class AgentRegistry:
         self._agents["agent_builder"].description = "协助用户创建并注册自定义智能体的助手"
         self._agents["agent_browser"].description = "查阅文档、搜索解决方案、验证网页效果"
         self._agents["agent_reviewer"].description = "审查代码质量、安全性、性能"
+        self._agents["agent_debugger"].description = "自动分析代码错误并提供最小化修复"
 
         self.load_custom_agents_sync()
 

@@ -21,6 +21,7 @@ from app.core.database import (
     save_message,
     update_latest_artifact_quality,
 )
+from app.core.debug_engine import build_fix_prompt, extract_code_block, parse_error
 from app.core.llm_client import llm_client
 from app.core.metrics import metrics
 from app.core.output_validator import get_retry_prompt, validate_output
@@ -321,6 +322,40 @@ def should_use_browser(text: str, agent_id: str) -> tuple[bool, str]:
 # Core streaming reply
 # ============================================================
 
+
+async def _auto_debug_code(code, task, llm_client, max_retries=2):
+    """Auto-debug: sandbox run -> error analysis -> fix -> verify. Returns dict."""
+    from app.core.ast_interpreter import SafeASTInterpreter
+    current = code
+    interp = SafeASTInterpreter()
+    for attempt in range(max_retries + 1):
+        try:
+            result = await interp.execute(current)
+        except Exception as e:
+            return {"fixed": False, "code": current, "report": str(e), "attempts": attempt + 1}
+        if result.get("success"):
+            return {"fixed": attempt > 0, "code": current, "report": "ok", "attempts": attempt + 1}
+        err = result.get("error", "") or result.get("output", "")
+        if not err:
+            return {"fixed": False, "code": current, "report": "no error", "attempts": attempt + 1}
+        info = parse_error(err)
+        if not info or not info.get("fixable"):
+            return {"fixed": False, "code": current, "report": "not fixable", "attempts": attempt + 1}
+        prompt = build_fix_prompt(info, current, task, attempt + 1)
+        try:
+            resp = ""
+            async for chunk in llm_client.chat_stream([{"role": "user", "content": prompt}]):
+                resp += chunk
+        except Exception:
+            return {"fixed": False, "code": current, "report": "llm error", "attempts": attempt + 1}
+        fixed = extract_code_block(resp)
+        if fixed:
+            current = fixed
+        else:
+            return {"fixed": False, "code": current, "report": "no code in response", "attempts": attempt + 1}
+    return {"fixed": False, "code": current, "report": "max retries", "attempts": max_retries + 1}
+
+
 async def stream_agent_reply(
     conversation_id: str, agent, user_text: str,
     stop_event: asyncio.Event | None = None, context: str = "",
@@ -525,6 +560,16 @@ async def stream_agent_reply(
                     code = code_match.group(2).strip()
 
                     await asyncio.to_thread(save_artifact, conversation_id, agent.agent_id, lang, code)
+
+                    # Auto-debug: run Python code in sandbox, fix errors automatically
+                    if lang == "python" and agent.agent_id in ("agent_frontend", "agent_backend", "agent_tester"):
+                        try:
+                            _debug = await _auto_debug_code(code, effective_text, llm_client, max_retries=2)
+                            if _debug.get("fixed"):
+                                code = _debug["code"]
+                                logger.info(f"Auto-debug fixed code for {agent.agent_id}")
+                        except Exception as _de:
+                            logger.debug(f"Auto-debug skipped: {_de}")
 
                     await manager.broadcast(conversation_id, {
                         "type": "code",

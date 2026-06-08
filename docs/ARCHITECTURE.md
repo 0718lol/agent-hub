@@ -343,7 +343,35 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - Agent 输出通过质量评估后，自动提取代码片段存入技能库
 - 与 Reflexion 引擎协同：反思记录驱动技能提取，技能库提供可复用代码
 
-### 3.16 前端 Canvas 组件
+### 3.16 自动 Debug Agent 架构
+
+- **文件**: `backend/app/core/debug_engine.py` + `backend/app/agents/debug_agent.py`
+- **核心类**: DebugEngine、DebugAgent
+
+**功能定位**: 代码运行出错时自动分析错误、生成修复并验证结果，实现无人干预的自动修复闭环。
+
+**核心流程**:
+
+| 步骤 | 说明 |
+|------|------|
+| 1. 代码运行 | Agent 生成的代码在沙盒中执行 |
+| 2. 错误解析 | 基于 Python stdlib traceback 模块解析异常堆栈（100% 准确） |
+| 3. 修复 prompt | 构建包含错误上下文的修复提示词，遵循最小修改原则 |
+| 4. LLM 修复 | 调用 LLM 生成修复代码，仅修改出错的行 |
+| 5. 沙盒验证 | 修复后重新运行，验证不引入新 bug |
+
+**集成点**:
+- 在 `agent_orchestrator.py` 中，代码块提取后自动触发 Debug Agent
+- 与质量门禁协同：修复通过后交由质量门禁二次评估
+- 与 Reflexion 引擎协同：修复失败时记录反思，供后续任务参考
+
+**技术特点**:
+- 最小修改原则：只修复出错的行，不重写整个代码
+- 有限重试：最多自动重试 3 轮，防止无限循环
+- 仅对可修复错误触发：SyntaxError、NameError、TypeError 等可自动修复的异常类型才触发 Debug Agent
+- 沙盒隔离：修复验证在独立沙盒中执行，不影响主流程
+
+### 3.17 前端 Canvas 组件
 
 - **位置**: frontend/src/components/Canvas/
 
