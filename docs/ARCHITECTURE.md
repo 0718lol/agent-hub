@@ -352,7 +352,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 
 - **核心组件**: TraceSpan（子跨度）+ TraceStep（步骤）+ TaskTrace（完整追踪）
 - **可视化**: TraceView（甘特图）+ TraceTreeView（交互式树）
-- **实时推送**: TaskTrace.finish() 通过 WebSocket 广播
+- **实时推送**: TaskTrace.finish() 通过 SSE (Server-Sent Events) 推送到 `/api/metrics/traces/stream`，替代 4 秒轮询
 - **错误归因**: TraceSpan.error 字段记录失败原因
 
 **功能定位**: 代码运行出错时自动分析错误、生成修复并验证结果，实现无人干预的自动修复闭环。

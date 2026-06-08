@@ -104,7 +104,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户像在钉钉/飞�
 
 **Agent 决策追踪系统 [新增]**
 - 交互式追踪树：树形展示 Agent 执行过程，支持展开/折叠
-- 实时推送：通过 WebSocket 实时推送追踪数据
+- 实时推送：通过 SSE (Server-Sent Events) 实时推送追踪数据，零延迟
 - 错误归因：TraceSpan 记录错误信息，快速定位失败环节
 - 甘特图可视化：TraceView 组件展示时间线
 
