@@ -157,6 +157,54 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - **提供工具**: agenthub_quality_judge, agenthub_complexity_judge, agenthub_alignment_judge
 - **生命周期**: MCPServerProcess 管理子进程的启动、通信、关闭
 
+### 3.7b AHP 多 Agent 协作协议
+
+- **文档**: docs/AHP_PROTOCOL.md
+- **协议定位**: MCP 负责 Agent↔工具 通信，AHP 负责 Agent↔Agent 通信
+- **设计原则**: 基于文本标签、可扩展、向后兼容、内置安全控制
+
+**消息类型列表**:
+
+| 类型 | 方向 | 说明 |
+|------|------|------|
+| `message` | 双向 | 普通文本消息 |
+| `typing` | 服务器→客户端 | 输入状态 |
+| `thinking` | 服务器→客户端 | Agent 思考过程 |
+| `code` | 服务器→客户端 | 代码块 |
+| `preview` | 服务器→客户端 | HTML 预览 |
+| `generating` | 服务器→客户端 | 生成状态 |
+| `task_status` | 服务器→客户端 | 任务状态 |
+| `deploy_status` | 服务器→客户端 | 部署状态 |
+| `candidates_report` | 服务器→客户端 | Best-of-N 候选报告 |
+| `quality_report` | 服务器→客户端 | 质量评估报告 |
+| `agent_created` | 服务器→客户端 | 新 Agent 创建通知 |
+| `agent_deleted` | 服务器→客户端 | Agent 删除通知 |
+| `trace_update` | 服务器→客户端 | 追踪数据更新（SSE） |
+| `read` | 客户端→服务器 | 已读回执 |
+| `stop` | 客户端→服务器 | 停止生成 |
+
+**任务分配流程**:
+
+1. 用户输入 → PM Agent 分析需求
+2. PM 输出 `[assign:agent_xxx]` 标签指定目标 Agent
+3. 编排器解析标签，启动对应 Agent
+4. 多 Agent 并行执行（`asyncio.gather`）
+5. 结果汇总 → 输出给用户
+
+任务状态流转: `pending → doing → done`，失败时最多重试 3 次后报告用户。
+
+**错误处理策略**:
+
+| 错误类型 | 可重试 | 示例 |
+|----------|--------|------|
+| LLM 调用失败 | 是 | API 超时、限流 |
+| 输出格式错误 | 是 | 缺少代码块、问句 |
+| 工具调用失败 | 视情况 | 参数错误、权限不足 |
+| 逻辑错误 | 否 | 断言失败、无限循环 |
+| 资源耗尽 | 否 | 内存溢出、磁盘满 |
+
+重试采用指数退避策略（1s, 2s, 4s）。降级方案包括：LLM 失败切换备用模型、Agent 崩溃用兜底回复、浏览器不可用改 HTTP 请求、知识库不可用跳过 RAG。
+
 ### 3.8 工具系统
 
 - **位置**: backend/app/tools/ 目录

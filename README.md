@@ -157,6 +157,11 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户像在钉钉/飞�
 - 消息类型：message / typing / thinking / code / generating / task_status / read / stop
 - 流式输出 + 结构化标签解析（[thinking]、[assign]、[options]、[preview]）
 
+**Agent 协作协议（AHP）**
+- 定义了 Agent 之间的消息格式、任务分配、错误处理和安全规范
+- 支持 MCP（Agent↔工具）和 AHP（Agent↔Agent）双协议
+- 详细文档见 `docs/AHP_PROTOCOL.md`
+
 ## 快速启动
 
 ```bash
