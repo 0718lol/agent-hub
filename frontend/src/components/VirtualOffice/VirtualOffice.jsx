@@ -38,7 +38,7 @@ const REST_ACTIONS_BY_TYPE = {
 }
 
 // 自由活动节奏：每个 agent 在一个活动停留 8-22 秒后换位置
-const FREE_MOVE_CHECK_INTERVAL = 4000  // 每 4 秒检查一次
+const FREE_MOVE_CHECK_INTERVAL = 8000  // 每 8 秒检查一次
 const ACTIVITY_MIN_MS = 8000
 const ACTIVITY_MAX_MS = 22000
 
