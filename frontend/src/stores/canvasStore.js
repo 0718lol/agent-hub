@@ -27,6 +27,10 @@ export const useCanvasStore = create((set) => ({
   previewHtml: null,
   setPreviewHtml: (html) => set({ previewHtml: html }),
 
+  streamingHtml: null,
+  setStreamingHtml: (html) => set({ streamingHtml: html }),
+  clearStreamingHtml: () => set({ streamingHtml: null }),
+
   generatedCode: null,
   previousCode: '',
   setGeneratedCode: (language, code) =>

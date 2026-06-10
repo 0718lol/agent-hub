@@ -472,6 +472,21 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 | WebPreview      | WebPreview.jsx    | HTML 实时预览（iframe 沙盒）                   |
 | TaskBoard       | TaskBoard.jsx     | 任务看板视图                                    |
 
+**WebPreview 实时预览架构**:
+
+WebPreview 组件实现了代码热重载预览功能，当 Agent 生成 HTML 代码后，预览面板无需刷新页面即可实时展示最新渲染结果。
+
+| 机制 | 说明 |
+|------|------|
+| postMessage 通信 | 通过 `iframe.contentWindow.postMessage()` 向 iframe 沙盒发送 HTML 内容，实现零闪烁更新，避免整页 reload 导致的白屏闪烁 |
+| 300ms 防抖控制 | 使用 `useRef` + `setTimeout` 实现防抖，当 Agent 高频流式输出代码时，合并多次更新为一次渲染，防止频繁刷新造成性能损耗 |
+| 完整 HTML 检测 | 接收到新内容时，通过正则匹配 `<html`、`<!DOCTYPE` 等标签判断是否为完整 HTML 文档，避免将片段代码或乱码直接写入 iframe 导致渲染异常 |
+| iframe 沙盒隔离 | 预览内容运行在 `sandbox` 属性的 iframe 中，隔离用户脚本对主页面的影响 |
+
+**数据流**:
+
+Agent 流式输出 → CodeBlockMiddleware 捕获代码块 → WebSocket 广播 `preview` 消息 → canvasStore 更新预览内容 → WebPreview 防抖 → postMessage 发送到 iframe → iframe 渲染 HTML
+
 **技术特点**:
 - TraceView 使用颜色编码区分不同 Agent（PM 紫色、Frontend 蓝色、Backend 绿色等）
 - DiffViewer 内置零依赖 Diff 算法，支持 Lookahead 行移位检测
