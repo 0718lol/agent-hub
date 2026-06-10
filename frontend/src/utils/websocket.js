@@ -62,6 +62,11 @@ class WSClient {
       if (this.ws !== ws) return // Safe guard against stale connections
       try {
         const data = JSON.parse(event.data)
+        // Respond to server ping with pong
+        if (data.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }))
+          return
+        }
         this.handlers.forEach((fn) => fn(data))
       } catch (e) {
         console.error('WS parse error:', e)

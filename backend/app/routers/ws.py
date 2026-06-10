@@ -1,4 +1,4 @@
-﻿"""WebSocket endpoint for real-time agent communication."""
+"""WebSocket endpoint for real-time agent communication."""
 import asyncio
 import contextlib
 import json
@@ -55,6 +55,18 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
         return
 
     await manager.connect(websocket, conversation_id)
+
+    # Heartbeat task to keep connection alive
+    async def _heartbeat():
+        while True:
+            try:
+                await asyncio.sleep(30)
+                await websocket.send_json({"type": "ping"})
+            except Exception:
+                break
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
+
     # Tasks spawned for ongoing generations on this connection, so we can
     # await them at disconnect time. Stop is signalled via _stop_events.
     bg_tasks: set[asyncio.Task] = set()
@@ -180,6 +192,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 task.add_done_callback(bg_tasks.discard)
 
     except WebSocketDisconnect:
+        heartbeat_task.cancel()
         manager.disconnect(websocket, conversation_id)
         # Signal any in-flight generation to stop on disconnect
         event = _stop_events.get(conversation_id)

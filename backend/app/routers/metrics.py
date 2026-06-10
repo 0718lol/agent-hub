@@ -43,6 +43,14 @@ async def push_trace(trace_data: dict):
             pass
 
 
+@router.get("/metrics/traces")
+async def get_traces(limit: int = 10):
+    """Get recent traces (for initial load)."""
+    from app.core.metrics import metrics
+    traces = [t.to_dict() for t in metrics.traces[-limit:]]
+    return traces
+
+
 @router.get("/metrics/traces/stream")
 async def stream_traces():
     """SSE endpoint: stream trace updates in real-time.
