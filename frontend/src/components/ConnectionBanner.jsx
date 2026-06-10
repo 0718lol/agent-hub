@@ -18,19 +18,26 @@ export default function ConnectionBanner() {
   const [fadeOut, setFadeOut] = useState(false)
 
   useEffect(() => {
+    let timer
     if (status === 'connected') {
-      // Connected: fade out then hide
-      setFadeOut(true)
-      const timer = setTimeout(() => {
-        setVisible(false)
-        setFadeOut(false)
-      }, 300)
-      return () => clearTimeout(timer)
+      // Connected: delay before hiding to prevent flicker
+      timer = setTimeout(() => {
+        setFadeOut(true)
+        const hideTimer = setTimeout(() => {
+          setVisible(false)
+          setFadeOut(false)
+        }, 300)
+        // Store for cleanup
+        return () => clearTimeout(hideTimer)
+      }, 1000) // Wait 1s before hiding
     } else {
-      // Disconnected or reconnecting: show immediately
-      setFadeOut(false)
-      setVisible(true)
+      // Disconnected or reconnecting: delay before showing to prevent flicker
+      timer = setTimeout(() => {
+        setFadeOut(false)
+        setVisible(true)
+      }, 500) // Wait 500ms before showing
     }
+    return () => clearTimeout(timer)
   }, [status])
 
   if (!visible) return null
