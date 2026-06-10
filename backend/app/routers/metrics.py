@@ -53,6 +53,19 @@ async def get_metrics():
     }
 
 
+@router.get("/artifacts")
+async def get_artifacts(limit: int = 15):
+    """Get recent artifacts for EvalDashboard."""
+    from app.core.crud import get_artifacts as _get_artifacts
+    try:
+        artifacts = _get_artifacts(limit=limit)
+        return [{"id": a.id, "agent_id": a.agent_id, "language": a.language, 
+                 "code": a.code[:200], "created_at": str(a.created_at)} 
+                for a in artifacts] if artifacts else []
+    except Exception:
+        return []
+
+
 @router.get("/metrics/traces")
 async def get_traces(limit: int = 10):
     """Get recent traces (for initial load)."""
