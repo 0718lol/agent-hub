@@ -43,6 +43,16 @@ async def push_trace(trace_data: dict):
             pass
 
 
+@router.get("/metrics")
+async def get_metrics():
+    """Get metrics summary for EvalDashboard."""
+    from app.core.metrics import metrics
+    return {
+        "traces_count": len(metrics.traces),
+        "recent_traces": [t.to_dict() for t in metrics.traces[-5:]],
+    }
+
+
 @router.get("/metrics/traces")
 async def get_traces(limit: int = 10):
     """Get recent traces (for initial load)."""
