@@ -19,7 +19,10 @@ def _make_safe_builtin(fn):
     def wrapper(*args, **kwargs):
         return fn(*args, **kwargs)
     wrapper.__name__ = getattr(fn, "__name__", "builtin")
-    wrapper.__builtins__ = {}
+    try:
+        wrapper.__builtins__ = {}
+    except AttributeError:
+        pass
     return wrapper
 
 class BreakException(Exception):

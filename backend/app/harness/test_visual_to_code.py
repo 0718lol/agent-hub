@@ -12,15 +12,15 @@ from app.main import export_workflow, import_workflow, compile_workflow, get_cus
 
 class TestVisualToCode(unittest.IsolatedAsyncioTestCase):
 
-    def setUp(self):
+    async def asyncSetUp(self):
         # Clear custom agents if they exist to keep test clean
         for ca in list(get_custom_agents()):
-            _remove_custom_agent(ca["agent_id"])
+            await _remove_custom_agent(ca["agent_id"])
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         # Cleanup custom agents
         for ca in list(get_custom_agents()):
-            _remove_custom_agent(ca["agent_id"])
+            await _remove_custom_agent(ca["agent_id"])
 
     async def test_workflow_export_and_import(self):
         """Test JSON Workflow serialization export and clean deserialization import."""

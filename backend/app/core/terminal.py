@@ -5,7 +5,19 @@ import sys
 
 logger = logging.getLogger("core_terminal")
 
+def safe_decode(data: bytes) -> str:
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return data.decode("gb18030")
+        except UnicodeDecodeError:
+            return data.decode("utf-8", errors="replace")
+
 class StatefulTerminal:
+
     """Represents a stateful, interactive shell terminal session (PowerShell on Windows, Bash/Sh on Linux)."""
 
     def __init__(self, conversation_id: str, cwd: str):
@@ -33,6 +45,18 @@ class StatefulTerminal:
             cwd=self.cwd,
             creationflags=0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW on Windows
         )
+        if sys.platform == "win32":
+            try:
+                # Force PowerShell to use UTF-8 encoding for input/output and output pipelines
+                init_cmd = (
+                    "[Console]::InputEncoding = [Console]::OutputEncoding = "
+                    "[System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8\r\n"
+                )
+                self.process.stdin.write(init_cmd.encode("utf-8"))
+                await self.process.stdin.drain()
+            except Exception as e:
+                logger.warning(f"Failed to set UTF-8 encoding on PowerShell startup: {e}")
+
 
     async def execute(self, command: str, timeout: float = 15.0) -> str:
         """Executes a command statefully and reads output until the sentinel prints or timeout expires."""
@@ -61,7 +85,8 @@ class StatefulTerminal:
                 line_bytes = await asyncio.wait_for(self.process.stdout.readline(), timeout=timeout)
                 if not line_bytes:
                     break
-                line = line_bytes.decode("utf-8", errors="replace")
+                line = safe_decode(line_bytes)
+
 
                 # Check if sentinel is reached
                 if sentinel in line:

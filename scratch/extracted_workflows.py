@@ -1,113 +1,24 @@
-import json
-import re
-from app.core.config import settings
-from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config
-from app.core.llm_client import llm_client
-from app.services.agent_registry import agent_registry
-from app.core.database import get_custom_agents
 
-def _save_llm_config():
-    save_llm_config(llm_client, settings)
-
-from typing import Any, Dict
-
-from fastapi import APIRouter
-from pydantic import BaseModel
-
-from app.core.async_wrappers import async_delete_memory_item, async_get_project_memory, async_save_memory_item
-from app.core.database import (
-    async_delete_memory_item_cached,
-    async_get_project_memory_cached,
-    async_save_memory_item_cached,
-    delete_memory_item,
-    get_project_memory,
-    save_memory_item,
-)
-from app.core.websocket import manager
-
-router = APIRouter(tags=["workflows"])
+    # 删除数据库记录
+    delete_knowledge_doc(doc_id)
+    return {"status": "ok", "message": "知识文档已删除"}
 
 
-class MemoryUpdate(BaseModel):
-    key: str
-    value: str
+@app.post("/api/knowledge/query")
+async def query_knowledge(body: dict):
+    from app.core.rag_engine import rag_engine
+    query = body.get("query", "")
+    top_k = body.get("top_k", 5)
+    if not query.strip():
+        return {"status": "error", "message": "查询内容不能为空"}
 
-
-@router.get("/sandbox/{conversation_id}/commits")
-async def get_sandbox_commits(conversation_id: str):
-    """Retrieve visual Git commits history in the dynamic vertical timeline."""
-    try:
-        from app.core.git_sandbox import get_sandbox_commits_log
-        commits = await get_sandbox_commits_log(conversation_id)
-        return commits
-    except Exception as e:
-        return {"error": str(e), "commits": []}
-
-
-class SandboxRollbackRequest(BaseModel):
-    commit_hash: str
-
-
-@router.post("/sandbox/{conversation_id}/rollback")
-async def rollback_sandbox(conversation_id: str, body: SandboxRollbackRequest):
-    """Trigger manual Git time-travel rollback for visual sandbox recovery."""
-    commit_hash = body.commit_hash
-    if not commit_hash:
-        return {"status": "error", "message": "Missing commit_hash parameter"}
-
-    try:
-        from app.core.git_sandbox import rollback_sandbox_to_commit
-        success = await rollback_sandbox_to_commit(conversation_id, commit_hash)
-        if success:
-            # Broadcast update event to frontend to refresh sandbox explorer and show warning log
-            await manager.broadcast(conversation_id, {
-                "type": "sandbox_rollback",
-                "conversation_id": conversation_id,
-                "commit_hash": commit_hash,
-                "message": f"🔄 已成功手动回滚至 Git 版本检查点: {commit_hash[:7]}"
-            })
-            return {"status": "ok", "message": f"Successfully rolled back sandbox to {commit_hash}"}
-        return {"status": "error", "message": "Rollback failed"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@router.get("/memory/{conversation_id}")
-async def get_memory_api(conversation_id: str):
-    return await async_get_project_memory_cached(conversation_id)
-
-
-@router.post("/memory/{conversation_id}")
-async def save_memory_api(conversation_id: str, body: MemoryUpdate):
-    await async_save_memory_item_cached(conversation_id, body.key, body.value, source="user")
-
-    # Broadcast refreshed memory to the client UI immediately
-    fresh_memory = await async_get_project_memory_cached(conversation_id)
-    await manager.broadcast(conversation_id, {
-        "type": "memory_reflected",
-        "conversation_id": conversation_id,
-        "memory": fresh_memory
-    })
-    return {"status": "ok", "memory": fresh_memory}
-
-
-@router.delete("/memory/{conversation_id}/{key}")
-async def delete_memory_api(conversation_id: str, key: str):
-    await async_delete_memory_item_cached(conversation_id, key)
-
-    # Broadcast deletion update to client UI
-    fresh_memory = await async_get_project_memory_cached(conversation_id)
-    await manager.broadcast(conversation_id, {
-        "type": "memory_reflected",
-        "conversation_id": conversation_id,
-        "memory": fresh_memory
-    })
-    return {"status": "ok", "message": f"Key {key} forgotten successfully."}
+    hits = rag_engine.query(query, top_k=top_k)
+    return {"status": "ok", "results": hits}
 
 
 # ---- Langflow Workflow Serialization & Compiler REST APIs ----
 
-@router.get("/workflow/export/{conversation_id}")
+@app.get("/api/workflow/export/{conversation_id}")
 async def export_workflow(conversation_id: str):
     """Export current workflow configuration, custom agents, and settings as JSON."""
     hil = get_hil_settings()
@@ -130,7 +41,7 @@ async def export_workflow(conversation_id: str):
     return workflow_data
 
 
-@router.post("/workflow/import")
+@app.post("/api/workflow/import")
 async def import_workflow(body: dict):
     """Import and reconstruct workflow custom agents and settings from JSON config."""
     custom_agents = body.get("custom_agents", [])
@@ -160,21 +71,19 @@ async def import_workflow(body: dict):
     return {"status": "ok", "imported_agents_count": imported_count}
 
 
-@router.post("/workflow/compile/{conversation_id}")
+@app.post("/api/workflow/compile/{conversation_id}")
 async def compile_workflow(conversation_id: str):
     """Compile visually designed multi-agent team and guards into a standalone, 0-dependency Python script."""
-    from app.services.agent_orchestrator import get_agents
-    AGENTS = get_agents()
     # Serialize agents data
     agents_str_dict = {}
     for aid, agent in AGENTS.items():
         agents_str_dict[aid] = {
-            "name": getattr(agent, "name", ""),
-            "avatar": getattr(agent, "avatar", "🤖"),
-            "role": getattr(agent, "role", ""),
-            "style": getattr(agent, "style", ""),
-            "system_prompt": getattr(agent, "system_prompt", ""),
-            "description": getattr(agent, "description", "")
+            "name": agent.name,
+            "avatar": agent.avatar,
+            "role": agent.role,
+            "style": agent.style,
+            "system_prompt": agent.system_prompt,
+            "description": agent.description
         }
         
     hil = get_hil_settings()

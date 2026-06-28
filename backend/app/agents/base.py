@@ -29,7 +29,15 @@ class BaseAgent:
     async def stream_reply(self, message: str, context: list | None = None,
                            history: list | None = None, conversation_id: str | None = None) -> AsyncGenerator[str, None]:
         if llm_client.is_configured() and self.system_prompt:
-            messages = self._build_messages(message, context, history)
+            if conversation_id:
+                from app.core.event_stream import MessageEvent, event_stream_manager
+                stream = event_stream_manager.get_stream(conversation_id)
+                has_user_prompt = any(isinstance(ev, MessageEvent) and ev.sender == "user" and ev.content == message for ev in stream)
+                if not has_user_prompt:
+                    event_stream_manager.append_event(conversation_id, MessageEvent(sender="user", content=message))
+                messages = event_stream_manager.compile_to_messages(conversation_id)
+            else:
+                messages = self._build_messages(message, context, history)
             # Structured layered prompt injection
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
             prompt_context = {"task_type": task_type, "conversation_id": conversation_id}

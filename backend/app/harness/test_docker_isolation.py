@@ -63,19 +63,29 @@ class TestDockerIsolation(unittest.IsolatedAsyncioTestCase):
         server = SystemMCPServer()
         conv_id = "test_docker_fallback_conv"
         
-        # Mock docker check to raise exception (representing docker not installed/running)
-        async def mock_create_exec(*args, **kwargs):
-            if args[0] == "docker" and args[1] == "info":
-                raise FileNotFoundError("docker not found")
-            raise ValueError(f"Unexpected exec: {args}")
-
         # Mock standard subprocess shell to run host-level command
         mock_proc_shell = AsyncMock()
         mock_proc_shell.returncode = 0
         mock_proc_shell.communicate.return_value = (b"host execution success", b"")
+        mock_proc_shell.pid = 1234
+
+        # Mock docker check to raise exception (representing docker not installed/running)
+        async def mock_create_exec(*args, **kwargs):
+            if args[0] == "docker" and args[1] == "info":
+                raise FileNotFoundError("docker not found")
+            if args[0] in ("cmd.exe", "/bin/bash"):
+                return mock_proc_shell
+            if args[0] == "git":
+                git_proc = AsyncMock()
+                git_proc.returncode = 0
+                git_proc.communicate.return_value = (b"", b"")
+                return git_proc
+            raise ValueError(f"Unexpected exec: {args}")
 
         with patch("asyncio.create_subprocess_exec", side_effect=mock_create_exec), \
              patch("asyncio.create_subprocess_shell", return_value=mock_proc_shell), \
+             patch("app.core.subprocess_security.limit_windows_process"), \
+             patch("app.core.config.settings.allow_unsandboxed_shell", True), \
              patch.dict(os.environ, {"AGENTHUB_DOCKER_SANDBOX": "true"}):
              
             result = await server.call_tool(

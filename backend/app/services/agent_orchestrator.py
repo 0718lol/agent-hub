@@ -11,6 +11,8 @@ import re
 import uuid
 from typing import Any
 
+_graph_builders = {}
+
 from app.core.database import (
     async_get_messages_cached,
     async_save_message_cached,
@@ -1135,7 +1137,10 @@ async def resume_graph_from_checkpoint(conversation_id: str, action: str):
             "is_generating": True,
         })
 
-        graph = build_group_chat_graph(conversation_id, original_prompt, trace, stop_event)
+        if conversation_id in _graph_builders:
+            graph = _graph_builders[conversation_id](conversation_id, original_prompt, trace, stop_event)
+        else:
+            graph = build_group_chat_graph(conversation_id, original_prompt, trace, stop_event)
         await graph.run(state_data, conversation_id, stop_event, start_node=start_node)
     finally:
         trace.finish()
@@ -1183,7 +1188,10 @@ async def run_user_message_flow(conversation_id: str, text: str, target_agent: s
 
         is_group = not target_agent
         if is_group and not stop_event.is_set():
-            graph = build_group_chat_graph(conversation_id, text, trace, stop_event)
+            if conversation_id in _graph_builders:
+                graph = _graph_builders[conversation_id](conversation_id, text, trace, stop_event)
+            else:
+                graph = build_group_chat_graph(conversation_id, text, trace, stop_event)
             await graph.run({"original_prompt": text}, conversation_id, stop_event)
     finally:
         trace.finish()

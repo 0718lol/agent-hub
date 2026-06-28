@@ -10,6 +10,18 @@ _logger = logging.getLogger("mcp_client")
 
 MCP_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "mcp_config.json")
 
+def safe_decode(data: bytes) -> str:
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return data.decode("gb18030")
+        except UnicodeDecodeError:
+            return data.decode("utf-8", errors="replace")
+
+
 class MCPClient:
     """Standard Model Context Protocol stdio client with async JSON-RPC 2.0 communication."""
 
@@ -80,7 +92,8 @@ class MCPClient:
                 line = await self.process.stderr.readline()
                 if not line:
                     break
-                print(f"[MCP Server Log: {self.name}] {line.decode('utf-8', errors='replace').strip()}")
+                print(f"[MCP Server Log: {self.name}] {safe_decode(line).strip()}")
+
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -228,6 +241,8 @@ class SystemMCPServer:
             # 3. 递归已存在祖先路径校验：防范针对非存在路径的软链接TOCTOU绕过欺骗
             curr = os.path.abspath(target_path)
             while True:
+                if curr == abs_sandbox or curr == os.path.abspath(sandbox_dir):
+                    break
                 parent = os.path.dirname(curr)
                 if parent == curr:  # 已经到达根目录
                     break
@@ -427,8 +442,9 @@ class SystemMCPServer:
                         except Exception as e:
                             _logger.debug(f"Failed to remove temp script (non-critical): {e}")
 
-                out_str = stdout.decode("utf-8", errors="replace")
-                err_str = stderr.decode("utf-8", errors="replace")
+                out_str = safe_decode(stdout)
+                err_str = safe_decode(stderr)
+
 
                 result = f"Command exited with code: {proc.returncode}\n"
                 if out_str:
