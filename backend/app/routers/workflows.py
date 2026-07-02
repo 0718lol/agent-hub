@@ -1,10 +1,12 @@
 import json
 import re
+
 from app.core.config import settings
 from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config
+from app.core.database import get_custom_agents
 from app.core.llm_client import llm_client
 from app.services.agent_registry import agent_registry
-from app.core.database import get_custom_agents
+
 
 def _save_llm_config():
     save_llm_config(llm_client, settings)
