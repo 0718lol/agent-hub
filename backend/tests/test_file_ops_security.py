@@ -10,7 +10,21 @@ from unittest.mock import patch
 # Ensure the backend app package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.tools.file_ops import _safe_path
+from app.tools.file_ops import _read_text_file, _safe_path
+
+
+class TestTextDecoding:
+    def test_strips_utf8_bom(self, tmp_path):
+        path = tmp_path / "bom.txt"
+        path.write_bytes(b"\xef\xbb\xbf" + "中文内容".encode("utf-8"))
+        assert _read_text_file(str(path)) == "中文内容"
+
+    def test_reads_gb18030_without_replacement_characters(self, tmp_path):
+        path = tmp_path / "gb.txt"
+        path.write_bytes("中文项目".encode("gb18030"))
+        content = _read_text_file(str(path))
+        assert content == "中文项目"
+        assert "\ufffd" not in content
 
 # ============================================================
 # _safe_path tests

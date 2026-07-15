@@ -17,6 +17,28 @@ _MAX_WRITE_SIZE = 100000  # 100KB max write
 _MAX_LIST_DEPTH = 3
 
 
+def _read_text_file(path: str) -> str:
+    """Read generated source without silently replacing undecodable bytes."""
+    with open(path, "rb") as f:
+        raw = f.read()
+
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encodings = ("utf-16",)
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        encodings = ("utf-8-sig",)
+    else:
+        # UTF-8 is the platform contract; GB18030 keeps imported Chinese
+        # Windows projects readable while they are normalized on next write.
+        encodings = ("utf-8", "gb18030")
+
+    for encoding in encodings:
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise UnicodeError("文件不是有效的 UTF-8、UTF-16 或 GB18030 文本")
+
+
 def _safe_path(conversation_id: str, filepath: str) -> str | None:
     """Resolve path within sandbox, preventing directory traversal."""
     sandbox_dir = os.path.realpath(os.path.join(_SANDBOX_ROOT, conversation_id))
@@ -79,8 +101,7 @@ class FileReadTool(AgentTool):
             if size > _MAX_READ_SIZE:
                 return ToolResult(success=False, error=f"文件过大 ({size} bytes)，最大 {_MAX_READ_SIZE}")
 
-            with open(safe, encoding="utf-8", errors="replace") as f:
-                content = f.read()
+            content = _read_text_file(safe)
 
             return ToolResult(
                 success=True,
@@ -252,8 +273,7 @@ class FileViewWindowedTool(AgentTool):
             return ToolResult(success=False, error=f"不是文件: {filepath}")
 
         try:
-            with open(safe, encoding="utf-8", errors="replace") as f:
-                content = f.read()
+            content = _read_text_file(safe)
 
             lines = content.splitlines()
             total_lines = len(lines)
@@ -352,8 +372,7 @@ class FileEditLineTool(AgentTool):
             return ToolResult(success=False, error=f"文件不存在: {filepath}。行替换编辑器仅适用于编辑已有文件。")
 
         try:
-            with open(safe, encoding="utf-8", errors="replace") as f:
-                content = f.read()
+            content = _read_text_file(safe)
 
             lines = content.splitlines(keepends=True)
             total_lines = len(lines)

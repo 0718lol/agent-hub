@@ -380,9 +380,8 @@ async def test_disconnect_cleans_up_connection(ws_app):
 
 
 @pytest.mark.asyncio
-async def test_disconnect_sets_stop_event(ws_app):
-    """When a client disconnects, any in-flight stop event for that conversation
-    should be set so background generation tasks notice and exit."""
+async def test_disconnect_does_not_stop_generation(ws_app):
+    """A transient client disconnect must not cancel in-flight generation."""
     from app.services.agent_orchestrator import _stop_events
 
     conv_id = "conv_disconnect_stop"
@@ -398,7 +397,7 @@ async def test_disconnect_sets_stop_event(ws_app):
                     pass
 
         await asyncio.sleep(0.1)
-        assert event.is_set()
+        assert not event.is_set()
     finally:
         _stop_events.pop(conv_id, None)
 

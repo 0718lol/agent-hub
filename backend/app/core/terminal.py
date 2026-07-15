@@ -1,9 +1,25 @@
 import asyncio
+import locale
 import logging
 import os
 import sys
 
 logger = logging.getLogger("core_terminal")
+
+
+def _decode_terminal_output(data: bytes) -> str:
+    encodings = ["utf-8-sig"]
+    preferred = locale.getpreferredencoding(False)
+    if preferred.lower().replace("-", "") not in {"utf8", "utf8sig"}:
+        encodings.append(preferred)
+    if sys.platform == "win32":
+        encodings.append("gb18030")
+    for encoding in encodings:
+        try:
+            return data.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return data.decode("utf-8", errors="backslashreplace")
 
 class StatefulTerminal:
     """Represents a stateful, interactive shell terminal session (PowerShell on Windows, Bash/Sh on Linux)."""
@@ -24,6 +40,9 @@ class StatefulTerminal:
         logger.info(f"[StatefulTerminal] Starting stateful shell '{self.shell}' with args {self.args} for session {self.conversation_id} in {self.cwd}")
 
         # Merge stderr into stdout so we capture absolutely everything!
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env.setdefault("LANG", "C.UTF-8")
         self.process = await asyncio.create_subprocess_exec(
             self.shell,
             *self.args,
@@ -31,6 +50,7 @@ class StatefulTerminal:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=self.cwd,
+            env=env,
             creationflags=0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW on Windows
         )
 
@@ -45,13 +65,18 @@ class StatefulTerminal:
         # Build command sequence with sentinel print at the end
         if sys.platform == "win32":
             # PowerShell: execute command, then print sentinel
-            full_command = f"{command}\r\nWrite-Output \"{sentinel}\"\r\n"
+            utf8_setup = (
+                "$utf8 = [System.Text.UTF8Encoding]::new(); "
+                "[Console]::InputEncoding = $utf8; "
+                "[Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8"
+            )
+            full_command = f"{utf8_setup}\r\n{command}\r\nWrite-Output \"{sentinel}\"\r\n"
         else:
             # Bash/Sh: execute command, then print sentinel
             full_command = f"{command}\necho \"{sentinel}\"\n"
 
         logger.debug(f"[StatefulTerminal] Sending command: {command}")
-        self.process.stdin.write(full_command.encode("utf-8", errors="replace"))
+        self.process.stdin.write(full_command.encode("utf-8"))
         await self.process.stdin.drain()
 
         output_lines = []
@@ -61,7 +86,7 @@ class StatefulTerminal:
                 line_bytes = await asyncio.wait_for(self.process.stdout.readline(), timeout=timeout)
                 if not line_bytes:
                     break
-                line = line_bytes.decode("utf-8", errors="replace")
+                line = _decode_terminal_output(line_bytes)
 
                 # Check if sentinel is reached
                 if sentinel in line:

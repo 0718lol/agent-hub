@@ -322,7 +322,7 @@ MAX_RETRIES = 1
 SKIP_AGENTS = {"agent_pm", "agent_builder"}
 
 
-async def evaluate_and_retry( # noqa: F811
+async def _legacy_evaluate_and_retry(
     conversation_id: str,
     agent,
     task: str,

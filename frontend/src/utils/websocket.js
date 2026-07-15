@@ -8,6 +8,8 @@ class WSClient {
     this.reconnectAttempts = 0
     this.maxReconnectDelay = 30000 // Maximum 30 seconds
     this.baseReconnectDelay = 1000 // Start at 1 second
+    this.maxReconnectAttempts = 5
+    this.shouldReconnect = false
     // Connection status tracking
     this.status = 'disconnected' // 'connected' | 'reconnecting' | 'disconnected'
     this._statusListeners = new Set()
@@ -28,7 +30,16 @@ class WSClient {
   }
 
   connect(conversationId) {
+    if (
+      this.currentConvId === conversationId &&
+      this.ws &&
+      (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)
+    ) {
+      return
+    }
+
     this.currentConvId = conversationId
+    this.shouldReconnect = true
     clearTimeout(this.reconnectTimer)
 
     if (this.ws) {
@@ -68,14 +79,17 @@ class WSClient {
       }
     }
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (this.ws !== ws) return // Safe guard against stale connections
+      this.ws = null
+      if (!this.shouldReconnect || this.currentConvId !== conversationId) return
       this.reconnectAttempts++
-      if (this.reconnectAttempts > 5) {
+      if (event?.code === 4001 || this.reconnectAttempts > this.maxReconnectAttempts) {
+        this.shouldReconnect = false
         this._setStatus('disconnected')
-      } else {
-        this._setStatus('reconnecting')
+        return
       }
+      this._setStatus('reconnecting')
       const delay = this._calculateReconnectDelay()
       this.reconnectTimer = setTimeout(() => this.connect(conversationId), delay)
     }
@@ -116,19 +130,8 @@ class WSClient {
       this.ws.send(json)
       return
     }
-    // 先连，连上后立刻发
-    const onceOpen = () => {
-      try { this.ws.send(json) } catch (e) { console.error('sendTo failed:', e) }
-      this.ws.removeEventListener('open', onceOpen)
-    }
+    this.pendingMessages.push(json)
     this.connect(targetConvId)
-    if (this.ws) {
-      if (this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(json)
-      } else {
-        this.ws.addEventListener('open', onceOpen)
-      }
-    }
   }
 
   onMessage(handler) {
@@ -139,6 +142,7 @@ class WSClient {
   }
 
   disconnect() {
+    this.shouldReconnect = false
     clearTimeout(this.reconnectTimer)
     this.reconnectAttempts = 0
     this.pendingMessages = []

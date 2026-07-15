@@ -30,34 +30,44 @@ def create_tracked_task(coro, name: str | None = None) -> asyncio.Task:
     """Create and strongly reference a background asyncio task to prevent GC."""
     task = asyncio.create_task(coro, name=name)
     _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+    def finish(completed: asyncio.Task) -> None:
+        _BACKGROUND_TASKS.discard(completed)
+        if completed.cancelled():
+            return
+        try:
+            error = completed.exception()
+        except asyncio.CancelledError:
+            return
+        if error:
+            logger.error(
+                "Background generation failed",
+                exc_info=(type(error), error, error.__traceback__),
+            )
+
+    task.add_done_callback(finish)
     return task
 
 
 @router.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     # ---- WebSocket IP/Token 鉴权 ----
-    client_host = websocket.client.host if websocket.client else None
-    authorized = False
+    # An empty secret explicitly means authentication is disabled. This is
+    # needed for local Docker deployments, where the peer is the nginx
+    # container rather than 127.0.0.1. Production compose requires a secret.
+    authorized = not settings.api_secret
 
     if settings.api_secret:
         header_token = websocket.headers.get("x-api-secret")
         query_token = websocket.query_params.get("token")
         if header_token == settings.api_secret or query_token == settings.api_secret:
             authorized = True
-    else:
-        if client_host in ("127.0.0.1", "::1", "localhost"):
-            authorized = True
-
     if not authorized:
         await websocket.accept()
         await websocket.close(code=4001, reason="Unauthorized connection attempt")
         return
 
     await manager.connect(websocket, conversation_id)
-    # Tasks spawned for ongoing generations on this connection, so we can
-    # await them at disconnect time. Stop is signalled via _stop_events.
-    bg_tasks: set[asyncio.Task] = set()
     try:
         while True:
             data = await websocket.receive_text()
@@ -167,27 +177,17 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 prev_event.set()
             current_agents = get_agents()
             if target_agent and target_agent in current_agents:
-                task = asyncio.create_task(
-                    run_target_agent_flow(conversation_id, current_agents[target_agent], text)
+                create_tracked_task(
+                    run_target_agent_flow(conversation_id, current_agents[target_agent], text),
+                    name=f"target_agent_{conversation_id}",
                 )
-                bg_tasks.add(task)
-                task.add_done_callback(bg_tasks.discard)
             elif sender == "user":
-                task = asyncio.create_task(
-                    run_user_message_flow(conversation_id, text, target_agent)
+                create_tracked_task(
+                    run_user_message_flow(conversation_id, text, target_agent),
+                    name=f"user_flow_{conversation_id}",
                 )
-                bg_tasks.add(task)
-                task.add_done_callback(bg_tasks.discard)
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, conversation_id)
-        # Signal any in-flight generation to stop on disconnect
-        event = _stop_events.get(conversation_id)
-        if event:
-            event.set()
-        for task in bg_tasks:
-            task.cancel()
-        if bg_tasks:
-            await asyncio.gather(*bg_tasks, return_exceptions=True)
-
-
+        # A browser refresh or brief network loss must not abort generation.
+        # The explicit "stop" message remains the only user cancellation path.

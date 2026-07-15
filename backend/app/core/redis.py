@@ -20,7 +20,8 @@ class RedisManager:
         self._pool = None
         self._is_connected = None  # None: untried, True: connected, False: offline
         self._last_probe_time = 0.0
-        self._probe_ttl = 5.0  # Cache connection status for 5 seconds to avoid network latency penalty
+        self._online_probe_ttl = 5.0
+        self._offline_probe_ttl = 30.0
 
     def _ensure_pool(self):
         """Lazy initialization of the connection pool."""
@@ -44,12 +45,14 @@ class RedisManager:
 
     async def check_connection(self) -> bool:
         """Ping the Redis server with a short timeout to see if it is online.
-        Caches connection status for `_probe_ttl` seconds to avoid performance degradation.
+        Caches failed probes longer so an optional, offline Redis server does
+        not add a one-second delay to broadcasts every few seconds.
         """
         now = time.time()
 
         # Return cached status if TTL has not expired
-        if self._is_connected is not None and now - self._last_probe_time < self._probe_ttl:
+        probe_ttl = self._online_probe_ttl if self._is_connected else self._offline_probe_ttl
+        if self._is_connected is not None and now - self._last_probe_time < probe_ttl:
             return self._is_connected
 
         self._last_probe_time = now

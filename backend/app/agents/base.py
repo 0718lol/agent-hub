@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import random
 from collections.abc import AsyncGenerator
 
 from app.core.llm_client import llm_client
@@ -107,10 +106,11 @@ class BaseAgent:
                     messages.append({"role": "user", "content": f"[工具结果: {tool_name}]\n{json.dumps(result.data if result.success else {'error': result.error}, ensure_ascii=False, indent=2)}\n\n请基于以上工具结果继续回复用户。"})
         else:
             reply = self._generate_reply(message, context)
-            for char in reply:
-                delay = random.uniform(0.04, 0.10)
-                await asyncio.sleep(delay)
-                yield char
+            # Mock mode should still feel streamed, but character-by-character
+            # delays made code responses take minutes.
+            for offset in range(0, len(reply), 32):
+                await asyncio.sleep(0.005)
+                yield reply[offset:offset + 32]
 
     def _get_tools_prompt(self) -> str:
         """Get tools prompt block for this agent."""

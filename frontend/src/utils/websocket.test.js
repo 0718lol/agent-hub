@@ -29,10 +29,10 @@ class MockWebSocket {
     this.sentMessages.push(data)
   }
 
-  close() {
+  close(code = 1000) {
     clearTimeout(this._openTimeout)
     this.readyState = MockWebSocket.CLOSED
-    if (this.onclose) this.onclose(new CloseEvent("close"))
+    if (this.onclose) this.onclose({ code })
   }
 
   addEventListener(event, fn) {
@@ -233,6 +233,27 @@ describe("WSClient (websocket.js)", () => {
     expect(secondWs.readyState).toBe(MockWebSocket.OPEN)
     expect(secondWs.url).toBe("ws://localhost:8000/ws/conv_2")
     expect(wsClient.currentConvId).toBe("conv_2")
+  })
+
+  it("connect reuses an open socket for the same conversation", async () => {
+    wsClient.connect("conv_same")
+    await vi.waitFor(() => expect(MockWebSocket.instances[0].readyState).toBe(MockWebSocket.OPEN))
+
+    wsClient.connect("conv_same")
+
+    expect(MockWebSocket.instances.length).toBe(1)
+    expect(MockWebSocket.instances[0].readyState).toBe(MockWebSocket.OPEN)
+  })
+
+  it("does not reconnect after an authentication failure", async () => {
+    wsClient.connect("conv_auth")
+    await vi.waitFor(() => expect(MockWebSocket.instances[0].readyState).toBe(MockWebSocket.OPEN))
+
+    MockWebSocket.instances[0].close(4001)
+
+    expect(wsClient.status).toBe("disconnected")
+    expect(wsClient.shouldReconnect).toBe(false)
+    expect(wsClient.reconnectTimer).toBeNull()
   })
 
   it("sendTo sends to correct conversation", async () => {
