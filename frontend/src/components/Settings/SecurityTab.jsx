@@ -2,8 +2,9 @@ import React from 'react'
 import { labelStyle, inputStyle, makeBtnStyle } from './sharedStyles'
 
 export default function SecurityTab({
-  securityToken, setSecurityToken, showToken, setShowToken, setMsg,
-  saving,
+  securityToken, setSecurityToken, showToken, setShowToken, saving,
+  authStatus, handleLogin, handleLogout, notificationStatus,
+  testingNotification, handleTestNotification,
 }) {
   const btnStyle = makeBtnStyle(saving)
 
@@ -18,10 +19,10 @@ export default function SecurityTab({
       </div>
 
       <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>
-        <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>API Secret 密钥配置</label>
+        <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>浏览器安全会话</label>
         
         <div style={{ marginBottom: 16 }}>
-          <label style={labelStyle}>全局访问密钥 (AGENTHUB_API_SECRET)</label>
+          <label style={labelStyle}>访问密钥</label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
               value={securityToken}
@@ -50,37 +51,52 @@ export default function SecurityTab({
             </button>
           </div>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
-            密钥将保存在您的浏览器本地 LocalStorage 中。在开启后端 <code>AGENTHUB_API_SECRET</code> 保护时，前端所有的 Fetch 和 WebSocket 请求将自动注入此凭证以完成双向身份鉴权。
+            密钥只在本次登录请求中发送，不会保存在浏览器脚本存储中。登录后使用最长 8 小时的 HttpOnly 会话 Cookie，JavaScript 无法读取该凭证。
           </p>
         </div>
 
         <div style={{ display: 'flex', gap: 10 }}>
           <button
-            onClick={() => {
-              localStorage.setItem('agenthub_api_secret', securityToken);
-              setMsg('安全凭证保存成功！所有 API 与实时会话已安全对齐。');
-            }}
+            onClick={handleLogin}
+            disabled={saving || (authStatus.auth_required && !securityToken)}
             style={{ ...btnStyle, flex: 1, background: 'var(--accent)' }}
           >
-            保存密钥
+            {authStatus.authenticated ? '刷新登录' : '登录'}
           </button>
           <button
-            onClick={() => {
-              localStorage.removeItem('agenthub_api_secret');
-              setSecurityToken('');
-              setMsg('安全凭证已成功清除，浏览器当前处于无凭证访问状态。');
-            }}
+            onClick={handleLogout}
             style={{ ...btnStyle, flex: 1, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
           >
-            清除密钥
+            退出会话
           </button>
         </div>
+      </div>
+
+      <div style={{ padding: 16, borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>
+        <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>审批通知通道</label>
+        {['slack', 'telegram'].map((channel) => (
+          <div key={channel} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{channel === 'slack' ? 'Slack' : 'Telegram'}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 11, color: notificationStatus[channel] ? 'var(--green)' : 'var(--text-muted)' }}>
+                {notificationStatus[channel] ? '已配置' : '未配置'}
+              </span>
+              <button type="button" onClick={() => handleTestNotification(channel)} disabled={!notificationStatus[channel] || testingNotification === channel}
+                style={{ ...btnStyle, padding: '5px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                {testingNotification === channel ? '发送中...' : '测试'}
+              </button>
+            </div>
+          </div>
+        ))}
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
+          通道凭证由服务端环境变量配置，页面只显示状态，不会返回 Token 或 Webhook URL。
+        </p>
       </div>
 
       <div style={{ padding: '14px', borderRadius: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
         <b>💡 物理安全说明：</b>
         <br />
-        - 当密钥清除且后端未设置密钥时，系统默认激活 <b>Localhost 纯物理环回防火墙</b>，阻止任何外界物理设备访问此编排系统。
+        - 后端未设置密钥时，接口鉴权会被关闭，适合仅限本机的开发环境；部署到局域网或公网前必须设置 <code>AGENTHUB_API_SECRET</code> 并限制访问来源。
         <br />
         - 非 Docker 终端命令执行（RCE防护）已自动接入脚本安全包裹隔离保护。
       </div>

@@ -49,11 +49,7 @@ class WSClient {
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    let url = `${protocol}//${window.location.host}/ws/${conversationId}`
-    const authToken = localStorage.getItem('agenthub_api_secret')
-    if (authToken) {
-      url += `?token=${encodeURIComponent(authToken)}`
-    }
+    const url = `${protocol}//${window.location.host}/ws/${conversationId}`
 
     const ws = new WebSocket(url)
     this.ws = ws

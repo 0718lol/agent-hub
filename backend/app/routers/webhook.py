@@ -10,6 +10,24 @@ logger = logging.getLogger("routers.webhook")
 router = APIRouter(tags=["webhook"])
 
 
+@router.get("/webhook/channels")
+async def webhook_channel_status():
+    from app.services.webhook_gateway import webhook_gateway
+    return {"status": "ok", "channels": webhook_gateway.channel_status()}
+
+
+@router.post("/webhook/channels/{channel}/test")
+async def test_webhook_channel(channel: str):
+    if channel not in ("slack", "telegram"):
+        raise HTTPException(status_code=404, detail="Unknown notification channel")
+    from app.services.webhook_gateway import webhook_gateway
+    if not webhook_gateway.channel_status()[channel]:
+        raise HTTPException(status_code=503, detail=f"{channel.title()} is not configured")
+    if not await webhook_gateway.test_channel(channel):
+        raise HTTPException(status_code=502, detail=f"{channel.title()} delivery test failed")
+    return {"status": "ok", "channel": channel}
+
+
 @router.post("/webhook/callback/slack")
 async def slack_webhook_callback(request: Request):
     """Slack interactive actions callback endpoint."""

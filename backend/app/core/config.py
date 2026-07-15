@@ -51,6 +51,35 @@ class Settings(BaseSettings):
     shell_timeout: float = 15.0
     shell_memory_limit_mb: int = 256
 
+    # Static site deployment (Netlify Deploy API)
+    netlify_token: str = ""
+    netlify_site_id: str = ""
+
+    # Persistent deployment workers and generated API runtimes
+    deployment_queue: str = "agenthub:deployments"
+    deployment_status_ttl: int = 30 * 24 * 60 * 60
+    public_base_url: str = ""
+    runtime_network: str = "agenthub_runtime"
+    api_runtime_memory: str = "512m"
+    api_runtime_cpus: str = "1.0"
+    api_runtime_pids: int = 128
+    builder_image: str = "agenthub-deployment-worker:local"
+    generated_projects_volume: str = "agenthub_generated_projects"
+    deployment_retention_days: int = 7
+    deployment_max_per_user: int = 20
+
+    def validate_production_security(self) -> None:
+        """Reject production startup when required secrets are absent."""
+        if self.debug:
+            return
+        missing = []
+        if not self.api_secret or len(self.api_secret) < 32:
+            missing.append("AGENTHUB_API_SECRET (at least 32 characters)")
+        if not os.environ.get("AGENTHUB_ENCRYPT_KEY", ""):
+            missing.append("AGENTHUB_ENCRYPT_KEY")
+        if missing:
+            raise RuntimeError("Production security configuration missing: " + ", ".join(missing))
+
 
 settings = Settings()
 
@@ -86,12 +115,10 @@ def obfuscate_key(key: str) -> str:
         f = Fernet(_derive_fernet_key())
         encrypted = f.encrypt(key.encode("utf-8"))
         return "fnt::" + encrypted.decode("utf-8")
-    except ImportError:
-        logger.warning("cryptography package not installed, falling back to plain storage for API key.")
-        return key
+    except ImportError as e:
+        raise RuntimeError("cryptography is required to store API keys securely") from e
     except Exception as e:
-        logger.error(f"Failed to encrypt API key: {e}")
-        return key
+        raise RuntimeError("Failed to encrypt API key; refusing plaintext storage") from e
 
 
 def deobfuscate_key(obfuscated_key: str) -> str:

@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger("metrics_router")
@@ -18,7 +18,7 @@ logger = logging.getLogger("metrics_router")
 router = APIRouter(tags=["metrics"])
 
 # Global list of SSE subscriber queues
-_trace_queues: list[asyncio.Queue] = []
+_trace_queues: list[tuple[str, asyncio.Queue]] = []
 _MAX_QUEUE_SIZE = 100
 
 
@@ -29,7 +29,11 @@ async def push_trace(trace_data: dict):
     Non-blocking: if queue is full, drops silently.
     """
     dead = []
-    for q in _trace_queues:
+    from app.core.tenancy import belongs_to_user
+    conversation_id = trace_data.get("conversation_id", "")
+    for user_id, q in _trace_queues:
+        if not belongs_to_user(conversation_id, user_id):
+            continue
         try:
             q.put_nowait(trace_data)
         except asyncio.QueueFull:
@@ -38,13 +42,13 @@ async def push_trace(trace_data: dict):
             dead.append(q)
     for q in dead:
         try:
-            _trace_queues.remove(q)
+            _trace_queues[:] = [entry for entry in _trace_queues if entry[1] is not q]
         except ValueError:
             pass
 
 
 @router.get("/metrics/traces/stream")
-async def stream_traces():
+async def stream_traces(request: Request):
     """SSE endpoint: stream trace updates in real-time.
 
     Usage:
@@ -52,7 +56,9 @@ async def stream_traces():
         es.onmessage = (e) => { const trace = JSON.parse(e.data) }
     """
     queue: asyncio.Queue = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
-    _trace_queues.append(queue)
+    from app.core.tenancy import request_user_id
+    entry = (request_user_id(request), queue)
+    _trace_queues.append(entry)
     logger.debug(f"SSE subscriber connected (total: {len(_trace_queues)})")
 
     async def event_generator():
@@ -69,7 +75,7 @@ async def stream_traces():
             logger.debug(f"SSE generator error: {e}")
         finally:
             try:
-                _trace_queues.remove(queue)
+                _trace_queues.remove(entry)
             except ValueError:
                 pass
             logger.debug(f"SSE subscriber disconnected (total: {len(_trace_queues)})")

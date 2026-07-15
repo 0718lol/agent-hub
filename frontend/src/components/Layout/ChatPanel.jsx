@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react'
+import React, { lazy, Suspense, useRef, useEffect, useState, useCallback } from 'react'
 import { MessageSquare, Code2, GitBranch, LayoutList, Menu, X, Search, Building2 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
@@ -11,10 +11,11 @@ import ChatPanelHeader from './ChatPanelHeader'
 import ChatPanelContent from './ChatPanelContent'
 import TabBar from './TabBar'
 import TaskBoard from '../Canvas/TaskBoard'
-import AgentFlow from '../Canvas/AgentFlow'
 import { wsClient } from '../../utils/websocket'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import IconAvatar from '../IconAvatar'
+
+const AgentFlow = lazy(() => import('../Canvas/AgentFlow'))
 
 export default function ChatPanel({ onToggleSidebar }) {
   const openTabs = useTabStore((s) => s.openTabs)
@@ -138,24 +139,28 @@ export default function ChatPanel({ onToggleSidebar }) {
         return
       }
       if (data.type === 'deploy_status') {
-        const { status, log, url } = data
+        const { status, log, url, result_type: resultType, target } = data
         // 清除旧超时，重置 30s 看门狗
         if (deployTimeoutRef.current) clearTimeout(deployTimeoutRef.current)
         deployTimeoutRef.current = setTimeout(() => {
           useCanvasStore.getState().failDeploy()
           deployTimeoutRef.current = null
-        }, 30000)
+        }, 12 * 60 * 1000)
 
         if (useCanvasStore.getState().deployStatus === 'idle') {
           useCanvasStore.getState().startDeploy()
         }
         if (log) useCanvasStore.getState().appendDeployLog(log)
         if (status === 'success' && url) {
-          useCanvasStore.getState().finishDeploy(url)
+          useCanvasStore.getState().finishDeploy(url, resultType, target)
           if (deployTimeoutRef.current) { clearTimeout(deployTimeoutRef.current); deployTimeoutRef.current = null }
         }
         if (status === 'failed') {
           useCanvasStore.getState().failDeploy()
+          if (deployTimeoutRef.current) { clearTimeout(deployTimeoutRef.current); deployTimeoutRef.current = null }
+        }
+        if (status === 'cancelled') {
+          useCanvasStore.getState().cancelDeploy()
           if (deployTimeoutRef.current) { clearTimeout(deployTimeoutRef.current); deployTimeoutRef.current = null }
         }
         return
@@ -352,7 +357,9 @@ export default function ChatPanel({ onToggleSidebar }) {
               </button>
             </div>
             <div className="task-popup-body" style={{ padding: 0, minHeight: 0 }}>
-              <AgentFlow />
+              <Suspense fallback={<div style={{ padding: 16, color: 'var(--text-muted)' }}>正在加载协作图...</div>}>
+                <AgentFlow />
+              </Suspense>
             </div>
           </div>
         </>

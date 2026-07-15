@@ -57,3 +57,9 @@ backend/data/chroma_db/
 
 # Test coverage cache
 backend/.coverage
+frontend/playwright-report/
+frontend/test-results/
+
+# Local OS and package-manager caches
+.DS_Store
+.pnpm-store/

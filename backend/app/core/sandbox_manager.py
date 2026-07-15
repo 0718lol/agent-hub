@@ -83,7 +83,12 @@ class SubprocessSandbox(BaseSandbox):
                     stderr=asyncio.subprocess.PIPE,
                     stdin=asyncio.subprocess.PIPE if stdin_data else None,
                     cwd=tmp_dir,
-                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                    env={
+                        "PATH": os.environ.get("PATH", ""),
+                        "LANG": "C.UTF-8",
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                        "PYTHONIOENCODING": "utf-8",
+                    },
                 )
             else:
                 # Windows path: execute directly, then attach Windows Job Object constraints immediately after creation
@@ -93,7 +98,12 @@ class SubprocessSandbox(BaseSandbox):
                     stderr=asyncio.subprocess.PIPE,
                     stdin=asyncio.subprocess.PIPE if stdin_data else None,
                     cwd=tmp_dir,
-                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                    env={
+                        "PATH": os.environ.get("PATH", ""),
+                        "LANG": "C.UTF-8",
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                        "PYTHONIOENCODING": "utf-8",
+                    },
                 )
                 limit_windows_process(proc.pid, settings.shell_memory_limit_mb * 1024 * 1024, cpu_limit_secs=timeout + 2)
 
@@ -434,8 +444,21 @@ class SandboxManager:
                 except Exception as e:
                     logger.warning(f"Local Docker Sandbox failed, falling back to subprocess: {e}")
 
-        # --- Rail 3: Local Subprocess Sandbox (Resilient Fallback) ---
-        return await self.subprocess_sandbox.execute(code, language, timeout, stdin_data)
+        # A local subprocess is not a security boundary. Never execute
+        # untrusted generated code on the host unless an operator opted in.
+        if settings.allow_unsandboxed_shell:
+            logger.warning("Executing code in explicitly enabled host subprocess fallback")
+            return await self.subprocess_sandbox.execute(code, language, timeout, stdin_data)
+
+        return {
+            "language": language,
+            "status": "error",
+            "stdout": "",
+            "stderr": "No isolated sandbox is available. Start Docker, configure E2B, or explicitly enable AGENTHUB_ALLOW_UNSANDBOXED_SHELL for local development.",
+            "exit_code": -1,
+            "duration_ms": 0,
+            "truncated": False,
+        }
 
 
 # Helper async context manager for httpx client lifecycle

@@ -173,6 +173,23 @@ npm run dev
 
 打开 http://localhost:3000
 
+## 自动化测试
+
+```bash
+cd frontend
+
+# Vitest 单元与组件测试
+npm test
+
+# 首次运行端到端测试时安装浏览器
+npx playwright install chromium
+
+# 生成 -> 预览 -> 对话修改 -> API 发布 -> 历史回滚
+npm run test:e2e
+```
+
+端到端测试使用真实 React 页面和状态管理，并在浏览器层模拟 HTTP 与 WebSocket 后端，因此不需要模型密钥、Docker 或微信凭证。失败时会在 `frontend/test-results/` 保留截图、视频和 trace；GitHub Actions 同时上传测试报告。
+
 ## LLM 配置
 
 1. 打开前端设置面板（右上角齿轮图标）
@@ -181,6 +198,35 @@ npm run dev
 4. 保存即可
 
 无 API Key 时 Agent 使用 Mock 回复，功能完整可用。
+
+## 构建与发布流水线
+
+部署面板支持自动识别或手动选择以下目标：
+
+| 目标 | 流水线 | 交付结果 |
+|------|--------|----------|
+| Web | 校验 `index.html` → 打包 → Netlify | 公网地址；未配置 Netlify 时为 ZIP |
+| API | Docker 镜像构建 → 受限容器运行 → 反向代理 | 可分享的公网 API 地址 |
+| Android APK | 独立容器构建 → 演示密钥或用户 keystore 签名 → 校验 | 受当前用户权限保护的已签名 APK |
+| 微信小程序 | 工程校验 → `miniprogram-ci` 真实上传 | 凭证齐全时上传代码；否则生成开发者工具上传包 |
+
+Web 公网发布需要在 `.env` 配置 `AGENTHUB_NETLIFY_TOKEN` 和
+`AGENTHUB_NETLIFY_SITE_ID`。`docker compose up --build` 会启动独立的
+`deployment-worker`，其中包含 JDK、Android SDK 和 Docker CLI。发布请求写入 Redis Streams，
+Worker 重启后会重新认领未完成任务，意外错误最多自动重试两次。微信小程序的正式体验版、审核和发布还需要微信 AppID、上传私钥及微信平台审核，
+当前流水线负责生成可上传工程包，不会把打包状态误报为已上线。
+
+部署面板保留当前用户最近 20 条发布记录，支持失败重试、API 历史版本恢复和下线。
+运行中的任务会显示排队、生成、依赖安装、构建、签名、上传和完成阶段，并通过持久化状态恢复百分比与带时间戳日志；失败任务可以从当前流水线或发布历史下载完整 `.log` 文件。
+流水线运行期间可以点击“取消构建”：排队任务会立即释放项目锁，运行中的 Gradle、Docker、签名或小程序上传进程会被安全终止，并清理已经启动的临时构建容器。
+Worker 每小时清理超过 7 天或超出用户保留上限的产物、容器和镜像记录，也可以从界面立即触发清理。
+系统演示 APK 密钥只适合测试安装；正式发布应上传自己的 keystore。小程序真实上传使用
+`miniprogram-ci`，需要在微信公众平台下载代码上传私钥并配置允许的上传 IP。
+
+生成代码不会在 API 主进程直接执行。APK 构建运行在没有 Docker Socket 的临时容器中；
+生成的 API 以非 root、只读文件系统、无 Linux capabilities 的方式运行，并限制 CPU、内存和进程数。
+API 容器只加入内部 `agenthub_runtime` 网络，由 `/published/{deployment_id}/` 反向代理访问。
+生产环境需将 `AGENTHUB_PUBLIC_BASE_URL` 设置为 AgentHub 的公网 Origin。
 
 ## 集成 Claude Code (Model Context Protocol - MCP)
 

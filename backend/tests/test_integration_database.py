@@ -354,6 +354,25 @@ class TestCronTaskLifecycle:
         assert task["last_run"] == "2026-01-01T09:00:00"
         assert task["next_run"] == "2026-01-02T09:00:00"
 
+    def test_recover_running_tasks_after_restart(self):
+        from app.core.crud import (
+            create_conversation,
+            get_cron_tasks,
+            recover_running_cron_tasks,
+            save_cron_task,
+        )
+
+        create_conversation("conv_cron_recover", "single", "恢复任务", "🤖")
+        save_cron_task(
+            "task_recover", "conv_cron_recover", "agent_pm", "resume", 600,
+            status="running",
+        )
+
+        assert recover_running_cron_tasks("2026-07-15 00:00:00") >= 1
+        task = next(task for task in get_cron_tasks() if task["id"] == "task_recover")
+        assert task["status"] == "active"
+        assert task["next_run"] == "2026-07-15 00:00:00"
+
 
 # ===================================================================
 # Knowledge Doc tests

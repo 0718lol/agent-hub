@@ -6,7 +6,7 @@ This module is responsible for:
 - Root & health endpoints
 - Deploy simulation (no dedicated router)
 
-Business logic is delegated to focused router modules:
+Business logic is delegated to focused router modules and services:
 - routers/settings.py — LLM & HIL configuration
 - routers/webhook.py — Slack & Telegram callbacks
 - routers/conversations.py — Conversation & message CRUD
@@ -24,14 +24,19 @@ Business logic is delegated to focused router modules:
 - routers/tools.py — Tool listing & testing
 """
 import asyncio
+import hmac
+import json
 import os
+import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+import httpx
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import text
+from starlette.background import BackgroundTask
 
 from app.core.config import settings
 from app.core.config_persistence import load_llm_config, save_llm_config
@@ -43,6 +48,9 @@ from app.routers import (
 )
 from app.routers import (
     agents as agents_router,
+)
+from app.routers import (
+    auth as auth_router,
 )
 from app.routers import (
     benchmark as benchmark_router,
@@ -103,7 +111,17 @@ import app.tools  # noqa: F401
 # ---- App lifespan ----
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from datetime import UTC, datetime
+
+    from app.core.crud.cron import recover_running_cron_tasks
     from app.services.daemon_scheduler import daemon_scheduler
+
+    # A process crash can leave a task marked "running", which otherwise
+    # prevents the scheduler from ever picking it up again.
+    await asyncio.to_thread(
+        recover_running_cron_tasks,
+        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+    )
     daemon_scheduler.start()
     yield
     try:
@@ -121,11 +139,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AgentHub API", lifespan=lifespan)
+settings.validate_production_security()
 
 # ---- File upload directory ----
+# Files are served by routers/uploads.py rather than StaticFiles so they can
+# receive the same authentication and response-hardening as the rest of API.
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # ---- CORS ----
 setup_logging()
@@ -144,21 +164,23 @@ app.add_middleware(
 @app.middleware("http")
 async def api_security_middleware(request: Request, call_next):
     path = request.url.path
-    if path in ("/", "/docs", "/openapi.json", "/redoc", "/api/health") or path.startswith("/api/webhook/callback/"):
+    if path in ("/", "/docs", "/openapi.json", "/redoc", "/api/health") or path.startswith("/api/auth/") or path.startswith("/api/webhook/callback/"):
         return await call_next(request)
-    if not path.startswith("/api"):
+    if not (path.startswith("/api") or path.startswith("/uploads")):
         return await call_next(request)
     if settings.api_secret:
+        from app.core.auth import SESSION_COOKIE, verify_session_token
         auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return JSONResponse(status_code=401, content={"detail": "Unauthorized: Missing or invalid Authorization header"})
-        token = auth_header.split(" ", 1)[1]
-        if token != settings.api_secret:
-            return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid API secret token"})
-    else:
-        client_host = request.client.host if request.client else None
-        if client_host not in ("127.0.0.1", "::1", "localhost"):
-            return JSONResponse(status_code=403, content={"detail": f"Forbidden: Access from external IP '{client_host}' is blocked."})
+        bearer_valid = bool(
+            auth_header
+            and auth_header.startswith("Bearer ")
+            and hmac.compare_digest(auth_header.split(" ", 1)[1], settings.api_secret)
+        )
+        session_valid = verify_session_token(request.cookies.get(SESSION_COOKIE), settings.api_secret)
+        if not bearer_valid and not session_valid:
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized: Sign in or provide a valid bearer token"})
+    # No secret means authentication is deliberately disabled. Docker/Nginx
+    # proxy requests originate from the proxy container, not localhost.
     return await call_next(request)
 
 
@@ -168,8 +190,10 @@ from app.services.agent_registry import agent_registry
 AGENTS = get_agents()
 
 # ---- Mount all routers ----
+app.include_router(auth_router.router, prefix="/api")
 app.include_router(agents_router.router, prefix="/api")
 app.include_router(uploads_router.router, prefix="/api")
+app.include_router(uploads_router.router)
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(cron_router.router, prefix="/api")
 app.include_router(workflows_router.router, prefix="/api")
@@ -274,50 +298,279 @@ async def health():
     }
 
 
-# ---- Deploy simulation (no dedicated router module) ----
-from app.core.websocket import manager
+# ---- Persistent deployment queue ----
+from app.core.tenancy import request_user_id, scope_conversation_id
+from app.services.deployment import DEPLOY_TARGETS
+from app.services.deployment_queue import (
+    DeploymentAlreadyQueued,
+    DeploymentQueueUnavailable,
+    deployment_queue,
+)
+
+
+class DeployRequest(BaseModel):
+    target: str = "auto"
+    signing_mode: str = "demo"
+    keystore_file_id: str = ""
+    key_alias: str = ""
+    store_password: str = ""
+    key_password: str = ""
+    mini_appid: str = ""
+    mini_private_key_file_id: str = ""
+    version: str = "1.0.0"
+    description: str = "AgentHub 演示发布"
+
+
+def _owned_upload(user_id: str, file_id: str) -> bool:
+    from app.core.file_storage import FileStorageManager
+    return bool(
+        file_id
+        and file_id.startswith(f"tenantfile__{user_id}__")
+        and FileStorageManager.exists(file_id)
+    )
+
+
+def _deployment_options(user_id: str, options: DeployRequest) -> dict:
+    from app.core.config import obfuscate_key
+    if options.signing_mode not in {"demo", "uploaded"}:
+        raise HTTPException(status_code=422, detail="Unsupported APK signing mode")
+    if options.signing_mode == "uploaded":
+        if not _owned_upload(user_id, options.keystore_file_id):
+            raise HTTPException(status_code=422, detail="请选择当前用户上传的 keystore 文件")
+        if not options.key_alias or not options.store_password:
+            raise HTTPException(status_code=422, detail="用户签名需要别名和 keystore 密码")
+    if options.mini_private_key_file_id and not _owned_upload(user_id, options.mini_private_key_file_id):
+        raise HTTPException(status_code=422, detail="请选择当前用户上传的小程序私钥")
+    return {
+        "signing_mode": options.signing_mode,
+        "keystore_file_id": options.keystore_file_id,
+        "key_alias": options.key_alias,
+        "store_password": obfuscate_key(options.store_password),
+        "key_password": obfuscate_key(options.key_password or options.store_password),
+        "mini_appid": options.mini_appid.strip(),
+        "mini_private_key_file_id": options.mini_private_key_file_id,
+        "version": options.version.strip() or "1.0.0",
+        "description": options.description.strip()[:100],
+    }
 
 
 @app.post("/api/deploy/{conversation_id}")
-async def deploy_project(conversation_id: str):
-    asyncio.create_task(_simulate_deploy(conversation_id))
-    return {"status": "started"}
+async def deploy_project(conversation_id: str, request: Request, options: DeployRequest | None = None):
+    options = options or DeployRequest()
+    target = options.target
+    if target not in DEPLOY_TARGETS:
+        raise HTTPException(status_code=422, detail=f"Unsupported deployment target: {target}")
+    user_id = request_user_id(request)
+    try:
+        scoped_id = scope_conversation_id(user_id, conversation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        job = await deployment_queue.enqueue(
+            scoped_id, user_id, target, options=_deployment_options(user_id, options)
+        )
+    except DeploymentAlreadyQueued as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"status": "queued", "target": target, "job_id": job.id}
 
 
-async def _simulate_deploy(conversation_id: str):
-    logs = [
-        "🚀 正在初始化云部署沙盒环境...",
-        "📦 检查工作目录并拉取最新依赖包...",
-        "🧪 运行自动化冒烟测试 (Tester Agent 验证通过)...",
-        "🐳 构建生产环境 Docker 容器镜像...",
-        "🐳 正在向远端镜像仓库推送镜像 agenthub/app:latest...",
-        "☸️ Kubernetes 资源调度与健康状态检查...",
-        "🌎 域名解析与 SSL 证书(Let's Encrypt) 自动配置...",
-        "🎉 一键部署成功！静态资源与 API 服务均已上线。"
+@app.get("/api/deployments/{job_id}")
+async def deployment_status(job_id: str, request: Request):
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        raise HTTPException(status_code=400, detail="Invalid deployment ID")
+    try:
+        job = await deployment_queue.get(job_id)
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not job or job.user_id != request_user_id(request):
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    return job.public_dict()
+
+
+@app.get("/api/deployments/{job_id}/logs")
+async def download_deployment_logs(job_id: str, request: Request):
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        raise HTTPException(status_code=400, detail="Invalid deployment ID")
+    try:
+        job = await deployment_queue.get(job_id)
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not job or job.user_id != request_user_id(request):
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    labels = {
+        "queued": "排队",
+        "generate": "生成",
+        "dependencies": "依赖安装",
+        "build": "构建",
+        "sign": "签名",
+        "upload": "上传",
+        "complete": "完成",
+    }
+    lines = [
+        "AgentHub deployment log",
+        f"job_id: {job.id}",
+        f"target: {job.target}",
+        f"status: {job.status}",
+        f"created_at: {job.created_at}",
+        "",
     ]
-
-    for i, log in enumerate(logs):
-        await asyncio.sleep(1.2)
-        status = "success" if i == len(logs) - 1 else "running"
-        url = f"https://agenthub-app-{conversation_id[:6]}.netlify.app" if status == "success" else None
-
-        await manager.broadcast(conversation_id, {
-            "type": "deploy_status",
-            "conversation_id": conversation_id,
-            "status": status,
-            "log": log,
-            "url": url
-        })
-
-    url = f"https://agenthub-app-{conversation_id[:6]}.netlify.app"
-    await asyncio.sleep(0.5)
-    await manager.broadcast(conversation_id, {
-        "type": "message",
-        "conversation_id": conversation_id,
-        "sender": "agent_devops",
-        "content": {"text": f"✅ 报告！项目已成功一键部署上线！\n\n🌍 线上访问地址：{url}\n⚠️ 生产集群运行平稳，SSL 证书配置正确，CDN 分发已全球生效！"},
-        "stream": False
-    })
+    for entry in job.log_entries or []:
+        timestamp = entry.get("timestamp", "")
+        stage = labels.get(entry.get("stage", ""), entry.get("stage", "unknown"))
+        level = str(entry.get("level", "info")).upper()
+        message = str(entry.get("message", ""))
+        lines.append(f"[{timestamp}] [{stage}] [{level}] {message}")
+    if not job.log_entries and job.log:
+        lines.append(job.log)
+    return Response(
+        "\n".join(lines) + "\n",
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="deployment-{job.id}.log"'},
+    )
 
 
+@app.get("/api/deployments")
+async def deployment_history(request: Request, limit: int = 30):
+    try:
+        jobs = await deployment_queue.list_for_user(request_user_id(request), min(max(limit, 1), 100))
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"deployments": [job.public_dict(include_logs=False) for job in jobs]}
 
+
+@app.post("/api/deployments/{job_id}/retry")
+async def retry_deployment(job_id: str, request: Request):
+    source = await deployment_queue.get(job_id)
+    user_id = request_user_id(request)
+    if not source or source.user_id != user_id or source.action != "deploy":
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    try:
+        job = await deployment_queue.enqueue(
+            source.conversation_id,
+            user_id,
+            source.target,
+            source_job_id=source.id,
+            options=source.options,
+        )
+    except DeploymentAlreadyQueued as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "queued", "job_id": job.id}
+
+
+@app.post("/api/deployments/{job_id}/cancel")
+async def cancel_deployment(job_id: str, request: Request):
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        raise HTTPException(status_code=400, detail="Invalid deployment ID")
+    try:
+        job = await deployment_queue.get(job_id)
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    user_id = request_user_id(request)
+    if not job or job.user_id != user_id or job.action != "deploy":
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    if job.status not in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail="该任务已经结束，无法取消")
+    try:
+        await deployment_queue.request_cancel(job)
+        if job.status == "queued":
+            await deployment_queue.release_lock(job)
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"status": "cancellation_requested", "job_id": job.id}
+
+
+@app.post("/api/deployments/{job_id}/{action}")
+async def deployment_action(job_id: str, action: str, request: Request):
+    if action not in {"rollback", "offline"}:
+        raise HTTPException(status_code=404, detail="Unsupported deployment action")
+    source = await deployment_queue.get(job_id)
+    user_id = request_user_id(request)
+    if not source or source.user_id != user_id or source.provider != "docker-runtime":
+        raise HTTPException(status_code=404, detail="API deployment not found")
+    try:
+        job = await deployment_queue.enqueue(
+            source.conversation_id,
+            user_id,
+            source.target,
+            action=action,
+            source_job_id=source.id,
+        )
+    except DeploymentAlreadyQueued as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "queued", "job_id": job.id}
+
+
+@app.post("/api/deployments/cleanup")
+async def cleanup_deployments(request: Request):
+    user_id = request_user_id(request)
+    conversation_id = scope_conversation_id(user_id, "deployment-maintenance")
+    try:
+        job = await deployment_queue.enqueue(
+            conversation_id, user_id, "maintenance", action="cleanup"
+        )
+    except DeploymentAlreadyQueued as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "queued", "job_id": job.id}
+
+
+_RUNTIME_URL = re.compile(r"^http://agenthub-api-[a-f0-9]{16}:\d{2,5}$")
+_HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"}
+
+
+@app.api_route(
+    "/published/{deployment_id}/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+async def proxy_published_api(deployment_id: str, path: str, request: Request):
+    """Expose an isolated generated API without publishing random host ports."""
+    if not re.fullmatch(r"[a-f0-9]{32}", deployment_id):
+        raise HTTPException(status_code=404, detail="Published service not found")
+    from app.core.redis import redis_manager
+    if not await redis_manager.check_connection():
+        raise HTTPException(status_code=503, detail="Published service registry is unavailable")
+    raw = await redis_manager.get_client().get(f"agenthub:published:{deployment_id}")
+    if not raw:
+        raise HTTPException(status_code=404, detail="Published service not found")
+    runtime_url = json.loads(raw).get("runtime_url", "")
+    if not _RUNTIME_URL.fullmatch(runtime_url):
+        logger.error("Rejected invalid generated runtime URL for deployment %s", deployment_id)
+        raise HTTPException(status_code=502, detail="Invalid published service target")
+
+    query = f"?{request.url.query}" if request.url.query else ""
+    target = f"{runtime_url}/{path}{query}"
+    body = await request.body()
+    if len(body) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Request body exceeds 10 MB")
+    headers = {
+        key: value for key, value in request.headers.items()
+        if key.lower() not in _HOP_HEADERS and key.lower() not in {"host", "content-length", "cookie"}
+    }
+    client = httpx.AsyncClient(timeout=60.0)
+    try:
+        upstream = await client.send(
+            client.build_request(request.method, target, headers=headers, content=body),
+            stream=True,
+        )
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="Published service is unavailable") from exc
+
+    async def close_upstream() -> None:
+        await upstream.aclose()
+        await client.aclose()
+
+    response_headers = {
+        key: value for key, value in upstream.headers.items()
+        if key.lower() not in _HOP_HEADERS and key.lower() not in {"content-length", "set-cookie"}
+    }
+    location = response_headers.get("location")
+    if location and location.startswith(runtime_url):
+        response_headers["location"] = f"/published/{deployment_id}{location.removeprefix(runtime_url)}"
+    return StreamingResponse(
+        upstream.aiter_raw(),
+        status_code=upstream.status_code,
+        headers=response_headers,
+        background=BackgroundTask(close_upstream),
+    )

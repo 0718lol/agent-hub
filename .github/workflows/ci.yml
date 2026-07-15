@@ -60,6 +60,31 @@ jobs:
           npm ci --legacy-peer-deps
           npm run test
 
+  frontend-e2e:
+    name: Frontend E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: cd frontend && npm ci --legacy-peer-deps
+      - name: Install Chromium
+        run: cd frontend && npx playwright install --with-deps chromium
+      - name: Run core journey
+        run: cd frontend && npm run test:e2e
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   security:
     name: Security Scan (Bandit)
     runs-on: ubuntu-latest

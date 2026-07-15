@@ -10,6 +10,7 @@ import PromptLayersTab from './PromptLayersTab'
 import CronTasksTab from './CronTasksTab'
 import OtherTab from './OtherTab'
 import SecurityTab from './SecurityTab'
+import { wsClient } from '../../utils/websocket'
 
 export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
   const theme = useThemeStore((s) => s.theme)
@@ -27,8 +28,11 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
   const [configured, setConfigured] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
-  const [securityToken, setSecurityToken] = useState(localStorage.getItem('agenthub_api_secret') || '')
+  const [securityToken, setSecurityToken] = useState('')
   const [showToken, setShowToken] = useState(false)
+  const [authStatus, setAuthStatus] = useState({ auth_required: false, authenticated: false })
+  const [notificationStatus, setNotificationStatus] = useState({ slack: false, telegram: false })
+  const [testingNotification, setTestingNotification] = useState('')
   const [activeProvider, setActiveProvider] = useState('')
   const [activeModel, setActiveModel] = useState('')
   const [highlightPresets, setHighlightPresets] = useState(false)
@@ -133,6 +137,7 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
     if (tab === 'knowledge') fetchKnowledgeDocs()
     if (tab === 'other') { fetchRuntimeTools(); fetchKnowledgeDocs() }
     if (tab === 'adapters') { fetchAdapters(); fetchProxyStatus() }
+    if (tab === 'security') fetchSecurityStatus()
   }, [tab])
 
   const [kbDocs, setKbDocs] = useState([])
@@ -182,6 +187,57 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
       if (d.status === 'ok') setKbResults(d.results || [])
     } catch {}
     setSaving(false)
+  }
+
+  const fetchSecurityStatus = async () => {
+    try {
+      const resp = await fetch('/api/auth/status')
+      const status = await resp.json()
+      setAuthStatus(status)
+      if (status.authenticated) {
+        const channelResp = await fetch('/api/webhook/channels')
+        if (channelResp.ok) {
+          const channels = await channelResp.json()
+          setNotificationStatus(channels.channels || {})
+        }
+      }
+    } catch { setMsg('无法读取安全状态') }
+  }
+
+  const handleSecurityLogin = async () => {
+    setSaving(true); setMsg('')
+    try {
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret: securityToken }),
+      })
+      if (!resp.ok) throw new Error('密钥错误')
+      localStorage.removeItem('agenthub_api_secret')
+      setSecurityToken('')
+      setMsg('登录成功，会话凭证已安全写入 HttpOnly Cookie')
+      await fetchSecurityStatus()
+      await useChatStore.getState().fetchConversations()
+      wsClient.connect(useChatStore.getState().activeConversationId || 'conv_pm')
+    } catch (e) { setMsg(`登录失败：${e.message}`) }
+    setSaving(false)
+  }
+
+  const handleSecurityLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+    setAuthStatus((s) => ({ ...s, authenticated: !s.auth_required }))
+    setNotificationStatus({ slack: false, telegram: false })
+    setMsg('当前浏览器会话已退出')
+  }
+
+  const handleTestNotification = async (channel) => {
+    setTestingNotification(channel); setMsg('')
+    try {
+      const resp = await fetch(`/api/webhook/channels/${channel}/test`, { method: 'POST' })
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(data.detail || '投递失败')
+      setMsg(`${channel === 'slack' ? 'Slack' : 'Telegram'} 测试通知发送成功`)
+    } catch (e) { setMsg(`通知测试失败：${e.message}`) }
+    setTestingNotification('')
   }
 
   useEffect(() => {
@@ -572,7 +628,10 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
 
         {tab === 'security' && (
           <SecurityTab securityToken={securityToken} setSecurityToken={setSecurityToken}
-            showToken={showToken} setShowToken={setShowToken} setMsg={setMsg} saving={saving} />
+            showToken={showToken} setShowToken={setShowToken} saving={saving}
+            authStatus={authStatus} handleLogin={handleSecurityLogin} handleLogout={handleSecurityLogout}
+            notificationStatus={notificationStatus} testingNotification={testingNotification}
+            handleTestNotification={handleTestNotification} />
         )}
 
         {msg && (

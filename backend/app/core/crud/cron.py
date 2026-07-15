@@ -75,6 +75,19 @@ def update_cron_task_status(task_id: str, status: str):
 
 
 @db_write_transaction
+def recover_running_cron_tasks(now_str: str) -> int:
+    """Return tasks stranded by a prior process crash to the active queue."""
+    with Session(_engine_mod.engine) as session:
+        tasks = session.exec(select(CronTask).where(CronTask.status == "running")).all()
+        for task in tasks:
+            task.status = "active"
+            task.next_run = now_str
+            session.add(task)
+        session.commit()
+        return len(tasks)
+
+
+@db_write_transaction
 def delete_cron_task(task_id: str):
     with Session(_engine_mod.engine) as session:
         task = session.get(CronTask, task_id)

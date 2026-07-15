@@ -1,11 +1,16 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { lazy, Suspense, useState, useRef, useEffect, useCallback } from 'react'
 import { X } from 'lucide-react'
 import { useCanvasStore } from '../../stores/canvasStore'
-import DiffViewer from '../Canvas/DiffViewer'
 import WebPreview from '../Canvas/WebPreview'
-import DeployPanel from '../Canvas/DeployPanel'
 import ToolsPanel from './ToolsPanel'
 import KnowledgePanel from './KnowledgePanel'
+
+const DiffViewer = lazy(() => import('../Canvas/DiffViewer'))
+const DeployPanel = lazy(() => import('../Canvas/DeployPanel'))
+
+function DeferredPanel({ children }) {
+  return <Suspense fallback={<div style={{ padding: 16, color: 'var(--text-muted)' }}>正在加载...</div>}>{children}</Suspense>
+}
 
 const MIN_WIDTH = 280
 const MAX_WIDTH = 680
@@ -114,9 +119,9 @@ export default function SlidePanel() {
       )}
 
       <div className="slide-panel-content">
-        {content === 'code' && tab === 'code' && <DiffViewer />}
+        {content === 'code' && tab === 'code' && <DeferredPanel><DiffViewer /></DeferredPanel>}
         {content === 'code' && tab === 'preview' && <WebPreview />}
-        {content === 'code' && tab === 'deploy' && <DeployPanel />}
+        {content === 'code' && tab === 'deploy' && <DeferredPanel><DeployPanel /></DeferredPanel>}
         {content === 'tools' && <ToolsPanel />}
         {content === 'knowledge' && <KnowledgePanel />}
       </div>

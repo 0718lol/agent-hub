@@ -4,24 +4,6 @@ import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import './styles/global.css'
 
-// 全局 API Token 拦截注入层 (Fetch Interceptor)
-const originalFetch = window.fetch;
-window.fetch = async (url, options = {}) => {
-  const token = localStorage.getItem('agenthub_api_secret');
-  const urlStr = typeof url === 'string' ? url : (url instanceof URL ? url.toString() : '');
-  if (token && (urlStr.startsWith('/api') || urlStr.includes('/api/'))) {
-    if (options.headers instanceof Headers) {
-      options.headers.set('Authorization', `Bearer ${token}`);
-    } else {
-      options.headers = {
-        ...options.headers,
-        'Authorization': `Bearer ${token}`
-      };
-    }
-  }
-  return originalFetch(url, options);
-};
-
 // 新 Coze 主题
 import './styles/theme-coze-light.css'
 import './styles/theme-coze-dark.css'
@@ -36,10 +18,9 @@ useThemeStore.subscribe((state) => {
   document.documentElement.setAttribute('data-theme', state.theme)
 })
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  </React.StrictMode>,
+const renderApp = () => ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode><ErrorBoundary><App /></ErrorBoundary></React.StrictMode>,
 )
+
+// Establish a signed, anonymous browser identity before loading tenant data.
+fetch('/api/auth/status').catch(() => null).finally(renderApp)

@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { lazy, Suspense } from 'react'
 import { GitGraph, ChevronRight } from 'lucide-react'
 import { useCanvasStore } from '../../stores/canvasStore'
-import AgentFlow from '../Canvas/AgentFlow'
+
+const AgentFlow = lazy(() => import('../Canvas/AgentFlow'))
 
 export default function InlineDAGCard() {
   const nodes = useCanvasStore((s) => s.dagNodes)
@@ -22,7 +23,9 @@ export default function InlineDAGCard() {
         <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
       </summary>
       <div style={{ height: 240, marginTop: 8 }}>
-        <AgentFlow compact />
+        <Suspense fallback={<div style={{ padding: 12, color: 'var(--text-muted)' }}>正在加载协作图...</div>}>
+          <AgentFlow compact />
+        </Suspense>
       </div>
     </details>
   )

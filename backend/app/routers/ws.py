@@ -7,7 +7,11 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save_message
 from app.core.config import settings
+from app.core.auth import SESSION_COOKIE, verify_session_token
+from app.core.concurrency import generation_admission
+from app.core.crud import create_conversation
 from app.core.logging_config import get_logger
+from app.core.tenancy import scope_conversation_id, websocket_user_id
 from app.core.websocket import manager
 from app.routers.harness_handler import handle_verdict
 from app.services.agent_orchestrator import (
@@ -24,6 +28,13 @@ logger = get_logger("ws")
 
 # Background task tracking
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+async def _run_admitted_flow(user_id: str, conversation_id: str, flow) -> None:
+    try:
+        await flow
+    finally:
+        await generation_admission.release(user_id, conversation_id)
 
 
 def create_tracked_task(coro, name: str | None = None) -> asyncio.Task:
@@ -51,6 +62,7 @@ def create_tracked_task(coro, name: str | None = None) -> asyncio.Task:
 
 @router.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
+    public_conversation_id = conversation_id
     # ---- WebSocket IP/Token 鉴权 ----
     # An empty secret explicitly means authentication is disabled. This is
     # needed for local Docker deployments, where the peer is the nginx
@@ -62,10 +74,32 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
         query_token = websocket.query_params.get("token")
         if header_token == settings.api_secret or query_token == settings.api_secret:
             authorized = True
+        if verify_session_token(websocket.cookies.get(SESSION_COOKIE), settings.api_secret):
+            authorized = True
     if not authorized:
         await websocket.accept()
         await websocket.close(code=4001, reason="Unauthorized connection attempt")
         return
+
+    user_id = websocket_user_id(websocket)
+    try:
+        conversation_id = scope_conversation_id(user_id, public_conversation_id)
+    except ValueError:
+        await websocket.accept()
+        await websocket.close(code=4002, reason="Invalid conversation ID")
+        return
+    # Direct WebSocket clients may connect before the REST conversation list
+    # initializes this tenant's default rows.
+    await asyncio.to_thread(
+        create_conversation,
+        conversation_id,
+        "single",
+        public_conversation_id,
+        "",
+        public_conversation_id.replace("conv_", "agent_", 1),
+        None,
+        "",
+    )
 
     await manager.connect(websocket, conversation_id)
     try:
@@ -160,6 +194,15 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 if stripped.isdigit() or all(c in "!@#$%^&*()_+-=[]{}|;:',.<>?/~`" for c in stripped):
                     continue
 
+                admitted, reason = await generation_admission.acquire(user_id, conversation_id)
+                if not admitted:
+                    await manager.broadcast(conversation_id, {
+                        "type": "error",
+                        "conversation_id": conversation_id,
+                        "content": {"text": reason},
+                    })
+                    continue
+
             await async_save_message(conversation_id, sender, content, streaming=False)
 
             await manager.broadcast(conversation_id, {
@@ -170,20 +213,23 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 "stream": False,
             })
 
-            # If a previous generation is still running for this conversation,
-            # signal it to stop before starting a new one.
-            prev_event = _stop_events.get(conversation_id)
-            if prev_event and not prev_event.is_set():
-                prev_event.set()
             current_agents = get_agents()
             if target_agent and target_agent in current_agents:
                 create_tracked_task(
-                    run_target_agent_flow(conversation_id, current_agents[target_agent], text),
+                    _run_admitted_flow(
+                        user_id,
+                        conversation_id,
+                        run_target_agent_flow(conversation_id, current_agents[target_agent], text),
+                    ),
                     name=f"target_agent_{conversation_id}",
                 )
             elif sender == "user":
                 create_tracked_task(
-                    run_user_message_flow(conversation_id, text, target_agent),
+                    _run_admitted_flow(
+                        user_id,
+                        conversation_id,
+                        run_user_message_flow(conversation_id, text, target_agent),
+                    ),
                     name=f"user_flow_{conversation_id}",
                 )
 

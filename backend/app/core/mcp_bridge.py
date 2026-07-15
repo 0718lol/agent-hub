@@ -9,14 +9,25 @@ from app.tools.registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("mcp_bridge")
 
+# External MCP servers are separate programs. Do not leak the host process'
+# credentials (LLM keys, API secret, cloud tokens, etc.) to them by default.
+_MCP_BASE_ENV_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT", "WINDIR")
+
+
+def _build_mcp_environment(configured_env: dict[str, str] | None) -> dict[str, str]:
+    env = {key: os.environ[key] for key in _MCP_BASE_ENV_KEYS if os.environ.get(key)}
+    env["PYTHONIOENCODING"] = "utf-8"
+    env.update({str(key): str(value) for key, value in (configured_env or {}).items()})
+    return env
+
 class MCPServerProcess:
     """Manages the life-cycle and communication of a single Stdio-based MCP Server process."""
 
-    def __init__(self, name: str, command: str, args: list[str], env: dict[str, str] = None):
+    def __init__(self, name: str, command: str, args: list[str], env: dict[str, str] | None = None):
         self.name = name
         self.command = command
         self.args = args
-        self.env = {**os.environ, **(env or {})}
+        self.env = _build_mcp_environment(env)
         self.process: asyncio.subprocess.Process = None
         self.rpc_id = 1
         self.pending_requests: dict[int, asyncio.Future] = {}

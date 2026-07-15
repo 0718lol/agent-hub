@@ -15,6 +15,9 @@ describe('canvasStore', () => {
       isDeploying: false,
       deployLogs: [],
       deployedUrl: '',
+      deployJobId: '',
+      deployResultType: 'site',
+      deployTarget: 'web',
       deployStatus: 'idle',
       tasks: [
         { id: 1, title: '设计页面 UI', assignee: 'agent_designer', status: 'todo' },
@@ -128,6 +131,14 @@ describe('canvasStore', () => {
     const state = useCanvasStore.getState()
     expect(state.isDeploying).toBe(false)
     expect(state.deployStatus).toBe('failed')
+  })
+
+  it('should cancel deploy', () => {
+    useCanvasStore.getState().startDeploy()
+    useCanvasStore.getState().cancelDeploy()
+    const state = useCanvasStore.getState()
+    expect(state.isDeploying).toBe(false)
+    expect(state.deployStatus).toBe('cancelled')
   })
 
   it('should reset deploy state', () => {

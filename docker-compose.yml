@@ -7,18 +7,36 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - backend_data:/app/data
+      - generated_projects:/agenthub_export
+    networks:
+      - default
+      - runtime
     environment:
       - AGENTHUB_HOST=0.0.0.0
       - AGENTHUB_PORT=8000
       - AGENTHUB_DEBUG=false
+      - AGENTHUB_API_SECRET=${AGENTHUB_API_SECRET:-}
+      - AGENTHUB_ENCRYPT_KEY=${AGENTHUB_ENCRYPT_KEY:-}
       - AGENTHUB_REDIS_URL=redis://:${REDIS_PASSWORD:-agenthub_redis_secret}@redis:6379/0
+      - DATABASE_URL=postgresql+psycopg://agenthub:${POSTGRES_PASSWORD:-agenthub_postgres_secret}@postgres:5432/agenthub
       # LLM config (can override via .env file)
       - AGENTHUB_LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - AGENTHUB_LLM_API_KEY=${LLM_API_KEY:-}
       - AGENTHUB_LLM_BASE_URL=${LLM_BASE_URL:-}
       - AGENTHUB_LLM_MODEL=${LLM_MODEL:-}
+      # Optional static-site publishing via Netlify
+      - AGENTHUB_NETLIFY_TOKEN=${AGENTHUB_NETLIFY_TOKEN:-}
+      - AGENTHUB_NETLIFY_SITE_ID=${AGENTHUB_NETLIFY_SITE_ID:-}
+      - AGENTHUB_PUBLIC_BASE_URL=${AGENTHUB_PUBLIC_BASE_URL:-}
+      - AGENTHUB_RUNTIME_NETWORK=agenthub_runtime
+      # Optional Human-in-the-Loop notifications
+      - AGENTHUB_SLACK_WEBHOOK_URL=${AGENTHUB_SLACK_WEBHOOK_URL:-}
+      - AGENTHUB_TELEGRAM_BOT_TOKEN=${AGENTHUB_TELEGRAM_BOT_TOKEN:-}
+      - AGENTHUB_TELEGRAM_CHAT_ID=${AGENTHUB_TELEGRAM_CHAT_ID:-}
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health')"]
@@ -43,6 +61,55 @@ services:
       retries: 3
       start_period: 10s
 
+  deployment-worker:
+    image: agenthub-deployment-worker:local
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.builder
+    restart: unless-stopped
+    read_only: true
+    mem_limit: 4g
+    cpus: 2.5
+    pids_limit: 512
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,size=512m
+    environment:
+      - AGENTHUB_REDIS_URL=redis://:${REDIS_PASSWORD:-agenthub_redis_secret}@redis:6379/0
+      - AGENTHUB_ENCRYPT_KEY=${AGENTHUB_ENCRYPT_KEY:-}
+      - AGENTHUB_NETLIFY_TOKEN=${AGENTHUB_NETLIFY_TOKEN:-}
+      - AGENTHUB_NETLIFY_SITE_ID=${AGENTHUB_NETLIFY_SITE_ID:-}
+      - AGENTHUB_PUBLIC_BASE_URL=${AGENTHUB_PUBLIC_BASE_URL:-}
+      - AGENTHUB_RUNTIME_NETWORK=agenthub_runtime
+      - AGENTHUB_BUILDER_IMAGE=agenthub-deployment-worker:local
+      - AGENTHUB_GENERATED_PROJECTS_VOLUME=agenthub_generated_projects
+      - AGENTHUB_API_RUNTIME_MEMORY=${AGENTHUB_API_RUNTIME_MEMORY:-512m}
+      - AGENTHUB_API_RUNTIME_CPUS=${AGENTHUB_API_RUNTIME_CPUS:-1.0}
+      - AGENTHUB_API_RUNTIME_PIDS=${AGENTHUB_API_RUNTIME_PIDS:-128}
+      - AGENTHUB_DEPLOYMENT_RETENTION_DAYS=${AGENTHUB_DEPLOYMENT_RETENTION_DAYS:-7}
+      - AGENTHUB_DEPLOYMENT_MAX_PER_USER=${AGENTHUB_DEPLOYMENT_MAX_PER_USER:-20}
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - backend_data:/app/data
+      - generated_projects:/agenthub_export
+      - builder_gradle_cache:/root/.gradle
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - runtime
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import asyncio; from app.core.redis import redis_manager; raise SystemExit(0 if asyncio.run(redis_manager.check_connection()) else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   redis:
     image: redis:7-alpine
     container_name: agenthub-redis
@@ -59,8 +126,36 @@ services:
       retries: 3
       start_period: 5s
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: agenthub-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=agenthub
+      - POSTGRES_USER=agenthub
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-agenthub_postgres_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agenthub -d agenthub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   backend_data:
     driver: local
   redis_data:
     driver: local
+  postgres_data:
+    driver: local
+  generated_projects:
+    name: agenthub_generated_projects
+    driver: local
+  builder_gradle_cache:
+    driver: local
+
+networks:
+  runtime:
+    name: agenthub_runtime
+    internal: true

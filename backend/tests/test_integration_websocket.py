@@ -215,9 +215,11 @@ async def test_message_broadcast(ws_app):
 async def test_stop_message_sets_event(ws_app):
     """Sending a 'stop' message should set the corresponding _stop_events entry."""
     from app.services.agent_orchestrator import _stop_events
+    from app.core.tenancy import scope_conversation_id
 
     conv_id = "conv_stop_001"
-    _stop_events[conv_id] = asyncio.Event()
+    internal_id = scope_conversation_id("api-client", conv_id)
+    _stop_events[internal_id] = asyncio.Event()
 
     try:
         async with ASGIWebSocketTransport(app=ws_app) as transport:
@@ -227,9 +229,9 @@ async def test_stop_message_sets_event(ws_app):
                 ) as ws:
                     await ws.send_text(json.dumps({"type": "stop"}))
                     await asyncio.sleep(0.05)
-                    assert _stop_events[conv_id].is_set()
+                    assert _stop_events[internal_id].is_set()
     finally:
-        _stop_events.pop(conv_id, None)
+        _stop_events.pop(internal_id, None)
 
 
 @pytest.mark.asyncio
@@ -365,28 +367,32 @@ async def test_digit_only_user_message_filtered(ws_app):
 async def test_disconnect_cleans_up_connection(ws_app):
     """After disconnect, the conversation should be removed from active_connections."""
     from app.core.websocket import manager
+    from app.core.tenancy import scope_conversation_id
 
     conv_id = "conv_disconnect_001"
+    internal_id = scope_conversation_id("api-client", conv_id)
 
     async with ASGIWebSocketTransport(app=ws_app) as transport:
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             async with aconnect_ws(
                 f"ws://testserver/ws/{conv_id}?token=test-secret", client
             ) as ws:
-                assert conv_id in manager.active_connections
+                assert internal_id in manager.active_connections
 
             await asyncio.sleep(0.1)
-            assert conv_id not in manager.active_connections
+            assert internal_id not in manager.active_connections
 
 
 @pytest.mark.asyncio
 async def test_disconnect_does_not_stop_generation(ws_app):
     """A transient client disconnect must not cancel in-flight generation."""
     from app.services.agent_orchestrator import _stop_events
+    from app.core.tenancy import scope_conversation_id
 
     conv_id = "conv_disconnect_stop"
+    internal_id = scope_conversation_id("api-client", conv_id)
     event = asyncio.Event()
-    _stop_events[conv_id] = event
+    _stop_events[internal_id] = event
 
     try:
         async with ASGIWebSocketTransport(app=ws_app) as transport:
@@ -399,7 +405,7 @@ async def test_disconnect_does_not_stop_generation(ws_app):
         await asyncio.sleep(0.1)
         assert not event.is_set()
     finally:
-        _stop_events.pop(conv_id, None)
+        _stop_events.pop(internal_id, None)
 
 
 # ---------------------------------------------------------------------------

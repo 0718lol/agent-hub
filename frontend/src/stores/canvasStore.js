@@ -38,18 +38,25 @@ export const useCanvasStore = create((set) => ({
   isDeploying: false,
   deployLogs: [],
   deployedUrl: '',
+  deployResultType: 'site',
+  deployTarget: 'web',
+  deployJobId: '',
   deployStatus: 'idle',
 
   startDeploy: () =>
-    set({ isDeploying: true, deployStatus: 'running', deployLogs: [], deployedUrl: '' }),
+    set({ isDeploying: true, deployStatus: 'running', deployLogs: [], deployedUrl: '', deployResultType: 'site', deployJobId: '' }),
+  markDeployRunning: () => set({ isDeploying: true, deployStatus: 'running' }),
+  setDeployJobId: (jobId) => set({ deployJobId: jobId }),
   appendDeployLog: (log) =>
     set((state) => ({ deployLogs: [...state.deployLogs, log] })),
-  finishDeploy: (url) =>
-    set({ isDeploying: false, deployStatus: 'success', deployedUrl: url }),
+  finishDeploy: (url, resultType = 'site', target = 'web') =>
+    set({ isDeploying: false, deployStatus: 'success', deployedUrl: url, deployResultType: resultType, deployTarget: target }),
   failDeploy: () =>
     set({ isDeploying: false, deployStatus: 'failed' }),
+  cancelDeploy: () =>
+    set({ isDeploying: false, deployStatus: 'cancelled' }),
   resetDeploy: () =>
-    set({ isDeploying: false, deployStatus: 'idle', deployLogs: [], deployedUrl: '' }),
+    set({ isDeploying: false, deployStatus: 'idle', deployLogs: [], deployedUrl: '', deployResultType: 'site', deployJobId: '' }),
 
   tasks: [
     { id: 1, title: '设计页面 UI', assignee: 'agent_designer', status: 'todo' },

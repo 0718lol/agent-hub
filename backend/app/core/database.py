@@ -18,6 +18,7 @@ from sqlmodel import Session, SQLModel, select
 # Engine is defined in _engine.py to break the circular dependency
 # between database.py and crud.py.
 from app.core._engine import DB_PATH, engine
+from app.core.config import settings
 from app.core.crud import *  # noqa: F403 -- brings in db_write_transaction
 
 # ============================================================
@@ -47,6 +48,7 @@ def get_db():
 
 def init_db():
     _ensure_dir()
+    database_url = os.environ.get('DATABASE_URL', '')
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.execute('PRAGMA journal_mode=WAL;')
@@ -64,23 +66,38 @@ def init_db():
         alembic_cfg = Config(
             os.path.join(os.path.dirname(__file__), '..', '..', 'alembic.ini')
         )
-        if not os.environ.get('DATABASE_URL'):
-            alembic_cfg.set_main_option('sqlalchemy.url', f'sqlite:///{DB_PATH}')
-        command.upgrade(alembic_cfg, 'head')
-    except Exception:
-        pass
+        alembic_cfg.set_main_option('sqlalchemy.url', database_url or f'sqlite:///{DB_PATH}')
+        if database_url:
+            # SQLModel create_all above creates the current schema for a fresh
+            # PostgreSQL database. The legacy initial revision was generated
+            # against an existing SQLite schema and is not portable.
+            command.stamp(alembic_cfg, 'head')
+        else:
+            command.upgrade(alembic_cfg, 'head')
+    except Exception as e:
+        _db_logger.exception("Alembic migration failed")
+        if not settings.debug:
+            raise RuntimeError("Database migration failed; startup aborted") from e
 
     # 增量迁移：给 knowledge_docs 表添加 knowledge_base_id 列（如果不存在）
     try:
+        if database_url:
+            return _populate_defaults_and_finish()
         conn = sqlite3.connect(DB_PATH)
         cols = [row[1] for row in conn.execute('PRAGMA table_info(knowledge_docs)').fetchall()]
         if 'knowledge_base_id' not in cols:
             conn.execute('ALTER TABLE knowledge_docs ADD COLUMN knowledge_base_id TEXT')
             conn.commit()
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        _db_logger.exception("Incremental knowledge_docs migration failed")
+        if not settings.debug:
+            raise RuntimeError("Database schema migration failed; startup aborted") from e
 
+    _populate_defaults_and_finish()
+
+
+def _populate_defaults_and_finish():
     # Populate default conversations using SQLModel Sessions
     with Session(engine) as session:
         default_convs = [
@@ -99,6 +116,8 @@ def init_db():
                 session.add(conv)
         session.commit()
 
+    if os.environ.get('DATABASE_URL'):
+        return
     try:
         with engine.connect() as conn:
             conn.execute(text(

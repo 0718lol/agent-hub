@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from app.core.async_wrappers import (
@@ -11,6 +11,7 @@ from app.core.async_wrappers import (
 )
 
 router = APIRouter(tags=["cron"])
+from app.core.tenancy import belongs_to_user, public_conversation_id, request_user_id, scope_conversation_id
 
 
 class CronTaskCreate(BaseModel):
@@ -21,16 +22,19 @@ class CronTaskCreate(BaseModel):
 
 
 @router.get("/cron")
-async def list_cron_tasks(conversation_id: str | None = None):
-    return await async_get_cron_tasks(conversation_id)
+async def list_cron_tasks(request: Request, conversation_id: str | None = None):
+    user_id = request_user_id(request)
+    scoped_id = scope_conversation_id(user_id, conversation_id) if conversation_id else None
+    tasks = await async_get_cron_tasks(scoped_id)
+    return [{**task, "conversation_id": public_conversation_id(task["conversation_id"])} for task in tasks if belongs_to_user(task["conversation_id"], user_id)]
 
 
 @router.post("/cron")
-async def create_cron_task_endpoint(body: CronTaskCreate):
+async def create_cron_task_endpoint(body: CronTaskCreate, request: Request):
     task_id = f"cron_{uuid.uuid4().hex[:8]}"
     await async_save_cron_task(
         task_id=task_id,
-        conversation_id=body.conversation_id,
+        conversation_id=scope_conversation_id(request_user_id(request), body.conversation_id),
         agent_id=body.agent_id,
         task_prompt=body.task_prompt,
         interval_seconds=body.interval_seconds,
@@ -40,17 +44,21 @@ async def create_cron_task_endpoint(body: CronTaskCreate):
 
 
 @router.post("/cron/{task_id}/toggle")
-async def toggle_cron_task(task_id: str, status: str):
+async def toggle_cron_task(task_id: str, status: str, request: Request):
     if status not in ("active", "paused"):
         return {"status": "error", "message": "无效的任务状态"}
+    tasks = await async_get_cron_tasks()
+    task = next((t for t in tasks if t["id"] == task_id and belongs_to_user(t["conversation_id"], request_user_id(request))), None)
+    if not task:
+        return {"status": "error", "message": "自治任务未找到"}
     await async_update_cron_task_status(task_id, status)
     return {"status": "ok", "message": f"任务状态已更新为 {status}"}
 
 
 @router.post("/cron/{task_id}/run")
-async def run_cron_task_now(task_id: str):
+async def run_cron_task_now(task_id: str, request: Request):
     tasks = await async_get_cron_tasks()
-    task = next((t for t in tasks if t["id"] == task_id), None)
+    task = next((t for t in tasks if t["id"] == task_id and belongs_to_user(t["conversation_id"], request_user_id(request))), None)
     if not task:
         return {"status": "error", "message": "自治任务未找到"}
 
@@ -66,6 +74,10 @@ async def run_cron_task_now(task_id: str):
 
 
 @router.delete("/cron/{task_id}")
-async def delete_cron_task_endpoint(task_id: str):
+async def delete_cron_task_endpoint(task_id: str, request: Request):
+    tasks = await async_get_cron_tasks()
+    task = next((t for t in tasks if t["id"] == task_id and belongs_to_user(t["conversation_id"], request_user_id(request))), None)
+    if not task:
+        return {"status": "error", "message": "自治任务未找到"}
     await async_delete_cron_task(task_id)
     return {"status": "ok", "message": "离线自治任务已成功删除！"}

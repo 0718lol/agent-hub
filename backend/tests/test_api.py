@@ -9,13 +9,14 @@ def app():
     # We test the routers directly to avoid full DB/LLM init
     from fastapi import FastAPI
 
-    from app.routers import benchmark, conversations, quality, sandbox, webhook
+    from app.routers import benchmark, conversations, quality, sandbox, uploads, webhook
 
     app = FastAPI()
     app.include_router(conversations.router, prefix="/api")
     app.include_router(quality.router, prefix="/api")
     app.include_router(sandbox.router, prefix="/api")
     app.include_router(benchmark.router, prefix="/api")
+    app.include_router(uploads.router, prefix="/api")
     app.include_router(webhook.router, prefix="/api")
     return app
 
@@ -86,3 +87,40 @@ async def test_webhook_telegram_not_configured(app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/api/webhook/callback/telegram", content=b"test")
         assert resp.status_code in (200, 400, 401, 500, 503)
+
+
+@pytest.mark.asyncio
+async def test_webhook_channel_status_exposes_only_configuration_flags(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/webhook/channels")
+    assert resp.status_code == 200
+    assert set(resp.json()["channels"]) == {"slack", "telegram"}
+
+
+@pytest.mark.asyncio
+async def test_upload_download_forces_active_content_as_attachment(app, tmp_path, monkeypatch):
+    from app.core import file_storage
+    from app.routers import uploads
+
+    monkeypatch.setattr(uploads, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(file_storage, "UPLOAD_DIR", str(tmp_path))
+    (tmp_path / "sample.html").write_text("<script>alert(1)</script>", encoding="utf-8")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/uploads/sample.html")
+    assert resp.status_code == 200
+    assert resp.headers["content-disposition"].startswith("attachment")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+
+
+def test_upload_router_has_single_api_prefix(app):
+    included = next(
+        route for route in app.routes
+        if getattr(route, "original_router", None) is not None
+        and any(child.path == "/upload" for child in route.original_router.routes)
+    )
+    prefix = included.include_context.prefix
+    paths = {prefix + route.path for route in included.original_router.routes}
+    assert "/api/upload" in paths
+    assert "/api/api/upload" not in paths

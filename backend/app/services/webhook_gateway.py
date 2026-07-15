@@ -1,8 +1,12 @@
 """Webhook Gateway Manager — Simulated & Production Multi-channel Interactive Webhook System."""
 
+import asyncio
 import json
 import logging
+import os
 from typing import Any
+
+import httpx
 
 logger = logging.getLogger("webhook_gateway")
 
@@ -10,9 +14,9 @@ class WebhookGatewayManager:
     """Manages outgoing HIL notifications and incoming interactive callbacks for Slack & Telegram."""
 
     def __init__(self):
-        self.slack_webhook_url: str | None = None
-        self.telegram_token: str | None = None
-        self.telegram_chat_id: str | None = None
+        self.slack_webhook_url = os.environ.get("AGENTHUB_SLACK_WEBHOOK_URL") or None
+        self.telegram_token = os.environ.get("AGENTHUB_TELEGRAM_BOT_TOKEN") or None
+        self.telegram_chat_id = os.environ.get("AGENTHUB_TELEGRAM_CHAT_ID") or None
         self.simulated_sent_messages: list[dict[str, Any]] = []
 
     def register_channels(self, slack_url: str | None = None, telegram_token: str | None = None, telegram_chat_id: str | None = None):
@@ -45,16 +49,60 @@ class WebhookGatewayManager:
         self.simulated_sent_messages.append(simulated_msg)
         logger.info(f"[WebhookGateway] Simulated HIL notification queued for conversation {conversation_id}")
 
-        # Real-world delivery simulation
+        # Deliver through configured channels. An unavailable channel must not
+        # prevent the other configured channel from receiving the notification.
         if self.slack_webhook_url:
-            logger.info(f"[WebhookGateway] Dispatching Slack interactive blocks payload to {self.slack_webhook_url}")
-            sent_any = True
+            if await self._post_json(self.slack_webhook_url, slack_payload, "Slack"):
+                sent_any = True
 
         if self.telegram_token and self.telegram_chat_id:
-            logger.info(f"[WebhookGateway] Dispatching Telegram inline keyboard payload to bot chat {self.telegram_chat_id}")
-            sent_any = True
+            telegram_url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
+            if await self._post_json(telegram_url, telegram_payload, "Telegram"):
+                sent_any = True
 
         return sent_any
+
+    async def _post_json(self, url: str, payload: dict[str, Any], channel: str) -> bool:
+        """Send a notification with bounded retries and without logging secrets."""
+        for attempt in range(1, 3):
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(url, json=payload)
+                if 200 <= response.status_code < 300:
+                    logger.info("[WebhookGateway] %s notification delivered", channel)
+                    return True
+                logger.warning(
+                    "[WebhookGateway] %s notification rejected (status=%s, attempt=%s)",
+                    channel, response.status_code, attempt,
+                )
+            except httpx.HTTPError as exc:
+                logger.warning("[WebhookGateway] %s delivery failed (attempt=%s): %s", channel, attempt, exc)
+            if attempt == 1:
+                await asyncio.sleep(0.2)
+        return False
+
+    def channel_status(self) -> dict[str, bool]:
+        return {
+            "slack": bool(self.slack_webhook_url),
+            "telegram": bool(self.telegram_token and self.telegram_chat_id),
+        }
+
+    async def test_channel(self, channel: str) -> bool:
+        """Send a minimal connectivity test to one configured channel."""
+        if channel == "slack" and self.slack_webhook_url:
+            return await self._post_json(
+                self.slack_webhook_url,
+                {"text": "AgentHub notification channel test succeeded."},
+                "Slack",
+            )
+        if channel == "telegram" and self.telegram_token and self.telegram_chat_id:
+            url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
+            return await self._post_json(
+                url,
+                {"chat_id": self.telegram_chat_id, "text": "AgentHub notification channel test succeeded."},
+                "Telegram",
+            )
+        return False
 
     def _format_slack_message(self, conversation_id: str, question: str, options: list[dict[str, Any]]) -> dict[str, Any]:
         """Construct Slack interactive blocks payload with buttons."""
@@ -211,8 +259,8 @@ class WebhookGatewayManager:
 
             if checkpoint:
                 logger.info(f"[WebhookGateway] Resilient recovery triggered. Restoring state checkpoint from database for conversation {checkpoint['conversation_id']}")
-                # Locally import resumption helpers from app.main to avoid circular imports
-                from app.main import create_tracked_task, resume_graph_from_checkpoint
+                from app.routers.ws import create_tracked_task
+                from app.services.agent_orchestrator import resume_graph_from_checkpoint
 
                 # Run the resumption flow with strong tracking to avoid GC premature collection
                 create_tracked_task(
@@ -262,4 +310,3 @@ def verify_telegram_secret_token(secret_token: str, received_token: str) -> bool
     if not received_token:
         return False
     return hmac.compare_digest(secret_token, received_token)
-

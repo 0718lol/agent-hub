@@ -99,7 +99,7 @@ describe("WSClient (websocket.js)", () => {
     expect(MockWebSocket.instances[0].url).toBe("ws://localhost:8000/ws/conv_test_001")
   })
 
-  it("connect sends auth token in URL when available", async () => {
+  it("connect never exposes a legacy token in the URL", async () => {
     localStorage.getItem.mockImplementation((key) => {
       if (key === "agenthub_api_secret") return "test-token-123"
       return null
@@ -108,7 +108,8 @@ describe("WSClient (websocket.js)", () => {
     wsClient.connect("conv_test_001")
     await vi.waitFor(() => expect(MockWebSocket.instances.length).toBe(1))
     const ws = MockWebSocket.instances[0]
-    expect(ws.url).toContain("token=test-token-123")
+    expect(ws.url).toBe("ws://localhost:8000/ws/conv_test_001")
+    expect(ws.url).not.toContain("token=")
   })
 
   it("connect does not send auth when no token stored", async () => {

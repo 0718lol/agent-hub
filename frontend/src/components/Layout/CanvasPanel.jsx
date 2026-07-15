@@ -1,12 +1,17 @@
-import React from 'react'
+import React, { lazy, Suspense } from 'react'
 import { useCanvasStore } from '../../stores/canvasStore'
-import AgentFlow from '../Canvas/AgentFlow'
 import TaskBoard from '../Canvas/TaskBoard'
-import DiffViewer from '../Canvas/DiffViewer'
 import WebPreview from '../Canvas/WebPreview'
-import DeployPanel from '../Canvas/DeployPanel'
-import EvalDashboard from '../Canvas/EvalDashboard'
 import TraceView from '../Canvas/TraceView'
+
+const AgentFlow = lazy(() => import('../Canvas/AgentFlow'))
+const DiffViewer = lazy(() => import('../Canvas/DiffViewer'))
+const DeployPanel = lazy(() => import('../Canvas/DeployPanel'))
+const EvalDashboard = lazy(() => import('../Canvas/EvalDashboard'))
+
+function DeferredPanel({ children }) {
+  return <Suspense fallback={<div style={{ padding: 16, color: 'var(--text-muted)' }}>正在加载...</div>}>{children}</Suspense>
+}
 
 export default function CanvasPanel() {
   const activeTab = useCanvasStore((s) => s.activeTab)
@@ -36,15 +41,14 @@ export default function CanvasPanel() {
         ))}
       </div>
       <div className="canvas-content">
-        {activeTab === 'dag' && <AgentFlow />}
+        {activeTab === 'dag' && <DeferredPanel><AgentFlow /></DeferredPanel>}
         {activeTab === 'tasks' && <TaskBoard />}
-        {activeTab === 'diff' && <DiffViewer />}
+        {activeTab === 'diff' && <DeferredPanel><DiffViewer /></DeferredPanel>}
         {activeTab === 'preview' && <WebPreview />}
-        {activeTab === 'deploy' && <DeployPanel />}
-        {activeTab === 'eval' && <EvalDashboard />}
+        {activeTab === 'deploy' && <DeferredPanel><DeployPanel /></DeferredPanel>}
+        {activeTab === 'eval' && <DeferredPanel><EvalDashboard /></DeferredPanel>}
         {activeTab === 'trace' && <TraceView />}
       </div>
     </div>
   )
 }
-

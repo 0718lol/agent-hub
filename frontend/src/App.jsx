@@ -1,14 +1,15 @@
-import React, { useState, useEffect } from 'react'
+import React, { lazy, Suspense, useState, useEffect } from 'react'
 import Sidebar from './components/Layout/Sidebar'
 import ChatPanel from './components/Layout/ChatPanel'
 import SlidePanel from './components/Layout/SlidePanel'
 import DesktopPet from './components/AgentCharacter/DesktopPet'
-import VirtualOffice from './components/VirtualOffice/VirtualOffice'
 import ConnectionBanner from './components/ConnectionBanner'
 import { useChatStore } from './stores/chatStore'
 import { useAgentStore } from './stores/agentStore'
 import { useCanvasStore } from './stores/canvasStore'
 import { useTabStore } from './stores/tabStore'
+
+const VirtualOffice = lazy(() => import('./components/VirtualOffice/VirtualOffice'))
 
 export default function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
@@ -50,7 +51,11 @@ export default function App() {
       <ChatPanel onToggleSidebar={() => setMobileSidebarOpen((v) => !v)} />
       <SlidePanel />
       <DesktopPet />
-      <VirtualOffice open={officeOpen} onClose={() => setOfficeOpen(false)} />
+      {officeOpen && (
+        <Suspense fallback={null}>
+          <VirtualOffice open={officeOpen} onClose={() => setOfficeOpen(false)} />
+        </Suspense>
+      )}
     </div>
   )
 }

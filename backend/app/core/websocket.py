@@ -56,7 +56,11 @@ class ConnectionManager:
     async def _local_broadcast(self, conversation_id: str, message: dict):
         """Broadcasts a message directly to WebSockets hosted on this local server process."""
         if conversation_id in self.active_connections:
-            data = json.dumps(message, ensure_ascii=False)
+            from app.core.tenancy import public_conversation_id
+            outgoing = dict(message)
+            if outgoing.get("conversation_id"):
+                outgoing["conversation_id"] = public_conversation_id(outgoing["conversation_id"])
+            data = json.dumps(outgoing, ensure_ascii=False)
             stale_connections = []
             for connection in list(self.active_connections[conversation_id]):
                 lock = self.locks.get(connection)
