@@ -1,7 +1,9 @@
 """Tests for GitHub Issue auto-resolution engine."""
-import pytest
 from unittest.mock import AsyncMock
-from app.core.issue_resolver import parse_issue, _keyword_localize, resolve_issue
+
+import pytest
+
+from app.core.issue_resolver import _keyword_localize, parse_issue, resolve_issue
 
 
 class TestParseIssue:

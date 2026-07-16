@@ -1,9 +1,10 @@
 """Tests for Code Review Agent."""
-import pytest
 from unittest.mock import AsyncMock
 
+import pytest
+
 from app.core.code_review_rules import rule_based_review
-from app.services.code_review_service import review_code, calculate_score, parse_llm_review, self_healing_review
+from app.services.code_review_service import calculate_score, parse_llm_review, review_code, self_healing_review
 
 
 class TestRuleBasedReview:

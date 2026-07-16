@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import os
+import secrets
 import shlex
 import sys
 import tempfile
 import time
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from app.core.config import settings
@@ -23,7 +25,14 @@ class BaseSandbox(ABC):
     """Abstract interface class representing any code execution sandbox."""
 
     @abstractmethod
-    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> dict[str, Any]:
+    async def execute(
+        self,
+        code: str,
+        language: str,
+        timeout: int,
+        stdin_data: str = "",
+        workspace: str | Path | None = None,
+    ) -> dict[str, Any]:
         """Execute the given script code and return the standardized result dictionary."""
         pass
 
@@ -31,7 +40,14 @@ class BaseSandbox(ABC):
 class SubprocessSandbox(BaseSandbox):
     """Legacy Subprocess-based local execution sandbox. Serves as a highly reliable fallback rail."""
 
-    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> dict[str, Any]:
+    async def execute(
+        self,
+        code: str,
+        language: str,
+        timeout: int,
+        stdin_data: str = "",
+        workspace: str | Path | None = None,
+    ) -> dict[str, Any]:
         logger.info(f"[Sandbox] Fallback Subprocess Sandbox executing [{language}] (timeout: {timeout}s)...")
 
         lang_config = {
@@ -179,13 +195,32 @@ class DockerSandbox(BaseSandbox):
 
     def __init__(self):
         self.image_map = {
-            "python": "python:3.12-slim",
-            "py": "python:3.12-slim",
-            "javascript": "node:20-slim",
-            "js": "node:20-slim",
-            "typescript": "node:20-slim",
-            "ts": "node:20-slim",
+            language: settings.runtime_sandbox_image
+            for language in (
+                "python", "py", "javascript", "js", "typescript", "ts",
+                "shell", "bash", "sh",
+            )
         }
+
+    @staticmethod
+    def _workspace_mount(workspace: str | Path) -> str:
+        """Build a read-only Docker mount for a validated project workspace."""
+        resolved = Path(workspace).resolve(strict=True)
+        if not resolved.is_dir():
+            raise ValueError("Sandbox workspace must be a directory")
+
+        generated_root = Path("/agenthub_export")
+        try:
+            subpath = resolved.relative_to(generated_root)
+        except ValueError:
+            return f"type=bind,src={resolved},dst=/workspace,readonly"
+
+        if not subpath.parts:
+            raise ValueError("Sandbox workspace must be a project directory")
+        return (
+            f"type=volume,src={settings.generated_projects_volume},dst=/workspace,"
+            f"readonly,volume-subpath={subpath.as_posix()}"
+        )
 
     async def check_availability(self) -> bool:
         """Verify if local Docker engine is alive and active."""
@@ -200,26 +235,39 @@ class DockerSandbox(BaseSandbox):
         except Exception:
             return False
 
-    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> dict[str, Any]:
+    async def execute(
+        self,
+        code: str,
+        language: str,
+        timeout: int,
+        stdin_data: str = "",
+        workspace: str | Path | None = None,
+    ) -> dict[str, Any]:
         lang_key = language.lower().strip()
         img = self.image_map.get(lang_key)
 
-        # Bash or shell uses local bash inside standard alpine/ubuntu or similar
         if not img:
-            if lang_key in ("shell", "bash", "sh"):
-                img = "alpine:latest"  # alpine contains basic sh/ash shell
-            else:
-                raise ValueError(f"Docker sandbox unsupported language: {language}")
+            raise ValueError(f"Docker sandbox unsupported language: {language}")
 
-        # Standard command injection inside container via stdin pipe
-        cmd_runner = []
-        if "python" in img:
+        if lang_key in ("python", "py"):
             cmd_runner = ["python", "-u", "-"]
-        elif "node" in img:
-            # Node supports direct stdin pipe execution via -e
+        elif lang_key in ("javascript", "js"):
             cmd_runner = ["node", "-"]
-        else: # Shell alpine
+        elif lang_key in ("typescript", "ts"):
+            cmd_runner = ["tsx", "-"]
+        else:
             cmd_runner = ["sh"]
+
+        mount_args: list[str] = []
+        if workspace is not None:
+            mount_args = ["--mount", self._workspace_mount(workspace)]
+            bootstrap = (
+                "mkdir -p /tmp/workspace && "
+                "cp -R /workspace/. /tmp/workspace/ && "
+                "cd /tmp/workspace && exec "
+                f"{shlex.join(cmd_runner)}"
+            )
+            cmd_runner = ["sh", "-lc", bootstrap]
 
         logger.info(f"[Sandbox] Spawning secure Docker Container sandbox [{img}] (timeout: {timeout}s)...")
         start_time = time.perf_counter()
@@ -227,10 +275,24 @@ class DockerSandbox(BaseSandbox):
         # Build secure container execution command:
         # --rm: automatically cleanup container
         # --network none: cut off all outgoing/incoming internet connections (Zero Trust)
-        # --memory 128m: Memory limit cap (protect host from memory exhaustion)
-        # --cpus 0.5: CPU allocation limit (protect host from CPU starvation)
+        # Resource caps protect the host while leaving enough room for npm/pytest.
         # -i: keep stdin open for code injection
-        docker_cmd = ["docker", "run", "-i", "--rm", "--network", "none", "--memory", "128m", "--cpus", "0.5", img, *cmd_runner]
+        container_name = f"agenthub-sandbox-{secrets.token_hex(8)}"
+        docker_cmd = [
+            "docker", "run", "-i", "--rm", "--name", container_name,
+            "--network", "none",
+            "--memory", settings.runtime_sandbox_memory,
+            "--cpus", settings.runtime_sandbox_cpus,
+            "--pids-limit", str(settings.runtime_sandbox_pids),
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true", "--read-only",
+            "--tmpfs", "/tmp:rw,nosuid,size=512m", "--user", "65532:65532",
+            "-e", "PYTHONDONTWRITEBYTECODE=1",
+            "-e", "HOME=/tmp",
+            *mount_args,
+            img,
+            *cmd_runner,
+        ]
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -276,12 +338,20 @@ class DockerSandbox(BaseSandbox):
                 }
 
             except TimeoutError:
-                # If timed out, forcefully kill the subprocess spawning docker
                 try:
                     proc.kill()
                     await proc.wait()
                 except Exception as e:
                     _logger.warning(f"Failed to kill timed-out sandbox process: {e}")
+                try:
+                    cleanup = await asyncio.create_subprocess_exec(
+                        "docker", "rm", "-f", container_name,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await asyncio.wait_for(cleanup.wait(), timeout=10)
+                except Exception as e:
+                    _logger.warning(f"Failed to remove timed-out sandbox container: {e}")
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 return {
                     "language": language,
@@ -306,7 +376,14 @@ class E2BSandbox(BaseSandbox):
         # E2B Sandbox standard HTTP endpoints
         self.base_url = "https://api.e2b.dev"
 
-    async def execute(self, code: str, language: str, timeout: int, stdin_data: str = "") -> dict[str, Any]:
+    async def execute(
+        self,
+        code: str,
+        language: str,
+        timeout: int,
+        stdin_data: str = "",
+        workspace: str | Path | None = None,
+    ) -> dict[str, Any]:
         """Spawns an AWS Firecracker microVM instance, executes the code and returns outputs."""
         logger.info(f"[Sandbox] Contacting E2B MicroVM Sandbox Cloud service (timeout: {timeout}s)...")
         start_time = time.perf_counter()
@@ -424,10 +501,17 @@ class SandboxManager:
         # Configuration control: allow explicitly forcing/disabling rails
         self.enable_docker = os.environ.get("AGENTHUB_DOCKER_SANDBOX", "true").lower() == "true"
 
-    async def execute(self, code: str, language: str = "python", timeout: int = 10, stdin_data: str = "") -> dict[str, Any]:
+    async def execute(
+        self,
+        code: str,
+        language: str = "python",
+        timeout: int = 10,
+        stdin_data: str = "",
+        workspace: str | Path | None = None,
+    ) -> dict[str, Any]:
         """Main dispatcher entrypoint selecting the safest available Sandbox rail."""
         # --- Rail 1: Cloud E2B (Highest Priority when API Key configured) ---
-        if self.e2b_api_key.strip():
+        if self.e2b_api_key.strip() and workspace is None:
             try:
                 e2b_box = E2BSandbox(self.e2b_api_key)
                 return await e2b_box.execute(code, language, timeout, stdin_data)
@@ -440,13 +524,29 @@ class SandboxManager:
             docker_available = await self.docker_sandbox.check_availability()
             if docker_available:
                 try:
-                    return await self.docker_sandbox.execute(code, language, timeout, stdin_data)
+                    return await self.docker_sandbox.execute(
+                        code,
+                        language,
+                        timeout,
+                        stdin_data,
+                        workspace,
+                    )
                 except Exception as e:
                     logger.warning(f"Local Docker Sandbox failed, falling back to subprocess: {e}")
 
         # A local subprocess is not a security boundary. Never execute
         # untrusted generated code on the host unless an operator opted in.
         if settings.allow_unsandboxed_shell:
+            if workspace is not None:
+                return {
+                    "language": language,
+                    "status": "error",
+                    "stdout": "",
+                    "stderr": "Project commands require the Docker sandbox; host execution is disabled for generated workspaces.",
+                    "exit_code": -1,
+                    "duration_ms": 0,
+                    "truncated": False,
+                }
             logger.warning("Executing code in explicitly enabled host subprocess fallback")
             return await self.subprocess_sandbox.execute(code, language, timeout, stdin_data)
 

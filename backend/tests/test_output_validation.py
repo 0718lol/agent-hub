@@ -1,9 +1,10 @@
 """Tests for output validation functions in agent_orchestrator."""
 import pytest
+
 from app.services.agent_orchestrator import (
-    detect_questions,
     check_format_compliance,
     check_tag_format,
+    detect_questions,
     validate_agent_output,
 )
 

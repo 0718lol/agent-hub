@@ -27,6 +27,15 @@ def test_development_allows_missing_security_secrets(monkeypatch):
     Settings(debug=True, api_secret="").validate_production_security()
 
 
+def test_worker_rejects_implicit_host_docker_socket(monkeypatch):
+    worker = Settings(allow_host_docker_socket=False)
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.setattr("app.core.config.os.path.exists", lambda path: path == "/var/run/docker.sock")
+
+    with pytest.raises(RuntimeError, match="Host Docker socket detected"):
+        worker.validate_deployment_worker_security()
+
+
 @pytest.mark.asyncio
 async def test_login_sets_httponly_cookie_and_status(monkeypatch):
     from app.core.config import settings

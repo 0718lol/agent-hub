@@ -1,12 +1,14 @@
 """File upload and retrieval endpoints."""
-import os
 import mimetypes
+import os
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
+from app.core.config import settings
 from app.core.file_storage import UPLOAD_DIR, FileStorageManager
 from app.core.tenancy import request_user_id
+from app.core.upload_security import UploadLimitExceeded, read_upload_limited, safe_upload_extension
 
 router = APIRouter(tags=["uploads"])
 
@@ -89,13 +91,13 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
     """Upload a file to the server."""
     import uuid as _uuid
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    ext = os.path.splitext(file.filename or "")[1]
+    ext = safe_upload_extension(file.filename)
     stored_name = f"{_tenant_file_prefix(request_user_id(request))}{_uuid.uuid4().hex}{ext}"
     file_path = os.path.join(UPLOAD_DIR, stored_name)
-    content = await file.read()
-    MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB limit
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=413, detail=f"File too large: {len(content)} bytes (max {MAX_UPLOAD_SIZE})")
+    try:
+        content = await read_upload_limited(file, settings.upload_max_bytes)
+    except UploadLimitExceeded as exc:
+        raise HTTPException(status_code=413, detail=f"File too large (max {exc.max_bytes} bytes)") from exc
     with open(file_path, "wb") as f:
         f.write(content)
     is_image = (file.content_type or "").startswith("image/")

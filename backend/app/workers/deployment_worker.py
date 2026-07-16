@@ -318,6 +318,7 @@ async def _cleanup_loop(stop_event: asyncio.Event) -> None:
 
 
 async def run_worker(stop_event: asyncio.Event | None = None) -> None:
+    settings.validate_deployment_worker_security()
     stop_event = stop_event or asyncio.Event()
     logger.info("Deployment worker %s starting", deployment_queue.consumer)
     heartbeat_task = asyncio.create_task(_heartbeat_loop(stop_event))

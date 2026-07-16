@@ -63,17 +63,47 @@ jobs:
   frontend-e2e:
     name: Frontend E2E (Playwright)
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - name: Install dependencies
-        run: cd frontend && npm ci --legacy-peer-deps
+        run: |
+          cd backend
+          pip install -r requirements-test.txt
+          pip install pytest-asyncio
+          cd ../frontend
+          npm ci --legacy-peer-deps
       - name: Install Chromium
         run: cd frontend && npx playwright install --with-deps chromium
       - name: Run core journey
-        run: cd frontend && npm run test:e2e
+        env:
+          REAL_BACKEND: "1"
+          AGENTHUB_REDIS_URL: redis://127.0.0.1:6379/0
+        run: |
+          cd backend
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/agenthub-e2e-backend.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:8000/api/health && break
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/api/health || { cat /tmp/agenthub-e2e-backend.log; exit 1; }
+          cd ../frontend
+          npm run test:e2e
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4
@@ -82,6 +112,7 @@ jobs:
           path: |
             frontend/playwright-report/
             frontend/test-results/
+            /tmp/agenthub-e2e-backend.log
           if-no-files-found: ignore
           retention-days: 7
 

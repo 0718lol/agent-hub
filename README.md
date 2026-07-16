@@ -211,8 +211,29 @@ npm run test:e2e
 | 微信小程序 | 工程校验 → `miniprogram-ci` 真实上传 | 凭证齐全时上传代码；否则生成开发者工具上传包 |
 
 Web 公网发布需要在 `.env` 配置 `AGENTHUB_NETLIFY_TOKEN` 和
-`AGENTHUB_NETLIFY_SITE_ID`。`docker compose up --build` 会启动独立的
-`deployment-worker`，其中包含 JDK、Android SDK 和 Docker CLI。发布请求写入 Redis Streams，
+`AGENTHUB_NETLIFY_SITE_ID`。基础服务使用 `docker compose up --build` 启动；需要本机 Docker
+构建能力的演示环境必须显式启用隔离风险开关：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local-docker.yml \
+  --profile deployment up --build
+```
+
+该命令也会构建 `agenthub-runtime-sandbox:local`，其中预装 Node.js 20、Python 3.12、
+TypeScript、pytest、numpy、pandas 和 matplotlib。Agent 运行终端命令时，当前生成项目会以只读
+方式挂载，再复制到容器的临时目录执行，因此 `npm`、`pytest` 和项目检查能看到真实代码，命令
+产生的改动不会写回源项目。运行时默认断网并限制 CPU、内存、进程数和最长执行时间。
+
+只需单独构建运行沙箱时，可以执行：
+
+```bash
+docker build -f backend/Dockerfile.sandbox \
+  -t agenthub-runtime-sandbox:local backend
+```
+
+生产环境不要使用该 override，应通过 `DOCKER_HOST` 连接独立构建节点，再使用
+`docker compose --profile deployment up --build`。`deployment-worker` 包含 JDK、Android SDK
+和 Docker CLI。发布请求写入 Redis Streams，
 Worker 重启后会重新认领未完成任务，意外错误最多自动重试两次。微信小程序的正式体验版、审核和发布还需要微信 AppID、上传私钥及微信平台审核，
 当前流水线负责生成可上传工程包，不会把打包状态误报为已上线。
 
@@ -223,7 +244,10 @@ Worker 每小时清理超过 7 天或超出用户保留上限的产物、容器�
 系统演示 APK 密钥只适合测试安装；正式发布应上传自己的 keystore。小程序真实上传使用
 `miniprogram-ci`，需要在微信公众平台下载代码上传私钥并配置允许的上传 IP。
 
-生成代码不会在 API 主进程直接执行。APK 构建运行在没有 Docker Socket 的临时容器中；
+Agent 的 Python 与 Shell 工具默认只能通过 E2B 或受限 Docker 沙箱执行，不会回退到 API
+主进程。需要访问生成项目的终端命令只使用 Docker 沙箱；宿主 Docker Socket 默认不挂载，
+只有本地开发 override 会显式开放；
+APK 构建运行在没有 Docker Socket 的临时容器中；
 生成的 API 以非 root、只读文件系统、无 Linux capabilities 的方式运行，并限制 CPU、内存和进程数。
 API 容器只加入内部 `agenthub_runtime` 网络，由 `/published/{deployment_id}/` 反向代理访问。
 生产环境需将 `AGENTHUB_PUBLIC_BASE_URL` 设置为 AgentHub 的公网 Origin。

@@ -200,3 +200,6 @@ class TestSafePathConversationIsolation:
     def test_special_characters_in_conversation_id(self):
         result = _safe_path("conv-test_123", "file.txt")
         assert result is not None
+
+    def test_conversation_id_traversal_is_rejected(self):
+        assert _safe_path("../../outside", "secret.txt") is None

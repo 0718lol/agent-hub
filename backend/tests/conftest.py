@@ -21,8 +21,9 @@ def test_env():
 @pytest.fixture(autouse=True)
 def setup_database():
     """Auto-create all tables before each test, drop after."""
-    from app.core._engine import engine
     from sqlmodel import SQLModel
+
+    from app.core._engine import engine
     SQLModel.metadata.create_all(engine)
     yield
     SQLModel.metadata.drop_all(engine)

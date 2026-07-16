@@ -1,6 +1,7 @@
 """Tests for metrics trace enhancements."""
 import pytest
-from app.core.metrics import TraceSpan, TraceStep, TaskTrace
+
+from app.core.metrics import TaskTrace, TraceSpan, TraceStep
 
 
 class TestTraceSpan:

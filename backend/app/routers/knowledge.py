@@ -248,8 +248,13 @@ async def upload_file_to_kb(kb_id: str, file: UploadFile = File(...)):
         if kb_id not in meta:
             raise HTTPException(status_code=404, detail="Knowledge base not found")
 
-    # 读取文件内容
-    content = await file.read()
+    from app.core.config import settings
+    from app.core.upload_security import UploadLimitExceeded, read_upload_limited
+
+    try:
+        content = await read_upload_limited(file, settings.knowledge_upload_max_bytes)
+    except UploadLimitExceeded as exc:
+        raise HTTPException(status_code=413, detail=f"File too large (max {exc.max_bytes} bytes)") from exc
     filename = file.filename or "unnamed.txt"
 
     # 检查文件类型

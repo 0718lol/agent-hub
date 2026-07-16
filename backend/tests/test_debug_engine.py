@@ -1,6 +1,7 @@
 """Tests for debug engine - error parsing and fix prompt generation."""
 import pytest
-from app.core.debug_engine import parse_error, build_fix_prompt, extract_code_block
+
+from app.core.debug_engine import build_fix_prompt, extract_code_block, parse_error
 
 
 class TestParseError:

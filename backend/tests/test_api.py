@@ -114,6 +114,25 @@ async def test_upload_download_forces_active_content_as_attachment(app, tmp_path
     assert resp.headers["x-content-type-options"] == "nosniff"
 
 
+@pytest.mark.asyncio
+async def test_upload_endpoint_rejects_oversized_file_without_writing(app, tmp_path, monkeypatch):
+    from app.core import file_storage
+    from app.routers import uploads
+
+    monkeypatch.setattr(uploads, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(file_storage, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(uploads.settings, "upload_max_bytes", 4)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/upload",
+            files={"file": ("large.txt", b"12345", "text/plain")},
+        )
+
+    assert response.status_code == 413
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_upload_router_has_single_api_prefix(app):
     included = next(
         route for route in app.routes

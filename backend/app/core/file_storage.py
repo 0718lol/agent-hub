@@ -4,6 +4,8 @@
 import os
 import uuid
 
+from app.core.upload_security import safe_upload_extension
+
 # 上传文件存储根目录
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -15,7 +17,7 @@ class FileStorageManager:
     @staticmethod
     def generate_stored_name(original_name: str) -> str:
         """生成唯一文件名，保留原始扩展名"""
-        _, ext = os.path.splitext(original_name)
+        ext = safe_upload_extension(original_name)
         return f"{uuid.uuid4().hex}{ext}"
 
     @staticmethod

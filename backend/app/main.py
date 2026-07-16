@@ -176,6 +176,14 @@ async def api_security_middleware(request: Request, call_next):
             and auth_header.startswith("Bearer ")
             and hmac.compare_digest(auth_header.split(" ", 1)[1], settings.api_secret)
         )
+        if bearer_valid and not settings.debug:
+            from app.core.tenancy import has_valid_api_client_id
+
+            if not has_valid_api_client_id(request.headers):
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Production Bearer clients must provide X-AgentHub-Client-ID"},
+                )
         session_valid = verify_session_token(request.cookies.get(SESSION_COOKIE), settings.api_secret)
         if not bearer_valid and not session_valid:
             return JSONResponse(status_code=401, content={"detail": "Unauthorized: Sign in or provide a valid bearer token"})

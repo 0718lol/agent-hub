@@ -1,12 +1,13 @@
 ﻿"""Tests for API key encryption/decryption."""
-import pytest
 import os
+
+import pytest
 
 
 class TestKeyEncryption:
     def test_encrypt_decrypt_roundtrip(self):
         """Encrypted key should decrypt back to original."""
-        from app.core.config import obfuscate_key, deobfuscate_key
+        from app.core.config import deobfuscate_key, obfuscate_key
         original = "sk-test-key-12345"
         encrypted = obfuscate_key(original)
         decrypted = deobfuscate_key(encrypted)
@@ -20,7 +21,7 @@ class TestKeyEncryption:
 
     def test_empty_key_returns_empty(self):
         """Empty key should return empty without error."""
-        from app.core.config import obfuscate_key, deobfuscate_key
+        from app.core.config import deobfuscate_key, obfuscate_key
         assert obfuscate_key("") == ""
         assert deobfuscate_key("") == ""
 

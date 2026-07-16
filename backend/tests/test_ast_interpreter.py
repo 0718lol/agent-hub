@@ -1,6 +1,8 @@
 """Tests for AST interpreter sandbox."""
-import pytest
 import asyncio
+
+import pytest
+
 from app.core.ast_interpreter import SafeASTInterpreter
 
 

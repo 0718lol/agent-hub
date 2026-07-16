@@ -3,7 +3,7 @@ import json
 import logging
 import os
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.core.config import deobfuscate_key as decrypt_key
@@ -85,7 +85,13 @@ async def update_stt_settings(s: STTSettings):
 @router.post("/speech/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     """Upload an audio file and get transcribed text back."""
-    audio_bytes = await file.read()
+    from app.core.config import settings
+    from app.core.upload_security import UploadLimitExceeded, read_upload_limited
+
+    try:
+        audio_bytes = await read_upload_limited(file, settings.speech_upload_max_bytes)
+    except UploadLimitExceeded as exc:
+        raise HTTPException(status_code=413, detail=f"Audio too large (max {exc.max_bytes} bytes)") from exc
     filename = file.filename or "audio.webm"
 
     if not stt_client.is_configured() and llm_client.is_configured():

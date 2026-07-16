@@ -12,8 +12,8 @@ from app.core.database import (
     get_project_memory,
     save_memory_item,
 )
-from app.core.websocket import manager
 from app.core.tenancy import request_user_id, scope_conversation_id
+from app.core.websocket import manager
 
 router = APIRouter(tags=["workflows"])
 

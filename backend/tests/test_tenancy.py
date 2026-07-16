@@ -1,11 +1,13 @@
 """Tenant namespace and browser isolation regression tests."""
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.core.models import Conversation  # noqa: F401 - register SQLModel tables before fixtures run
-from app.core.tenancy import belongs_to_user, public_conversation_id, scope_conversation_id
+from app.core.tenancy import belongs_to_user, public_conversation_id, request_user_id, scope_conversation_id
 
 
 def test_conversation_namespace_roundtrip():
@@ -14,6 +16,17 @@ def test_conversation_namespace_roundtrip():
     assert public_conversation_id(scoped) == "conv_pm"
     assert belongs_to_user(scoped, "user-A")
     assert not belongs_to_user(scoped, "user-B")
+
+
+def test_api_client_ids_create_distinct_tenants(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "api_secret", "")
+    first = SimpleNamespace(cookies={}, headers={"x-agenthub-client-id": "ci-client-a"})
+    second = SimpleNamespace(cookies={}, headers={"x-agenthub-client-id": "ci-client-b"})
+
+    assert request_user_id(first) != request_user_id(second)
+    assert request_user_id(first).startswith("api-client-")
 
 
 @pytest.mark.asyncio

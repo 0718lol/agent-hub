@@ -9,10 +9,9 @@ Design:
 """
 
 import asyncio
-
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 # ============================================================
 # Fixtures
@@ -217,7 +216,7 @@ async def test_error_recovery(mock_ws_manager, orchestration_mocks, monkeypatch)
 
     async def _error_stream(messages, system="", **kwargs):
         raise RuntimeError("LLM connection failed")
-        yield  # noqa: make it an async generator
+        yield  # pragma: no cover - makes this function an async generator
 
     monkeypatch.setattr("app.core.llm_client.llm_client.chat_stream", _error_stream)
 

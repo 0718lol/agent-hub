@@ -1,5 +1,6 @@
 """Tests for skill library."""
 import pytest
+
 from app.core.skill_library import SkillLibrary
 
 

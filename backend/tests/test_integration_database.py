@@ -12,7 +12,6 @@ from sqlalchemy import event, text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-
 # ---------------------------------------------------------------------------
 # Fixtures: isolated in-memory engine for integration tests
 # ---------------------------------------------------------------------------
@@ -281,15 +280,14 @@ class TestCronTaskLifecycle:
 
     def test_create_query_update_delete(self):
         """定时任务的完整生命周期：创建 -> 查询 -> 状态更新 -> 删除。"""
+        # FK: conversation must exist
         from app.core.crud import (
+            create_conversation,
             delete_cron_task,
             get_cron_tasks,
             save_cron_task,
             update_cron_task_status,
         )
-
-        # FK: conversation must exist
-        from app.core.crud import create_conversation
         create_conversation("conv_cron_001", "single", "定时任务测试", "\U0001f916")
 
         # Create
@@ -321,9 +319,7 @@ class TestCronTaskLifecycle:
 
     def test_get_cron_tasks_by_conversation(self):
         """按 conversation_id 过滤定时任务。"""
-        from app.core.crud import get_cron_tasks, save_cron_task
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, get_cron_tasks, save_cron_task
         create_conversation("conv_cron_filter_a", "single", "A", "\U0001f916")
         create_conversation("conv_cron_filter_b", "single", "B", "\U0001f916")
 
@@ -337,12 +333,11 @@ class TestCronTaskLifecycle:
     def test_update_cron_task_run_time(self):
         """更新定时任务的运行时间。"""
         from app.core.crud import (
+            create_conversation,
             get_cron_tasks,
             save_cron_task,
             update_cron_task_run_time,
         )
-
-        from app.core.crud import create_conversation
         create_conversation("conv_cron_rt", "single", "运行时间测试", "\U0001f916")
 
         save_cron_task("task_rt", "conv_cron_rt", "agent_pm", "test", 3600)
@@ -421,9 +416,7 @@ class TestArtifactSaveAndRetrieve:
 
     def test_save_and_retrieve(self):
         """保存代码工件后能正确查询。"""
-        from app.core.crud import get_artifacts, save_artifact
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, get_artifacts, save_artifact
         create_conversation("conv_art_001", "single", "工件测试", "\U0001f916")
 
         save_artifact("conv_art_001", "agent_frontend", "html", "<h1>Hello</h1>", "test.html")
@@ -436,9 +429,7 @@ class TestArtifactSaveAndRetrieve:
 
     def test_artifact_name_auto_generation(self):
         """未指定 name 时自动生成。"""
-        from app.core.crud import get_artifacts, save_artifact
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, get_artifacts, save_artifact
         create_conversation("conv_art_auto", "single", "自动命名", "\U0001f916")
 
         save_artifact("conv_art_auto", "agent_frontend", "html",
@@ -449,9 +440,7 @@ class TestArtifactSaveAndRetrieve:
 
     def test_artifact_grouped(self):
         """get_artifacts_grouped 按 name 分组。"""
-        from app.core.crud import get_artifacts_grouped, save_artifact
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, get_artifacts_grouped, save_artifact
         create_conversation("conv_art_grp", "single", "分组测试", "\U0001f916")
 
         # Two versions of the same artifact name
@@ -472,9 +461,7 @@ class TestSearchMessages:
 
     def test_search_finds_matching_messages(self):
         """search_messages 能找到匹配的消息。"""
-        from app.core.crud import save_message, search_messages
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, save_message, search_messages
         create_conversation("conv_search_001", "single", "搜索测试", "\U0001f916")
 
         save_message("conv_search_001", "user", {"text": "Python is a great programming language"})
@@ -486,9 +473,7 @@ class TestSearchMessages:
 
     def test_search_with_conversation_filter(self):
         """按 conversation_id 过滤搜索结果。"""
-        from app.core.crud import save_message, search_messages
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, save_message, search_messages
         create_conversation("conv_search_a", "single", "搜索A", "\U0001f916")
         create_conversation("conv_search_b", "single", "搜索B", "\U0001f916")
 
@@ -501,9 +486,7 @@ class TestSearchMessages:
 
     def test_search_no_results(self):
         """搜索不存在的关键词返回空列表。"""
-        from app.core.crud import save_message, search_messages
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, save_message, search_messages
         create_conversation("conv_search_empty", "single", "空搜索", "\U0001f916")
 
         save_message("conv_search_empty", "user", {"text": "hello"})
@@ -520,11 +503,10 @@ class TestJsonFallback:
 
     def test_non_json_content_does_not_crash(self):
         """非 JSON 内容应有 fallback 而不是崩溃。"""
-        from app.core.crud import get_messages
         from app.core._engine import engine
 
         # Create parent conversation via FK
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, get_messages
         create_conversation("conv_json_test", "single", "JSON测试", "\U0001f916")
 
         # Insert raw non-JSON content directly (simulates legacy data)
@@ -550,9 +532,7 @@ class TestJsonFallback:
 
     def test_valid_json_content_parsed_correctly(self):
         """合法 JSON 内容能被正确解析。"""
-        from app.core.crud import get_messages, save_message
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, get_messages, save_message
         create_conversation("conv_json_ok", "single", "JSON正常", "\U0001f916")
 
         save_message("conv_json_ok", "user", {"text": "hello", "extra": [1, 2, 3]})
@@ -570,9 +550,7 @@ class TestProjectMemory:
 
     def test_save_and_get(self):
         """保存和读取项目记忆。"""
-        from app.core.crud import get_project_memory, save_memory_item
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, get_project_memory, save_memory_item
         create_conversation("conv_mem_001", "single", "记忆测试", "\U0001f916")
 
         save_memory_item("conv_mem_001", "project_name", "AgentHub", source="agent")
@@ -586,9 +564,7 @@ class TestProjectMemory:
 
     def test_upsert_updates_existing_key(self):
         """相同 conversation_id + key 会更新值而非插入新行。"""
-        from app.core.crud import get_project_memory, save_memory_item
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, get_project_memory, save_memory_item
         create_conversation("conv_mem_up", "single", "记忆更新", "\U0001f916")
 
         save_memory_item("conv_mem_up", "key1", "old_value")
@@ -600,12 +576,11 @@ class TestProjectMemory:
     def test_delete_memory_item(self):
         """删除指定记忆项。"""
         from app.core.crud import (
+            create_conversation,
             delete_memory_item,
             get_project_memory,
             save_memory_item,
         )
-
-        from app.core.crud import create_conversation
         create_conversation("conv_mem_del", "single", "记忆删除", "\U0001f916")
 
         save_memory_item("conv_mem_del", "to_delete", "value")
@@ -624,13 +599,12 @@ class TestHilCheckpoint:
     def test_save_get_resolve_delete(self):
         """HIL 检查点的完整生命周期。"""
         from app.core.crud import (
+            create_conversation,
             delete_hil_checkpoint,
             get_pending_hil_checkpoint,
             resolve_hil_checkpoint,
             save_hil_checkpoint,
         )
-
-        from app.core.crud import create_conversation
         create_conversation("conv_hil_001", "single", "HIL测试", "\U0001f916")
 
         # Save
@@ -669,9 +643,7 @@ class TestEventStream:
 
     def test_save_and_get_events(self):
         """保存和读取事件流。"""
-        from app.core.crud import get_event_items, save_event_item
-
-        from app.core.crud import create_conversation
+        from app.core.crud import create_conversation, get_event_items, save_event_item
         create_conversation("conv_evt_001", "single", "事件测试", "\U0001f916")
 
         save_event_item("conv_evt_001", "message_sent", 1700000000.0, '{"from": "user"}')
@@ -686,9 +658,7 @@ class TestEventStream:
 
     def test_clear_events(self):
         """清除指定会话的事件。"""
-        from app.core.crud import clear_event_items, get_event_items, save_event_item
-
-        from app.core.crud import create_conversation
+        from app.core.crud import clear_event_items, create_conversation, get_event_items, save_event_item
         create_conversation("conv_evt_clear", "single", "清除事件", "\U0001f916")
 
         save_event_item("conv_evt_clear", "test", 1.0, '{}')

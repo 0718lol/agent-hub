@@ -3,6 +3,8 @@
 import logging
 import os
 
+from app.core.workspace import is_safe_conversation_id, resolve_workspace
+
 from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_file_ops")
@@ -41,6 +43,8 @@ def _read_text_file(path: str) -> str:
 
 def _safe_path(conversation_id: str, filepath: str) -> str | None:
     """Resolve path within sandbox, preventing directory traversal."""
+    if not is_safe_conversation_id(conversation_id):
+        return None
     sandbox_dir = os.path.realpath(os.path.join(_SANDBOX_ROOT, conversation_id))
     os.makedirs(sandbox_dir, exist_ok=True)
     resolved = os.path.realpath(os.path.join(sandbox_dir, filepath))
@@ -52,9 +56,11 @@ def _safe_path(conversation_id: str, filepath: str) -> str | None:
 
 def _safe_workspace_path(conversation_id: str, filepath: str) -> str | None:
     """Resolve path within the unified agenthub_export workspace sandbox, preventing directory traversal."""
-    workspace_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-    sandbox_dir = os.path.realpath(os.path.join(workspace_dir, "agenthub_export", conversation_id))
-    os.makedirs(sandbox_dir, exist_ok=True)
+    workspace = resolve_workspace(conversation_id)
+    if workspace is None:
+        return None
+
+    sandbox_dir = str(workspace)
     resolved = os.path.realpath(os.path.join(sandbox_dir, filepath))
     if not resolved.startswith(sandbox_dir + os.sep) and resolved != sandbox_dir:
         return None
@@ -386,9 +392,10 @@ class FileEditLineTool(AgentTool):
                 return ToolResult(success=False, error=f"无效的行范围: {start_line} 到 {end_line}，文件总行数: {total_lines}")
 
             # 1. Create pre-write git checkpoint
-            workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-            sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conv_id)
-            os.makedirs(sandbox_dir, exist_ok=True)
+            workspace = resolve_workspace(conv_id)
+            if workspace is None:
+                return ToolResult(success=False, error="对话 ID 非法")
+            sandbox_dir = str(workspace)
 
             try:
                 from app.core.git_sandbox import git_checkpoint, git_rollback

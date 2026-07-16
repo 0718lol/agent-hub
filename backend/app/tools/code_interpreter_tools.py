@@ -2,9 +2,9 @@
 
 import asyncio
 import logging
-import os
 import re
-import sys
+
+from app.core.sandbox_manager import sandbox_manager
 
 from .registry import AgentTool, ToolResult, register_tool
 
@@ -107,66 +107,17 @@ class E2BPythonInterpreterTool(AgentTool):
 
     async def execute(self, params: dict) -> ToolResult:
         code = params.get("code", "").strip()
-        conv_id = params.get("conversation_id", "default")
-
-        if not re.match(r'^[a-zA-Z0-9_\-]+$', conv_id):
-            return ToolResult(success=False, error=f"conversation_id 包含非法字符: {conv_id}")
-
         if not code:
             return ToolResult(success=False, error="执行代码不能为空")
 
-        # 1. Resolve sandboxed workspace directory
-        workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conv_id)
-        os.makedirs(sandbox_dir, exist_ok=True)
-
-        # 2. Prepend the visual show monkeypatch hook
         executable_code = prepend_visual_hook(code)
-
-        # 3. Write code to a temporary script file in sandbox
-        script_file_name = f"temp_interpreter_{conv_id}.py"
-        script_path = os.path.join(sandbox_dir, script_file_name)
-
         try:
-            with open(script_path, "w", encoding="utf-8") as f:
-                f.write(executable_code)
-        except OSError as ioe:
-            return ToolResult(success=False, error=f"写入临时执行文件失败: {ioe}")
-
-        # 4. Safely execute code via async subprocess python runner
-        # Run with a 15-second timeout to prevent denial-of-service/infinite loops
-        try:
-            # Explicitly use the same python interpreter running this host to ensure path and package matches
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, script_file_name,
-                cwd=sandbox_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(), timeout=15.0
-                )
-            except TimeoutError:
-                proc.kill()
-                await proc.wait()
-                return ToolResult(
-                    success=False,
-                    error="🔒 执行超时！脚本已超过最大运行上限 15 秒并被强制终止。"
-                )
+            result = await sandbox_manager.execute(executable_code, language="python", timeout=15)
         except Exception as e:
-            return ToolResult(success=False, error=f"子进程启动失败: {e}")
-        finally:
-            # Clean up the temporary script file to keep the sandbox clean
-            if os.path.exists(script_path):
-                try:
-                    os.remove(script_path)
-                except Exception as e:
-                    _logger.debug(f"Failed to remove temp script file (non-critical): {e}")
+            return ToolResult(success=False, error=f"隔离解释器启动失败: {e}")
 
-        # 5. Extract images and sanitize stdout
-        stdout_raw = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
-        stderr_raw = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+        stdout_raw = result.get("stdout", "")
+        stderr_raw = result.get("stderr", "")
 
         # Pull out any embedded plots
         images = []
@@ -180,8 +131,8 @@ class E2BPythonInterpreterTool(AgentTool):
         clean_stderr = stderr_raw.strip()
 
         # Build execution summary
-        exit_code = proc.returncode
-        success = (exit_code == 0)
+        exit_code = result.get("exit_code", -1)
+        success = result.get("status") == "success"
 
         # If execution failed (syntax error or exception), compile a helpful traceback summary
         if not success:

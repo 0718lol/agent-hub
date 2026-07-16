@@ -1,17 +1,18 @@
 ﻿"""WebSocket endpoint for real-time agent communication."""
 import asyncio
 import contextlib
+import hmac
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save_message
-from app.core.config import settings
 from app.core.auth import SESSION_COOKIE, verify_session_token
 from app.core.concurrency import generation_admission
+from app.core.config import settings
 from app.core.crud import create_conversation
 from app.core.logging_config import get_logger
-from app.core.tenancy import scope_conversation_id, websocket_user_id
+from app.core.tenancy import has_valid_api_client_id, scope_conversation_id, websocket_user_id
 from app.core.websocket import manager
 from app.routers.harness_handler import handle_verdict
 from app.services.agent_orchestrator import (
@@ -71,8 +72,8 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
 
     if settings.api_secret:
         header_token = websocket.headers.get("x-api-secret")
-        query_token = websocket.query_params.get("token")
-        if header_token == settings.api_secret or query_token == settings.api_secret:
+        header_authorized = header_token and hmac.compare_digest(header_token, settings.api_secret)
+        if header_authorized and (settings.debug or has_valid_api_client_id(websocket.headers)):
             authorized = True
         if verify_session_token(websocket.cookies.get(SESSION_COOKIE), settings.api_secret):
             authorized = True

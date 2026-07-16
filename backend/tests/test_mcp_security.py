@@ -1,6 +1,7 @@
 """Tests for MCP server registration security."""
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

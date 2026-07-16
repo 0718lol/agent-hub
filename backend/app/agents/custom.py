@@ -105,16 +105,16 @@ AVAILABLE_TOOLS = {
     },
     "run_stateful_command": {
         "id": "run_stateful_command",
-        "name": "有状态命令行",
+        "name": "隔离命令行",
         "icon": "💻",
-        "description": "在物理沙盒工作空间内持久地、有状态地执行指定的 Shell 命令行，支持多步环境状态继承",
-        "prompt_addon": "\n- 你可以使用有状态命令行（比 workspace_run_command 更有状态）。使用 [tool_call:run_stateful_command]{\"command\": \"命令行指令\"}[/tool_call] 调用，支持跨步骤继承路径目录状态（如先 cd 后运行测试）与激活的环境变量状态，带 15 秒命令超时保护。",
+        "description": "在 E2B 或受限 Docker 沙箱中执行单条 Shell 命令，不继承宿主环境",
+        "prompt_addon": "\n- 你可以使用隔离命令行。使用 [tool_call:run_stateful_command]{\"command\": \"命令行指令\"}[/tool_call] 调用。每次调用都是独立环境，不支持跨调用 cd 或环境变量继承。",
     },
     "e2b_python_interpreter": {
         "id": "e2b_python_interpreter",
         "name": "E2B代码解释器",
         "icon": "📊",
-        "description": "在完全物理隔离的本地安全沙箱中执行任意 Python/数据科学代码，支持 Matplotlib/Pandas 绘图及生成 CSV",
+        "description": "在 E2B 或受限 Docker 沙箱中执行 Python；可用依赖由所选沙箱镜像决定",
         "prompt_addon": "\n- 你可以使用 E2B 代码解释器。使用 [tool_call:e2b_python_interpreter]{\"code\": \"python代码\"}[/tool_call] 调用，允许执行包含 numpy、pandas、matplotlib 等高级数学与数据科学库的任意 Python 脚本。如果需要进行数据可视化绘图，请直接在代码尾部调用 plt.show()，系统将自动捕获生成的图表图片并直接展示在聊天气泡中呈现给用户。",
     },
     "file_patch_block": {

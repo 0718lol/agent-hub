@@ -44,12 +44,20 @@ class Settings(BaseSettings):
 
     # Sandbox config
     docker_sandbox: bool = True
+    runtime_sandbox_image: str = "agenthub-runtime-sandbox:local"
+    runtime_sandbox_memory: str = "768m"
+    runtime_sandbox_cpus: str = "1.5"
+    runtime_sandbox_pids: int = 128
+    runtime_sandbox_timeout: int = 120
 
     # Security config
     api_secret: str = ""
     allow_unsandboxed_shell: bool = False
     shell_timeout: float = 15.0
     shell_memory_limit_mb: int = 256
+    upload_max_bytes: int = 50 * 1024 * 1024
+    knowledge_upload_max_bytes: int = 25 * 1024 * 1024
+    speech_upload_max_bytes: int = 25 * 1024 * 1024
 
     # Static site deployment (Netlify Deploy API)
     netlify_token: str = ""
@@ -65,6 +73,7 @@ class Settings(BaseSettings):
     api_runtime_pids: int = 128
     builder_image: str = "agenthub-deployment-worker:local"
     generated_projects_volume: str = "agenthub_generated_projects"
+    allow_host_docker_socket: bool = False
     deployment_retention_days: int = 7
     deployment_max_per_user: int = 20
 
@@ -79,6 +88,16 @@ class Settings(BaseSettings):
             missing.append("AGENTHUB_ENCRYPT_KEY")
         if missing:
             raise RuntimeError("Production security configuration missing: " + ", ".join(missing))
+
+    def validate_deployment_worker_security(self) -> None:
+        """Reject an implicit privileged host Docker endpoint."""
+        docker_host = os.environ.get("DOCKER_HOST", "").strip()
+        host_socket = os.path.exists("/var/run/docker.sock")
+        if host_socket and not docker_host and not self.allow_host_docker_socket:
+            raise RuntimeError(
+                "Host Docker socket detected but AGENTHUB_ALLOW_HOST_DOCKER_SOCKET is false. "
+                "Use an isolated remote Docker endpoint or the explicit local-development override."
+            )
 
 
 settings = Settings()

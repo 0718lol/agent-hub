@@ -15,7 +15,6 @@ import pytest
 from httpx_ws import WebSocketDisconnect, aconnect_ws
 from httpx_ws.transport import ASGIWebSocketTransport
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -34,6 +33,7 @@ def ws_app():
     - handle_verdict                  -> no-op
     """
     from fastapi import FastAPI
+
     from app.routers.ws import router
 
     app = FastAPI()
@@ -102,17 +102,16 @@ def _find_ws_disconnect(exc_group):
 
 
 @pytest.mark.asyncio
-async def test_connect_with_valid_query_token(ws_app):
-    """A valid token passed as a query parameter should allow the connection."""
+async def test_query_token_is_rejected(ws_app):
+    """The long-lived API secret must never be accepted from a URL query string."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            async with aconnect_ws(
-                "ws://testserver/ws/conv_auth_ok?token=test-secret", client
-            ) as ws:
-                await ws.send_text(json.dumps({"type": "read"}))
-                resp = await _receive_json(ws)
-                assert resp["type"] == "read"
-                assert resp["conversation_id"] == "conv_auth_ok"
+            with pytest.raises(BaseExceptionGroup) as exc_info:
+                async with aconnect_ws(
+                    "ws://testserver/ws/conv_auth_query?token=test-secret", client
+                ) as ws:
+                    await ws.receive_text()
+            assert _find_ws_disconnect(exc_info.value).code == 4001
 
 
 @pytest.mark.asyncio
@@ -121,7 +120,7 @@ async def test_connect_with_valid_header_token(ws_app):
     async with ASGIWebSocketTransport(app=ws_app) as transport:
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             async with aconnect_ws(
-                "ws://testserver/ws/conv_auth_header?token=test-secret",
+                "ws://testserver/ws/conv_auth_header",
                 client,
                 headers={"x-api-secret": "test-secret"},
             ) as ws:
@@ -154,11 +153,12 @@ async def test_connect_without_token_rejected(ws_app):
 async def test_connect_with_wrong_token_rejected(ws_app):
     """An incorrect token should close the socket with 4001."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             with pytest.raises(BaseExceptionGroup) as exc_info:
                 async with aconnect_ws(
-                    "ws://testserver/ws/conv_bad_token?token=wrong-secret",
+                    "ws://testserver/ws/conv_bad_token",
                     client,
+                    headers={"x-api-secret": "wrong-secret"},
                 ) as ws:
                     await ws.send_text(json.dumps({"type": "read"}))
                     await ws.receive_text()
@@ -174,7 +174,7 @@ async def test_connect_localhost_no_secret_allowed(ws_app):
         mock_settings.api_secret = ""
 
         async with ASGIWebSocketTransport(app=ws_app) as transport:
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
                 async with aconnect_ws(
                     "ws://testserver/ws/conv_localhost", client
                 ) as ws:
@@ -192,9 +192,9 @@ async def test_connect_localhost_no_secret_allowed(ws_app):
 async def test_message_broadcast(ws_app):
     """Sending a normal user message should produce a broadcast with type=message."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(
-                "ws://testserver/ws/conv_msg_001?token=test-secret", client
+                "ws://testserver/ws/conv_msg_001", client
             ) as ws:
                 payload = {
                     "type": "message",
@@ -214,8 +214,8 @@ async def test_message_broadcast(ws_app):
 @pytest.mark.asyncio
 async def test_stop_message_sets_event(ws_app):
     """Sending a 'stop' message should set the corresponding _stop_events entry."""
-    from app.services.agent_orchestrator import _stop_events
     from app.core.tenancy import scope_conversation_id
+    from app.services.agent_orchestrator import _stop_events
 
     conv_id = "conv_stop_001"
     internal_id = scope_conversation_id("api-client", conv_id)
@@ -223,9 +223,9 @@ async def test_stop_message_sets_event(ws_app):
 
     try:
         async with ASGIWebSocketTransport(app=ws_app) as transport:
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
                 async with aconnect_ws(
-                    f"ws://testserver/ws/{conv_id}?token=test-secret", client
+                    f"ws://testserver/ws/{conv_id}", client
                 ) as ws:
                     await ws.send_text(json.dumps({"type": "stop"}))
                     await asyncio.sleep(0.05)
@@ -244,9 +244,9 @@ async def test_stop_message_no_crash_when_event_missing(ws_app):
 
     try:
         async with ASGIWebSocketTransport(app=ws_app) as transport:
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
                 async with aconnect_ws(
-                    f"ws://testserver/ws/{conv_id}?token=test-secret", client
+                    f"ws://testserver/ws/{conv_id}", client
                 ) as ws:
                     await ws.send_text(json.dumps({"type": "stop"}))
                     await asyncio.sleep(0.05)
@@ -262,9 +262,9 @@ async def test_stop_message_no_crash_when_event_missing(ws_app):
 async def test_read_receipt(ws_app):
     """Sending a 'read' message should broadcast a read receipt."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(
-                "ws://testserver/ws/conv_read_001?token=test-secret", client
+                "ws://testserver/ws/conv_read_001", client
             ) as ws:
                 await ws.send_text(json.dumps({"type": "read"}))
                 resp = await _receive_json(ws)
@@ -283,9 +283,9 @@ async def test_read_receipt(ws_app):
 async def test_invalid_json_handled_gracefully(ws_app):
     """Sending malformed JSON should return an error message, not crash the socket."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(
-                "ws://testserver/ws/conv_bad_json?token=test-secret", client
+                "ws://testserver/ws/conv_bad_json", client
             ) as ws:
                 await ws.send_text("this is not valid json {{{")
                 resp = await _receive_json(ws)
@@ -304,9 +304,9 @@ async def test_invalid_json_handled_gracefully(ws_app):
 async def test_short_user_message_filtered(ws_app):
     """A single-character user message should be silently dropped (no broadcast)."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(
-                "ws://testserver/ws/conv_short?token=test-secret", client
+                "ws://testserver/ws/conv_short", client
             ) as ws:
                 payload = {
                     "type": "message",
@@ -324,9 +324,9 @@ async def test_short_user_message_filtered(ws_app):
 async def test_punctuation_only_user_message_filtered(ws_app):
     """A punctuation-only user message should be silently dropped."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(
-                "ws://testserver/ws/conv_punct?token=test-secret", client
+                "ws://testserver/ws/conv_punct", client
             ) as ws:
                 payload = {
                     "type": "message",
@@ -343,9 +343,9 @@ async def test_punctuation_only_user_message_filtered(ws_app):
 async def test_digit_only_user_message_filtered(ws_app):
     """A digit-only user message should be silently dropped."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(
-                "ws://testserver/ws/conv_digits?token=test-secret", client
+                "ws://testserver/ws/conv_digits", client
             ) as ws:
                 payload = {
                     "type": "message",
@@ -366,17 +366,17 @@ async def test_digit_only_user_message_filtered(ws_app):
 @pytest.mark.asyncio
 async def test_disconnect_cleans_up_connection(ws_app):
     """After disconnect, the conversation should be removed from active_connections."""
-    from app.core.websocket import manager
     from app.core.tenancy import scope_conversation_id
+    from app.core.websocket import manager
 
     conv_id = "conv_disconnect_001"
     internal_id = scope_conversation_id("api-client", conv_id)
 
     async with ASGIWebSocketTransport(app=ws_app) as transport:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(
-                f"ws://testserver/ws/{conv_id}?token=test-secret", client
-            ) as ws:
+                f"ws://testserver/ws/{conv_id}", client
+            ):
                 assert internal_id in manager.active_connections
 
             await asyncio.sleep(0.1)
@@ -386,8 +386,8 @@ async def test_disconnect_cleans_up_connection(ws_app):
 @pytest.mark.asyncio
 async def test_disconnect_does_not_stop_generation(ws_app):
     """A transient client disconnect must not cancel in-flight generation."""
-    from app.services.agent_orchestrator import _stop_events
     from app.core.tenancy import scope_conversation_id
+    from app.services.agent_orchestrator import _stop_events
 
     conv_id = "conv_disconnect_stop"
     internal_id = scope_conversation_id("api-client", conv_id)
@@ -396,10 +396,10 @@ async def test_disconnect_does_not_stop_generation(ws_app):
 
     try:
         async with ASGIWebSocketTransport(app=ws_app) as transport:
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
                 async with aconnect_ws(
-                    f"ws://testserver/ws/{conv_id}?token=test-secret", client
-                ) as ws:
+                    f"ws://testserver/ws/{conv_id}", client
+                ):
                     pass
 
         await asyncio.sleep(0.1)
@@ -418,10 +418,10 @@ async def test_broadcast_reaches_multiple_clients(ws_app):
     """A message sent by one client should be broadcast to all clients in the
     same conversation."""
     conv_id = "conv_multi_001"
-    url = f"ws://testserver/ws/{conv_id}?token=test-secret"
+    url = f"ws://testserver/ws/{conv_id}"
 
     async with ASGIWebSocketTransport(app=ws_app) as transport:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(url, client) as ws1, \
                        aconnect_ws(url, client) as ws2:
                 payload = {

@@ -29,6 +29,11 @@ services:
       - AGENTHUB_NETLIFY_SITE_ID=${AGENTHUB_NETLIFY_SITE_ID:-}
       - AGENTHUB_PUBLIC_BASE_URL=${AGENTHUB_PUBLIC_BASE_URL:-}
       - AGENTHUB_RUNTIME_NETWORK=agenthub_runtime
+      - AGENTHUB_RUNTIME_SANDBOX_IMAGE=${AGENTHUB_RUNTIME_SANDBOX_IMAGE:-agenthub-runtime-sandbox:local}
+      - AGENTHUB_RUNTIME_SANDBOX_MEMORY=${AGENTHUB_RUNTIME_SANDBOX_MEMORY:-768m}
+      - AGENTHUB_RUNTIME_SANDBOX_CPUS=${AGENTHUB_RUNTIME_SANDBOX_CPUS:-1.5}
+      - AGENTHUB_RUNTIME_SANDBOX_PIDS=${AGENTHUB_RUNTIME_SANDBOX_PIDS:-128}
+      - AGENTHUB_RUNTIME_SANDBOX_TIMEOUT=${AGENTHUB_RUNTIME_SANDBOX_TIMEOUT:-120}
       # Optional Human-in-the-Loop notifications
       - AGENTHUB_SLACK_WEBHOOK_URL=${AGENTHUB_SLACK_WEBHOOK_URL:-}
       - AGENTHUB_TELEGRAM_BOT_TOKEN=${AGENTHUB_TELEGRAM_BOT_TOKEN:-}
@@ -62,6 +67,7 @@ services:
       start_period: 10s
 
   deployment-worker:
+    profiles: ["deployment"]
     image: agenthub-deployment-worker:local
     build:
       context: ./backend
@@ -79,6 +85,9 @@ services:
       - /tmp:rw,nosuid,size=512m
     environment:
       - AGENTHUB_REDIS_URL=redis://:${REDIS_PASSWORD:-agenthub_redis_secret}@redis:6379/0
+      - AGENTHUB_DEBUG=false
+      - AGENTHUB_ALLOW_HOST_DOCKER_SOCKET=false
+      - DOCKER_HOST=${DOCKER_HOST:-}
       - AGENTHUB_ENCRYPT_KEY=${AGENTHUB_ENCRYPT_KEY:-}
       - AGENTHUB_NETLIFY_TOKEN=${AGENTHUB_NETLIFY_TOKEN:-}
       - AGENTHUB_NETLIFY_SITE_ID=${AGENTHUB_NETLIFY_SITE_ID:-}
@@ -96,7 +105,6 @@ services:
       - backend_data:/app/data
       - generated_projects:/agenthub_export
       - builder_gradle_cache:/root/.gradle
-      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - default
       - runtime
@@ -109,6 +117,15 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  runtime-sandbox-image:
+    profiles: ["deployment"]
+    image: ${AGENTHUB_RUNTIME_SANDBOX_IMAGE:-agenthub-runtime-sandbox:local}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.sandbox
+    command: ["true"]
+    restart: "no"
 
   redis:
     image: redis:7-alpine

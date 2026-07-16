@@ -1,7 +1,9 @@
 """Tests for Git integration tools."""
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from app.tools.git_tools import GitCommitTool, GitPushTool, CreatePRTool, _run_git
+
+from app.tools.git_tools import CreatePRTool, GitCommitTool, GitPushTool, _run_git
 
 
 @pytest.fixture
