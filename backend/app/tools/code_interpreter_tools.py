@@ -111,8 +111,14 @@ class E2BPythonInterpreterTool(AgentTool):
             return ToolResult(success=False, error="执行代码不能为空")
 
         executable_code = prepend_visual_hook(code)
+        conversation_id = str(params.get("conversation_id") or "anonymous")
         try:
-            result = await sandbox_manager.execute(executable_code, language="python", timeout=15)
+            result = await sandbox_manager.execute(
+                executable_code,
+                language="python",
+                timeout=15,
+                quota_key=conversation_id,
+            )
         except Exception as e:
             return ToolResult(success=False, error=f"隔离解释器启动失败: {e}")
 

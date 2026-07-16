@@ -221,8 +221,22 @@ docker compose -f docker-compose.yml -f docker-compose.local-docker.yml \
 
 该命令也会构建 `agenthub-runtime-sandbox:local`，其中预装 Node.js 20、Python 3.12、
 TypeScript、pytest、numpy、pandas 和 matplotlib。Agent 运行终端命令时，当前生成项目会以只读
-方式挂载，再复制到容器的临时目录执行，因此 `npm`、`pytest` 和项目检查能看到真实代码，命令
+归档传入容器，再解压到临时目录执行，因此本地和远程 Docker 都不要求共享项目数据卷；命令
 产生的改动不会写回源项目。运行时默认断网并限制 CPU、内存、进程数和最长执行时间。
+
+执行 `npm`、Node、Python 或 pytest 项目命令时，平台会先准备受控依赖缓存。Node 依赖只从
+配置的 HTTPS Registry 获取并禁用安装脚本；Python 依赖必须使用 `name==version` 固定版本，
+并只允许安装二进制 Wheel。缓存按清单内容哈希存入只读 Docker 卷，后续命令直接复用。依赖
+准备阶段使用 `AGENTHUB_RUNTIME_DEPENDENCY_NETWORK`，正式运行阶段仍为 `--network none`。
+生产环境建议把该变量指向受防火墙或代理控制的专用出站网络。
+依赖缓存卷默认最多保留 100 个，超出后按创建时间清理未被使用的旧缓存。
+使用 E2B 时默认选择 `code-interpreter` 模板，并在执行 Python 前验证 numpy、pandas 和
+matplotlib；能力不完整时会停止使用该实例并回退到 Docker，而不会把缺包误报成用户代码错误。
+
+沙箱同时具有全局并发数、单租户并发数和排队超时，默认分别为 4、1 和 30 秒，避免多人同时
+启动大量容器。可以通过 `AGENTHUB_RUNTIME_SANDBOX_MAX_CONCURRENCY`、
+`AGENTHUB_RUNTIME_SANDBOX_MAX_PER_TENANT` 和
+`AGENTHUB_RUNTIME_SANDBOX_QUEUE_TIMEOUT` 调整。
 
 只需单独构建运行沙箱时，可以执行：
 
@@ -246,7 +260,8 @@ Worker 每小时清理超过 7 天或超出用户保留上限的产物、容器�
 
 Agent 的 Python 与 Shell 工具默认只能通过 E2B 或受限 Docker 沙箱执行，不会回退到 API
 主进程。需要访问生成项目的终端命令只使用 Docker 沙箱；宿主 Docker Socket 默认不挂载，
-只有本地开发 override 会显式开放；
+只有本地开发 override 会显式开放。生产环境可以通过 `DOCKER_HOST`、`DOCKER_TLS_VERIFY` 和
+`DOCKER_CERT_PATH` 连接隔离的远程 Docker 节点；
 APK 构建运行在没有 Docker Socket 的临时容器中；
 生成的 API 以非 root、只读文件系统、无 Linux capabilities 的方式运行，并限制 CPU、内存和进程数。
 API 容器只加入内部 `agenthub_runtime` 网络，由 `/published/{deployment_id}/` 反向代理访问。

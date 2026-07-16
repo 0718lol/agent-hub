@@ -36,9 +36,11 @@ class StatefulTerminalTool(AgentTool):
             return ToolResult(success=False, error="命令行指令不能为空")
 
         conversation_id = str(params.get("conversation_id") or "default")
-        workspace = resolve_workspace(conversation_id)
+        workspace = resolve_workspace(conversation_id, create=False)
         if workspace is None:
             return ToolResult(success=False, error="对话 ID 非法")
+        if not workspace.is_dir():
+            return ToolResult(success=False, error="当前对话还没有生成项目，无法运行项目命令")
 
         try:
             result = await sandbox_manager.execute(
@@ -46,6 +48,7 @@ class StatefulTerminalTool(AgentTool):
                 language="shell",
                 timeout=settings.runtime_sandbox_timeout,
                 workspace=workspace,
+                quota_key=conversation_id,
             )
             if result.get("status") != "success":
                 return ToolResult(success=False, error=result.get("stderr") or "隔离命令执行失败")
@@ -60,7 +63,7 @@ class StatefulTerminalTool(AgentTool):
             )
         except Exception as e:
             logger.error(f"[StatefulTerminalTool] Execution failed: {e}")
-            return ToolResult(success=False, error=f"有状态命令行执行异常: {e!s}")
+            return ToolResult(success=False, error=f"隔离命令行执行异常: {e!s}")
 
 # Auto-register on import
 register_tool(StatefulTerminalTool())

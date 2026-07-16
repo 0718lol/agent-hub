@@ -12,11 +12,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOME=/tmp
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bash git \
+        bash git tar \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir matplotlib numpy pandas pytest \
     && npm install --global tsx typescript \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && mkdir -p /workspace /deps/node /deps/python \
+    && chmod 0755 /workspace /deps /deps/node /deps/python
 
 WORKDIR /tmp/workspace
 CMD ["sh"]

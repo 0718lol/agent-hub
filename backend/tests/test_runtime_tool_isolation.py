@@ -19,7 +19,11 @@ async def test_python_interpreter_uses_sandbox_manager():
 
     assert response.success
     execute.assert_awaited_once()
-    assert execute.await_args.kwargs == {"language": "python", "timeout": 15}
+    assert execute.await_args.kwargs == {
+        "language": "python",
+        "timeout": 15,
+        "quota_key": "anonymous",
+    }
 
 
 @pytest.mark.asyncio
@@ -45,6 +49,7 @@ async def test_terminal_uses_project_workspace(tmp_path):
         language="shell",
         timeout=120,
         workspace=tmp_path,
+        quota_key="conv-1",
     )
 
 
@@ -57,3 +62,15 @@ async def test_terminal_rejects_invalid_conversation_id():
 
     assert not response.success
     assert "ID" in response.error
+
+
+@pytest.mark.asyncio
+async def test_terminal_requires_an_existing_project(tmp_path):
+    missing = tmp_path / "missing"
+    with patch("app.tools.stateful_terminal_tool.resolve_workspace", return_value=missing):
+        response = await StatefulTerminalTool().execute(
+            {"command": "ls", "conversation_id": "conv-1"}
+        )
+
+    assert not response.success
+    assert "还没有生成项目" in response.error

@@ -49,6 +49,18 @@ class Settings(BaseSettings):
     runtime_sandbox_cpus: str = "1.5"
     runtime_sandbox_pids: int = 128
     runtime_sandbox_timeout: int = 120
+    runtime_sandbox_max_concurrency: int = 4
+    runtime_sandbox_max_per_tenant: int = 1
+    runtime_sandbox_queue_timeout: int = 30
+    runtime_sandbox_dependency_timeout: int = 300
+    runtime_sandbox_dependency_cache_max: int = 100
+    runtime_sandbox_docker_probe_ttl: float = 15.0
+    runtime_sandbox_archive_max_bytes: int = 50 * 1024 * 1024
+    runtime_sandbox_archive_max_files: int = 2_000
+    runtime_dependency_network: str = "bridge"
+    runtime_npm_registry: str = "https://registry.npmjs.org"
+    runtime_pypi_index_url: str = "https://pypi.org/simple"
+    e2b_template_id: str = "code-interpreter"
 
     # Security config
     api_secret: str = ""
