@@ -25,9 +25,16 @@ def test_fresh_database_upgrades_to_current_schema(tmp_path: Path):
     assert "knowledge_base_id" in {
         column["name"] for column in inspector.get_columns("knowledge_docs")
     }
+    assert "user_id" in {
+        column["name"] for column in inspector.get_columns("knowledge_docs")
+    }
+    assert "user_id" in {
+        column["name"] for column in inspector.get_columns("custom_agents")
+    }
+    assert "knowledge_bases" in inspector.get_table_names()
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
-    assert revision == "d184a60a53f2"
+    assert revision == "f48c2d91a6b0"
 
 
 def test_legacy_database_receives_incremental_schema(tmp_path: Path):
@@ -52,3 +59,7 @@ def test_legacy_database_receives_incremental_schema(tmp_path: Path):
     assert "knowledge_base_id" in {
         column["name"] for column in inspector.get_columns("knowledge_docs")
     }
+    assert "user_id" in {
+        column["name"] for column in inspector.get_columns("knowledge_docs")
+    }
+    assert "knowledge_bases" in inspector.get_table_names()

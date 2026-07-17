@@ -250,28 +250,34 @@ def clear_messages(conversation_id: str):
 
 @db_write_transaction
 def save_custom_agent(agent_id: str, name: str, avatar: str, role: str,
-                      style: str, system_prompt: str, tools: list[str]):
+                      style: str, system_prompt: str, tools: list[str],
+                      user_id: str = "legacy"):
     with Session(engine) as session:
-        agent = CustomAgent(
-            id=agent_id,
-            name=name,
-            avatar=avatar,
-            role=role,
-            style=style,
-            system_prompt=system_prompt,
-            tools=json.dumps(tools, ensure_ascii=False)
-        )
-        session.merge(agent)
+        agent = session.get(CustomAgent, agent_id)
+        if agent and agent.user_id != user_id:
+            raise PermissionError("Custom agent belongs to another tenant")
+        if agent is None:
+            agent = CustomAgent(id=agent_id, user_id=user_id, name=name, system_prompt=system_prompt)
+        agent.name = name
+        agent.avatar = avatar
+        agent.role = role
+        agent.style = style
+        agent.system_prompt = system_prompt
+        agent.tools = json.dumps(tools, ensure_ascii=False)
+        session.add(agent)
         session.commit()
 
 
-def get_custom_agents() -> list[dict]:
+def get_custom_agents(user_id: str | None = None) -> list[dict]:
     with Session(engine) as session:
         statement = select(CustomAgent).order_by(CustomAgent.created_at.asc())
+        if user_id is not None:
+            statement = statement.where(CustomAgent.user_id == user_id)
         rows = session.exec(statement).all()
         return [
             {
                 'agent_id': row.id,
+                'user_id': row.user_id,
                 'name': row.name,
                 'avatar': row.avatar,
                 'role': row.role,
@@ -286,25 +292,32 @@ def get_custom_agents() -> list[dict]:
 
 
 @db_write_transaction
-def delete_custom_agent(agent_id: str):
+def delete_custom_agent(agent_id: str, user_id: str | None = None) -> bool:
     with Session(engine) as session:
-        agent = session.get(CustomAgent, agent_id)
-        if agent:
-            session.delete(agent)
+        statement = select(CustomAgent).where(CustomAgent.id == agent_id)
+        if user_id is not None:
+            statement = statement.where(CustomAgent.user_id == user_id)
+        agent = session.exec(statement).first()
+        if agent is None:
+            return False
+        session.delete(agent)
         # 删除关联会话（两种 ID 格式都尝试）
-        conv = session.get(Conversation, agent_id)
-        if conv:
-            session.delete(conv)
-        conv_c = session.get(Conversation, f"conv_{agent_id}")
-        if conv_c:
-            session.delete(conv_c)
+        public_conv_ids = [agent_id, f"conv_{agent_id}"]
+        conv_ids = list(public_conv_ids)
+        if user_id and user_id != "legacy":
+            from app.core.tenancy import scope_conversation_id
+            conv_ids = [scope_conversation_id(user_id, conv_id) for conv_id in public_conv_ids]
+        for conv_id in conv_ids:
+            conv = session.get(Conversation, conv_id)
+            if conv:
+                session.delete(conv)
         # 删除关联消息（两种会话 ID 格式都覆盖）
-        conv_ids = [agent_id, f"conv_{agent_id}"]
         statement = select(Message).where(Message.conversation_id.in_(conv_ids))
         results = session.exec(statement).all()
         for msg in results:
             session.delete(msg)
         session.commit()
+        return True
 
 
 @db_write_transaction
@@ -431,35 +444,45 @@ def delete_cron_task(task_id: str):
 
 @db_write_transaction
 def save_knowledge_doc(doc_id: str, filename: str, file_path: str = '',
-                       content_type: str = '', chunk_count: int = 0, char_count: int = 0):
+                       content_type: str = '', chunk_count: int = 0, char_count: int = 0,
+                       user_id: str = "legacy", knowledge_base_id: str | None = None):
     with Session(engine) as session:
         doc = KnowledgeDoc(
             id=doc_id,
+            user_id=user_id,
             filename=filename,
             file_path=file_path,
             content_type=content_type,
             chunk_count=chunk_count,
             char_count=char_count,
-            status='ready'
+            status='ready',
+            knowledge_base_id=knowledge_base_id,
         )
         session.merge(doc)
         session.commit()
 
 
-def get_knowledge_docs() -> list[dict]:
+def get_knowledge_docs(user_id: str | None = None) -> list[dict]:
     with Session(engine) as session:
         statement = select(KnowledgeDoc).order_by(KnowledgeDoc.created_at.desc())
+        if user_id is not None:
+            statement = statement.where(KnowledgeDoc.user_id == user_id)
         results = session.exec(statement).all()
         return [row.model_dump() for row in results]
 
 
 @db_write_transaction
-def delete_knowledge_doc(doc_id: str):
+def delete_knowledge_doc(doc_id: str, user_id: str | None = None) -> bool:
     with Session(engine) as session:
-        doc = session.get(KnowledgeDoc, doc_id)
+        statement = select(KnowledgeDoc).where(KnowledgeDoc.id == doc_id)
+        if user_id is not None:
+            statement = statement.where(KnowledgeDoc.user_id == user_id)
+        doc = session.exec(statement).first()
         if doc:
             session.delete(doc)
             session.commit()
+            return True
+        return False
 
 
 # ---- Project Long-term Memory CRUD ----
@@ -771,14 +794,16 @@ async def async_get_conversations():
 async def async_clear_messages(conversation_id):
     return await asyncio.to_thread(clear_messages, conversation_id)
 
-async def async_save_custom_agent(agent_id, name, avatar, role, style, system_prompt, tools):
-    return await asyncio.to_thread(save_custom_agent, agent_id, name, avatar, role, style, system_prompt, tools)
+async def async_save_custom_agent(agent_id, name, avatar, role, style, system_prompt, tools, user_id="legacy"):
+    return await asyncio.to_thread(
+        save_custom_agent, agent_id, name, avatar, role, style, system_prompt, tools, user_id
+    )
 
-async def async_get_custom_agents():
-    return await asyncio.to_thread(get_custom_agents)
+async def async_get_custom_agents(user_id=None):
+    return await asyncio.to_thread(get_custom_agents, user_id)
 
-async def async_delete_custom_agent(agent_id):
-    return await asyncio.to_thread(delete_custom_agent, agent_id)
+async def async_delete_custom_agent(agent_id, user_id=None):
+    return await asyncio.to_thread(delete_custom_agent, agent_id, user_id)
 
 async def async_create_conversation(conv_id, conv_type, name, avatar, agent_id=None, agents=None, preview=''):
     return await asyncio.to_thread(create_conversation, conv_id, conv_type, name, avatar, agent_id, agents, preview)
@@ -910,9 +935,9 @@ async def async_create_conversation_cached(conv_id, conv_type, name, avatar, age
     return result
 
 
-async def async_delete_custom_agent_cached(agent_id):
+async def async_delete_custom_agent_cached(agent_id, user_id=None):
     """带缓存失效的 delete_custom_agent。"""
-    result = await asyncio.to_thread(delete_custom_agent, agent_id)
+    result = await asyncio.to_thread(delete_custom_agent, agent_id, user_id)
     await _async_invalidate_cache("conv:list")
     return result
 

@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     api_runtime_pids: int = 128
     builder_image: str = "agenthub-deployment-worker:local"
     generated_projects_volume: str = "agenthub_generated_projects"
+    deployment_build_network: str = "default"
+    deployment_build_memory: str = "2g"
+    deployment_build_cpus: str = "2.0"
+    deployment_build_pids: int = 256
     allow_host_docker_socket: bool = False
     deployment_retention_days: int = 7
     deployment_max_per_user: int = 20
@@ -111,6 +115,10 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "Host Docker socket detected but AGENTHUB_ALLOW_HOST_DOCKER_SOCKET is false. "
                 "Use an isolated remote Docker endpoint or the explicit local-development override."
+            )
+        if self.deployment_build_network not in {"none", "default"}:
+            raise RuntimeError(
+                "AGENTHUB_DEPLOYMENT_BUILD_NETWORK must be 'none' or 'default'; host networking is forbidden."
             )
 
 

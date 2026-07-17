@@ -43,6 +43,15 @@ def test_worker_rejects_implicit_host_docker_socket(monkeypatch):
         worker.validate_deployment_worker_security()
 
 
+def test_worker_rejects_host_build_network(monkeypatch):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.setattr("app.core.config.os.path.exists", lambda _path: False)
+    worker = Settings(deployment_build_network="host")
+
+    with pytest.raises(RuntimeError, match="DEPLOYMENT_BUILD_NETWORK"):
+        worker.validate_deployment_worker_security()
+
+
 @pytest.mark.asyncio
 async def test_login_sets_httponly_cookie_and_status(monkeypatch):
     from app.core.config import settings

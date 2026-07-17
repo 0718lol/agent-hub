@@ -174,7 +174,7 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
 
   const handleKbDelete = async (docId) => {
     setSaving(true)
-    try { await fetch(`/api/knowledge/${docId}`, { method: 'DELETE' }); fetchKnowledgeDocs() } catch {}
+    try { await fetch(`/api/knowledge/__default__/files/${docId}`, { method: 'DELETE' }); fetchKnowledgeDocs() } catch {}
     setSaving(false)
   }
 

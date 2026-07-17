@@ -8,6 +8,7 @@ RAG Engine — 简易知识库检索增强生成引擎
   - 上下文注入 (将检索结果拼接到 Agent prompt)
 """
 
+import hashlib
 import logging
 import os
 
@@ -21,6 +22,13 @@ os.makedirs(CHROMA_DIR, exist_ok=True)
 CHUNK_SIZE = 500       # 每块最大字符数
 CHUNK_OVERLAP = 80     # 相邻块重叠字符数
 TOP_K = 5              # 检索返回的最相似块数
+
+
+def tenant_collection_name(user_id: str, knowledge_base_id: str) -> str:
+    """Return a Chroma-safe collection name that cannot collide across tenants."""
+    tenant = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:24]
+    resource = "default" if knowledge_base_id == "__default__" else knowledge_base_id
+    return f"tenant_{tenant}_{resource}"
 
 
 def _get_chroma_client():
@@ -163,7 +171,12 @@ class RAGEngine:
         except Exception as e:
             logger.error(f"RAG: Failed to remove document '{doc_id}': {e}")
 
-    def query(self, query_text: str, top_k: int = TOP_K) -> list[dict]:
+    def query(
+        self,
+        query_text: str,
+        top_k: int = TOP_K,
+        collection_name: str = "knowledge_base",
+    ) -> list[dict]:
         """
         语义检索：返回最相关的 top_k 个文档块。
         每个结果包含 text, score, metadata。
@@ -182,7 +195,7 @@ class RAGEngine:
             )
 
         try:
-            collection = _get_or_create_collection()
+            collection = _get_or_create_collection(collection_name)
             # 检查集合是否有数据
             if collection.count() == 0:
                 if span:
@@ -245,6 +258,51 @@ class RAGEngine:
             "以下是从知识库中检索到的相关参考资料，请结合这些信息回答用户问题：\n\n"
             + "\n\n---\n\n".join(context_parts)
             + "\n\n---\n请基于以上参考资料和你的专业知识来回答。如果参考资料不相关，可以忽略。"
+        )
+
+    def build_tenant_context_prompt(
+        self,
+        user_id: str,
+        query_text: str,
+        top_k: int = TOP_K,
+    ) -> str:
+        """Search every knowledge base owned by one tenant and format the best hits."""
+        if not user_id or not query_text.strip():
+            return ""
+        try:
+            from sqlmodel import Session, select
+
+            from app.core._engine import engine
+            from app.core.models import KnowledgeBase
+
+            with Session(engine) as session:
+                base_ids = ["__default__"] + list(session.exec(
+                    select(KnowledgeBase.id).where(KnowledgeBase.user_id == user_id)
+                ).all())
+            hits = []
+            for knowledge_base_id in base_ids:
+                hits.extend(self.query(
+                    query_text,
+                    top_k,
+                    tenant_collection_name(user_id, knowledge_base_id),
+                ))
+            hits.sort(key=lambda hit: hit.get("score", 0), reverse=True)
+            hits = hits[:top_k]
+        except Exception as exc:
+            logger.debug("Tenant RAG lookup skipped: %s", exc)
+            return ""
+        if not hits:
+            return ""
+        context_parts = []
+        for index, hit in enumerate(hits, 1):
+            source = hit.get("metadata", {}).get("filename", "未知来源")
+            context_parts.append(
+                f"[参考文档 {index} | 来源: {source} | 相关度: {hit.get('score', 0)}]\n{hit.get('text', '')}"
+            )
+        return (
+            "以下是当前用户知识库中检索到的参考资料，请结合相关内容回答：\n\n"
+            + "\n\n---\n\n".join(context_parts)
+            + "\n\n---\n如果资料与问题无关，可以忽略。"
         )
 
     def get_stats(self) -> dict:

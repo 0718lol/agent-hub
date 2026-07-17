@@ -59,6 +59,47 @@ class PreviewRuntimeManager:
             raise PreviewRuntimeError(text[-1600:].strip() or "Docker 预览操作失败")
         return text.strip()
 
+    async def _running_preview_containers(self, tenant_hash: str | None = None) -> list[str]:
+        args = ["ps", "--filter", "label=agenthub.preview=true"]
+        if tenant_hash:
+            args.extend(["--filter", f"label=agenthub.preview-tenant={tenant_hash}"])
+        args.extend(["--format", "{{.Names}}"])
+        output = await self._docker(*args, timeout=15, check=False)
+        return [name.strip() for name in output.splitlines() if name.strip()]
+
+    async def _oldest_container(self, names: list[str]) -> str | None:
+        created = []
+        for name in names:
+            timestamp = await self._docker(
+                "inspect", "--format", "{{.Created}}", name, timeout=10, check=False
+            )
+            if timestamp:
+                created.append((timestamp, name))
+        return min(created)[1] if created else (names[-1] if names else None)
+
+    async def _forget_container(self, container_name: str) -> None:
+        await self._docker("rm", "-f", container_name, timeout=15, check=False)
+        for conversation_id, runtime in list(self._runtimes.items()):
+            if runtime.container_name == container_name:
+                self._runtimes.pop(conversation_id, None)
+
+    async def _enforce_docker_quotas(self, tenant_hash: str) -> None:
+        tenant_names = await self._running_preview_containers(tenant_hash)
+        while len(tenant_names) >= max(1, settings.preview_runtime_max_per_tenant):
+            victim = await self._oldest_container(tenant_names)
+            if not victim:
+                break
+            await self._forget_container(victim)
+            tenant_names.remove(victim)
+
+        all_names = await self._running_preview_containers()
+        while len(all_names) >= max(1, settings.preview_runtime_max_total):
+            victim = await self._oldest_container(all_names)
+            if not victim:
+                break
+            await self._forget_container(victim)
+            all_names.remove(victim)
+
     async def docker_available(self) -> bool:
         now = time.monotonic()
         if now - self._capability_checked_at < 15:
@@ -111,6 +152,7 @@ class PreviewRuntimeManager:
             await self.stop(conversation_id)
             async with self._admission_lock:
                 tenant_id = conversation_user_id(conversation_id) or "anonymous"
+                tenant_hash = hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()[:24]
                 tenant_runtimes = [
                     runtime for runtime in self._runtimes.values()
                     if (conversation_user_id(runtime.conversation_id) or "anonymous") == tenant_id
@@ -122,6 +164,7 @@ class PreviewRuntimeManager:
                 while len(self._runtimes) >= max(1, settings.preview_runtime_max_total):
                     oldest = min(self._runtimes.values(), key=lambda item: item.started_at)
                     await self.stop(oldest.conversation_id)
+                await self._enforce_docker_quotas(tenant_hash)
             suffix = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()[:16]
             container_name = f"agenthub-preview-{suffix}"
             public_path = f"/api/previews/{public_conversation_id}/runtime/"
@@ -140,6 +183,8 @@ class PreviewRuntimeManager:
                 "run", "-d", "--name", container_name,
                 "--label", "agenthub.managed=true",
                 "--label", "agenthub.preview=true",
+                "--label", f"agenthub.preview-tenant={tenant_hash}",
+                "--label", f"agenthub.preview-path={public_path}",
                 "--network", "bridge",
                 "--memory", settings.runtime_sandbox_memory,
                 "--cpus", settings.runtime_sandbox_cpus,
@@ -211,6 +256,50 @@ class PreviewRuntimeManager:
 
     def get(self, conversation_id: str) -> PreviewRuntime | None:
         return self._runtimes.get(conversation_id)
+
+    async def get_or_discover(
+        self,
+        conversation_id: str,
+        public_conversation_id: str,
+        workspace: Path,
+    ) -> PreviewRuntime | None:
+        runtime = self._runtimes.get(conversation_id)
+        suffix = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()[:16]
+        container_name = f"agenthub-preview-{suffix}"
+        try:
+            running = await self._docker(
+                "inspect", "--format", "{{.State.Running}}", container_name,
+                timeout=10, check=False,
+            )
+        except PreviewRuntimeError:
+            return runtime
+        if running.strip() != "true":
+            self._runtimes.pop(conversation_id, None)
+            return None
+        if runtime is not None:
+            return runtime
+
+        public_path = f"/api/previews/{public_conversation_id}/runtime/"
+        _mount, use_internal_network = self._mount(workspace)
+        if use_internal_network:
+            runtime_url = f"http://{container_name}:{PREVIEW_PORT}"
+        else:
+            mapped = await self._docker(
+                "port", container_name, f"{PREVIEW_PORT}/tcp", timeout=10, check=False
+            )
+            match = re.search(r"127\.0\.0\.1:(\d{2,5})", mapped)
+            if not match:
+                return None
+            runtime_url = f"http://127.0.0.1:{match.group(1)}"
+        runtime = PreviewRuntime(
+            conversation_id=conversation_id,
+            container_name=container_name,
+            runtime_url=runtime_url,
+            public_path=public_path,
+            started_at=time.time(),
+        )
+        self._runtimes[conversation_id] = runtime
+        return runtime
 
     async def stop_all(self) -> None:
         for conversation_id in list(self._runtimes):

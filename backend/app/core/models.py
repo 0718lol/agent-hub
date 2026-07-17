@@ -33,6 +33,7 @@ class Message(SQLModel, table=True):
 class CustomAgent(SQLModel, table=True):
     __tablename__ = "custom_agents"
     id: str = Field(primary_key=True)
+    user_id: str = Field(default="legacy", index=True)
     name: str
     avatar: str = Field(default=chr(129302))
     role: str = Field(default="")
@@ -88,9 +89,19 @@ class CronTask(SQLModel, table=True):
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
+class KnowledgeBase(SQLModel, table=True):
+    __tablename__ = "knowledge_bases"
+    id: str = Field(primary_key=True)
+    user_id: str = Field(index=True)
+    name: str
+    description: str = Field(default="")
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
 class KnowledgeDoc(SQLModel, table=True):
     __tablename__ = "knowledge_docs"
     id: str = Field(primary_key=True)
+    user_id: str = Field(default="legacy", index=True)
     filename: str
     file_path: str = Field(default="")
     content_type: str = Field(default="")

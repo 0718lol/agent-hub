@@ -1,391 +1,366 @@
-"""Knowledge Base Router — 知识库 CRUD + 文件管理 + 检索。
+"""Tenant-scoped knowledge base CRUD, ingestion, and semantic search."""
 
-支持多知识库，每个知识库对应一个 chromadb collection。
-"""
-
-import json
 import logging
-import os
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
-from sqlmodel import col, select
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from pydantic import BaseModel, Field
+from sqlmodel import Session, select
 
-from app.core.database import (
-    KnowledgeDoc,
-    Session,
-    delete_knowledge_doc,
-    engine,
-    save_knowledge_doc,
-)
+from app.core._engine import engine
+from app.core.models import KnowledgeBase, KnowledgeDoc
+from app.core.tenancy import request_user_id
 
 logger = logging.getLogger("knowledge_router")
 router = APIRouter(tags=["knowledge"])
 
-# 知识库元数据存储（简易方案：JSON 文件）
-KB_META_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'knowledge_bases.json')
-
-
-def _load_kb_meta() -> dict:
-    try:
-        if os.path.exists(KB_META_PATH):
-            with open(KB_META_PATH, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-
-def _save_kb_meta(data: dict):
-    os.makedirs(os.path.dirname(KB_META_PATH), exist_ok=True)
-    with open(KB_META_PATH, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-# ---- Request Models ----
 
 class KnowledgeBaseCreate(BaseModel):
-    name: str
-    description: str = ""
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1000)
+
 
 class KnowledgeBaseUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
 
 
 class KnowledgeQuery(BaseModel):
-    query: str
-    top_k: int = 5
+    query: str = Field(min_length=1, max_length=10_000)
+    top_k: int = Field(default=5, ge=1, le=20)
 
 
-# ---- Knowledge Base CRUD ----
+def _collection_name(user_id: str, kb_id: str) -> str:
+    from app.core.rag_engine import tenant_collection_name
+    return tenant_collection_name(user_id, kb_id)
+
+
+def _base_for_user(session: Session, user_id: str, kb_id: str) -> KnowledgeBase | None:
+    return session.exec(
+        select(KnowledgeBase)
+        .where(KnowledgeBase.id == kb_id)
+        .where(KnowledgeBase.user_id == user_id)
+    ).first()
+
+
+def _require_base(session: Session, user_id: str, kb_id: str) -> KnowledgeBase | None:
+    if kb_id == "__default__":
+        return None
+    knowledge_base = _base_for_user(session, user_id, kb_id)
+    if knowledge_base is None:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    return knowledge_base
+
+
+def _docs_for_base(session: Session, user_id: str, kb_id: str) -> list[KnowledgeDoc]:
+    statement = select(KnowledgeDoc).where(KnowledgeDoc.user_id == user_id)
+    if kb_id == "__default__":
+        statement = statement.where(KnowledgeDoc.knowledge_base_id.is_(None))
+    else:
+        statement = statement.where(KnowledgeDoc.knowledge_base_id == kb_id)
+    return list(session.exec(statement.order_by(KnowledgeDoc.created_at.desc())).all())
+
+
+def _stats(session: Session, user_id: str) -> dict:
+    bases = session.exec(
+        select(KnowledgeBase).where(KnowledgeBase.user_id == user_id)
+    ).all()
+    docs = session.exec(
+        select(KnowledgeDoc).where(KnowledgeDoc.user_id == user_id)
+    ).all()
+    return {
+        "total_bases": len(bases),
+        "total_docs": len(docs),
+        "total_chunks": sum(doc.chunk_count for doc in docs),
+    }
+
+
+def _delete_file(doc: KnowledgeDoc) -> None:
+    if not doc.file_path:
+        return
+    try:
+        from app.core.file_storage import FileStorageManager
+        FileStorageManager.delete(Path(doc.file_path).name)
+    except OSError as exc:
+        logger.warning("Failed to delete knowledge file %s: %s", doc.id, exc)
+
+
+def _delete_from_chroma(collection_name: str, doc_id: str) -> None:
+    from app.core.rag_engine import _get_or_create_collection
+
+    collection = _get_or_create_collection(collection_name)
+    results = collection.get(where={"doc_id": doc_id})
+    if results and results.get("ids"):
+        collection.delete(ids=results["ids"])
+
+
+def _search_collection(collection_name: str, query: str, top_k: int) -> list[dict]:
+    from app.core.rag_engine import _get_or_create_collection
+
+    collection = _get_or_create_collection(collection_name)
+    count = collection.count()
+    if count == 0:
+        return []
+    results = collection.query(query_texts=[query], n_results=min(top_k, count))
+    documents = results.get("documents", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+    metadatas = results.get("metadatas", [[]])[0]
+    return [
+        {
+            "text": document,
+            "score": round(1 - (distances[index] if index < len(distances) else 0), 3),
+            "metadata": metadatas[index] if index < len(metadatas) else {},
+        }
+        for index, document in enumerate(documents)
+    ]
+
 
 @router.get("/knowledge")
-async def list_knowledge_bases():
-    """列出所有知识库及其统计信息。"""
-    meta = _load_kb_meta()
-    bases = []
-    for kb_id, info in meta.items():
-        # 统计该知识库下的文档
-        with Session(engine) as session:
-            docs = session.exec(
-                select(KnowledgeDoc).where(KnowledgeDoc.knowledge_base_id == kb_id)
-            ).all()
-            total_chunks = sum(d.chunk_count for d in docs)
-            total_chars = sum(d.char_count for d in docs)
-            bases.append({
-                "id": kb_id,
-                "name": info.get("name", kb_id),
-                "description": info.get("description", ""),
-                "created_at": info.get("created_at", ""),
-                "doc_count": len(docs),
-                "total_chunks": total_chunks,
-                "total_chars": total_chars,
-            })
-    # 也统计没有 knowledge_base_id 的旧文档（归入"默认知识库"）
+async def list_knowledge_bases(request: Request):
+    """List only the current tenant's bases and retain the legacy UI payload."""
+    user_id = request_user_id(request)
     with Session(engine) as session:
-        orphan_docs = session.exec(
-            select(KnowledgeDoc).where(KnowledgeDoc.knowledge_base_id.is_(None))
+        bases = session.exec(
+            select(KnowledgeBase)
+            .where(KnowledgeBase.user_id == user_id)
+            .order_by(KnowledgeBase.created_at.asc())
         ).all()
-    if orphan_docs:
-        bases.append({
-            "id": "__default__",
-            "name": "默认知识库",
-            "description": "系统自动创建，包含早期上传的文档",
-            "created_at": "",
-            "doc_count": len(orphan_docs),
-            "total_chunks": sum(d.chunk_count for d in orphan_docs),
-            "total_chars": sum(d.char_count for d in orphan_docs),
-        })
-    return {"bases": bases}
+        summaries = []
+        for knowledge_base in bases:
+            docs = _docs_for_base(session, user_id, knowledge_base.id)
+            summaries.append({
+                "id": knowledge_base.id,
+                "name": knowledge_base.name,
+                "description": knowledge_base.description,
+                "created_at": knowledge_base.created_at,
+                "doc_count": len(docs),
+                "total_chunks": sum(doc.chunk_count for doc in docs),
+                "total_chars": sum(doc.char_count for doc in docs),
+            })
+        default_docs = _docs_for_base(session, user_id, "__default__")
+        if default_docs:
+            summaries.insert(0, {
+                "id": "__default__",
+                "name": "默认知识库",
+                "description": "未指定知识库时使用",
+                "created_at": "",
+                "doc_count": len(default_docs),
+                "total_chunks": sum(doc.chunk_count for doc in default_docs),
+                "total_chars": sum(doc.char_count for doc in default_docs),
+            })
+        stats = _stats(session, user_id)
+        return {
+            "status": "ok",
+            "bases": summaries,
+            "docs": [doc.model_dump(exclude={"user_id"}) for doc in default_docs],
+            "stats": stats,
+        }
 
 
 @router.post("/knowledge")
-async def create_knowledge_base(req: KnowledgeBaseCreate):
-    """创建新知识库。"""
-    kb_id = f"kb_{uuid.uuid4().hex[:8]}"
-    meta = _load_kb_meta()
-    meta[kb_id] = {
-        "name": req.name,
-        "description": req.description,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    _save_kb_meta(meta)
-    # 在 chromadb 中创建对应的 collection
+async def create_knowledge_base(body: KnowledgeBaseCreate, request: Request):
+    user_id = request_user_id(request)
+    knowledge_base = KnowledgeBase(
+        id=f"kb_{uuid.uuid4().hex[:12]}",
+        user_id=user_id,
+        name=body.name.strip(),
+        description=body.description.strip(),
+    )
+    with Session(engine) as session:
+        session.add(knowledge_base)
+        session.commit()
     try:
         from app.core.rag_engine import _get_or_create_collection
-        _get_or_create_collection(kb_id)
-    except Exception as e:
-        logger.warning(f"Failed to create chromadb collection for {kb_id}: {e}")
-    return {"status": "created", "id": kb_id, "name": req.name}
+        _get_or_create_collection(_collection_name(user_id, knowledge_base.id))
+    except Exception as exc:
+        logger.warning("Failed to initialize knowledge collection: %s", exc)
+    return {"status": "created", "id": knowledge_base.id, "name": knowledge_base.name}
+
+
+@router.get("/knowledge/stats")
+async def knowledge_stats(request: Request):
+    with Session(engine) as session:
+        return _stats(session, request_user_id(request))
+
+
+@router.post("/knowledge/upload")
+async def upload_default_knowledge_file(request: Request, file: UploadFile = File(...)):
+    result = await _upload_file("__default__", request_user_id(request), file)
+    return {"status": "ok", **result}
+
+
+@router.post("/knowledge/query")
+async def query_default_knowledge(body: KnowledgeQuery, request: Request):
+    user_id = request_user_id(request)
+    try:
+        results = _search_collection(
+            _collection_name(user_id, "__default__"), body.query, body.top_k
+        )
+    except Exception as exc:
+        logger.warning("Default knowledge search failed: %s", exc)
+        results = []
+    return {"status": "ok", "results": results}
 
 
 @router.get("/knowledge/{kb_id}")
-async def get_knowledge_base(kb_id: str):
-    """获取知识库详情（含文档列表）。"""
-    if kb_id == "__default__":
-        # 默认知识库：返回没有 knowledge_base_id 的文档
-        with Session(engine) as session:
-            docs = session.exec(
-                select(KnowledgeDoc).where(KnowledgeDoc.knowledge_base_id.is_(None))
-            ).all()
-        return {
-            "id": "__default__",
-            "name": "默认知识库",
-            "description": "系统自动创建",
-            "docs": [d.model_dump() for d in docs],
-        }
-
-    meta = _load_kb_meta()
-    info = meta.get(kb_id)
-    if not info:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
-
+async def get_knowledge_base(kb_id: str, request: Request):
+    user_id = request_user_id(request)
     with Session(engine) as session:
-        docs = session.exec(
-            select(KnowledgeDoc).where(KnowledgeDoc.knowledge_base_id == kb_id)
-        ).all()
-
-    return {
-        "id": kb_id,
-        "name": info.get("name", kb_id),
-        "description": info.get("description", ""),
-        "created_at": info.get("created_at", ""),
-        "docs": [d.model_dump() for d in docs],
-    }
+        knowledge_base = _require_base(session, user_id, kb_id)
+        docs = _docs_for_base(session, user_id, kb_id)
+        return {
+            "id": kb_id,
+            "name": knowledge_base.name if knowledge_base else "默认知识库",
+            "description": knowledge_base.description if knowledge_base else "未指定知识库时使用",
+            "created_at": knowledge_base.created_at if knowledge_base else "",
+            "docs": [doc.model_dump(exclude={"user_id"}) for doc in docs],
+        }
 
 
 @router.put("/knowledge/{kb_id}")
-async def update_knowledge_base(kb_id: str, req: KnowledgeBaseUpdate):
-    """更新知识库名称或描述。"""
+async def update_knowledge_base(kb_id: str, body: KnowledgeBaseUpdate, request: Request):
     if kb_id == "__default__":
         raise HTTPException(status_code=400, detail="Cannot rename default knowledge base")
-
-    meta = _load_kb_meta()
-    if kb_id not in meta:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-    if req.name is not None:
-        meta[kb_id]["name"] = req.name
-    if req.description is not None:
-        meta[kb_id]["description"] = req.description
-
-    _save_kb_meta(meta)
-    return {"status": "updated", "id": kb_id, "name": meta[kb_id]["name"]}
+    with Session(engine) as session:
+        knowledge_base = _require_base(session, request_user_id(request), kb_id)
+        if body.name is not None:
+            knowledge_base.name = body.name.strip()
+        if body.description is not None:
+            knowledge_base.description = body.description.strip()
+        session.add(knowledge_base)
+        session.commit()
+        return {"status": "updated", "id": kb_id, "name": knowledge_base.name}
 
 
 @router.delete("/knowledge/{kb_id}")
-async def delete_knowledge_base(kb_id: str):
-    """删除知识库及其所有文档。"""
+async def delete_knowledge_base(kb_id: str, request: Request):
     if kb_id == "__default__":
         raise HTTPException(status_code=400, detail="Cannot delete default knowledge base")
-
-    meta = _load_kb_meta()
-    if kb_id not in meta:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-    # 删除该知识库下的所有文档
+    user_id = request_user_id(request)
+    collection_name = _collection_name(user_id, kb_id)
     with Session(engine) as session:
-        docs = session.exec(
-            select(KnowledgeDoc).where(KnowledgeDoc.knowledge_base_id == kb_id)
-        ).all()
+        knowledge_base = _require_base(session, user_id, kb_id)
+        docs = _docs_for_base(session, user_id, kb_id)
         for doc in docs:
-            # 删除 chromadb 中的数据
-            try:
-                _delete_from_chroma(kb_id, doc.id)
-            except Exception:
-                pass
-            # 删除文件
-            if doc.file_path and os.path.exists(doc.file_path):
-                try:
-                    os.remove(doc.file_path)
-                except Exception:
-                    pass
+            _delete_file(doc)
             session.delete(doc)
+        session.delete(knowledge_base)
         session.commit()
-
-    # 删除 chromadb collection
     try:
-        import chromadb
-        client = chromadb.PersistentClient(path=os.path.join(
-            os.path.dirname(__file__), '..', '..', 'data', 'chroma_db'
-        ))
-        client.delete_collection(kb_id)
-    except Exception:
-        pass
-
-    del meta[kb_id]
-    _save_kb_meta(meta)
+        from app.core.rag_engine import _get_chroma_client
+        _get_chroma_client().delete_collection(collection_name)
+    except Exception as exc:
+        logger.debug("Knowledge collection cleanup skipped: %s", exc)
     return {"status": "deleted", "id": kb_id}
 
 
-# ---- File Management ----
-
-def _delete_from_chroma(kb_id: str, doc_id: str):
-    """从 chromadb 中删除指定文档的所有 chunk。"""
-    from app.core.rag_engine import _get_or_create_collection
-    collection = _get_or_create_collection(kb_id)
-    # 删除该文档的所有 chunk
-    try:
-        results = collection.get(where={"doc_id": doc_id})
-        if results and results['ids']:
-            collection.delete(ids=results['ids'])
-    except Exception:
-        pass
-
-
-@router.post("/knowledge/{kb_id}/files")
-async def upload_file_to_kb(kb_id: str, file: UploadFile = File(...)):
-    """上传文件到指定知识库。"""
-    if kb_id == "__default__":
-        # 默认知识库不需要创建
-        pass
-    else:
-        meta = _load_kb_meta()
-        if kb_id not in meta:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
-
+async def _upload_file(kb_id: str, user_id: str, file: UploadFile) -> dict:
     from app.core.config import settings
+    from app.core.document_parser import DocumentParser
+    from app.core.file_storage import FileStorageManager
+    from app.core.rag_engine import _get_or_create_collection, split_text
     from app.core.upload_security import UploadLimitExceeded, read_upload_limited
 
+    with Session(engine) as session:
+        _require_base(session, user_id, kb_id)
     try:
         content = await read_upload_limited(file, settings.knowledge_upload_max_bytes)
     except UploadLimitExceeded as exc:
         raise HTTPException(status_code=413, detail=f"File too large (max {exc.max_bytes} bytes)") from exc
-    filename = file.filename or "unnamed.txt"
-
-    # 检查文件类型
-    from app.core.document_parser import DocumentParser
+    filename = Path(file.filename or "unnamed.txt").name
     if not DocumentParser.is_supported(filename):
-        raise HTTPException(status_code=400, detail=f"不支持的文件类型，支持: {', '.join(DocumentParser.SUPPORTED_EXTENSIONS)}")
+        supported = ", ".join(DocumentParser.SUPPORTED_EXTENSIONS)
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型，支持: {supported}")
 
-    # 保存文件到磁盘
-    from app.core.file_storage import FileStorageManager
-    stored_name = FileStorageManager.generate_stored_name(filename)
+    suffix = Path(filename).suffix.lower()
+    stored_name = f"tenantfile__{user_id}__kb_{uuid.uuid4().hex}{suffix}"
     file_path = FileStorageManager.save(content, stored_name)
-
-    # 解析文档
-    text = DocumentParser.extract_text(file_path)
-    if not text:
-        # 清理已保存的文件
-        FileStorageManager.delete(stored_name)
-        raise HTTPException(status_code=400, detail="无法解析文件内容")
-
-    # 分块
-    from app.core.rag_engine import _get_or_create_collection, split_text
-    chunks = split_text(text)
-    if not chunks:
-        FileStorageManager.delete(stored_name)
-        raise HTTPException(status_code=400, detail="文件内容为空或无法分块")
-
-    # 保存文档记录到数据库
-    doc_id = f"doc_{uuid.uuid4().hex[:8]}"
-    save_knowledge_doc(
-        doc_id=doc_id,
-        filename=filename,
-        file_path=file_path,
-        content_type=file.content_type or '',
-        chunk_count=len(chunks),
-        char_count=len(text),
-    )
-    # 更新 knowledge_base_id
-    if kb_id != "__default__":
-        with Session(engine) as session:
-            doc = session.get(KnowledgeDoc, doc_id)
-            if doc:
-                doc.knowledge_base_id = kb_id
-                session.add(doc)
-                session.commit()
-
-    # 写入 chromadb
-    collection_name = kb_id if kb_id != "__default__" else "knowledge_base"
-    collection = _get_or_create_collection(collection_name)
-    for i, chunk in enumerate(chunks):
-        collection.add(
-            ids=[f"{doc_id}_chunk_{i}"],
-            documents=[chunk],
-            metadatas=[{"doc_id": doc_id, "filename": filename, "chunk_index": i}],
+    doc = None
+    collection_name = _collection_name(user_id, kb_id)
+    try:
+        text = DocumentParser.extract_text(file_path)
+        chunks = split_text(text)
+        if not chunks:
+            raise HTTPException(status_code=400, detail="文件内容为空或无法分块")
+        doc = KnowledgeDoc(
+            id=f"doc_{uuid.uuid4().hex[:12]}",
+            user_id=user_id,
+            filename=filename,
+            file_path=file_path,
+            content_type=file.content_type or "",
+            chunk_count=len(chunks),
+            char_count=len(text),
+            knowledge_base_id=None if kb_id == "__default__" else kb_id,
         )
-
+        collection = _get_or_create_collection(collection_name)
+        collection.add(
+            ids=[f"{doc.id}_chunk_{index}" for index in range(len(chunks))],
+            documents=chunks,
+            metadatas=[
+                {"doc_id": doc.id, "filename": filename, "chunk_index": index, "user_id": user_id}
+                for index in range(len(chunks))
+            ],
+        )
+        with Session(engine) as session:
+            session.add(doc)
+            session.commit()
+    except HTTPException:
+        FileStorageManager.delete(stored_name)
+        raise
+    except Exception as exc:
+        if doc is not None:
+            try:
+                _delete_from_chroma(collection_name, doc.id)
+            except Exception:
+                pass
+        FileStorageManager.delete(stored_name)
+        raise HTTPException(status_code=503, detail="Knowledge indexing failed") from exc
     return {
-        "status": "uploaded",
-        "doc_id": doc_id,
+        "doc_id": doc.id,
         "filename": filename,
         "chunk_count": len(chunks),
         "char_count": len(text),
     }
 
 
+@router.post("/knowledge/{kb_id}/files")
+async def upload_file_to_kb(kb_id: str, request: Request, file: UploadFile = File(...)):
+    return {"status": "uploaded", **await _upload_file(kb_id, request_user_id(request), file)}
+
+
 @router.delete("/knowledge/{kb_id}/files/{doc_id}")
-async def delete_file_from_kb(kb_id: str, doc_id: str):
-    """从知识库中删除指定文档。"""
-    # 从 chromadb 删除
-    collection_name = kb_id if kb_id != "__default__" else "knowledge_base"
-    try:
-        _delete_from_chroma(collection_name, doc_id)
-    except Exception:
-        pass
-
-    # 从数据库删除
+async def delete_file_from_kb(kb_id: str, doc_id: str, request: Request):
+    user_id = request_user_id(request)
     with Session(engine) as session:
-        doc = session.get(KnowledgeDoc, doc_id)
-        if doc:
-            # 删除文件
-            if doc.file_path and os.path.exists(doc.file_path):
-                try:
-                    os.remove(doc.file_path)
-                except Exception:
-                    pass
-            session.delete(doc)
-            session.commit()
-
+        _require_base(session, user_id, kb_id)
+        expected_base_id = None if kb_id == "__default__" else kb_id
+        doc = session.exec(
+            select(KnowledgeDoc)
+            .where(KnowledgeDoc.id == doc_id)
+            .where(KnowledgeDoc.user_id == user_id)
+            .where(KnowledgeDoc.knowledge_base_id == expected_base_id)
+        ).first()
+        if doc is None:
+            raise HTTPException(status_code=404, detail="Knowledge document not found")
+        try:
+            _delete_from_chroma(_collection_name(user_id, kb_id), doc.id)
+        except Exception as exc:
+            logger.warning("Knowledge vector cleanup failed for %s: %s", doc.id, exc)
+        _delete_file(doc)
+        session.delete(doc)
+        session.commit()
     return {"status": "deleted", "doc_id": doc_id}
 
 
-# ---- Search ----
-
 @router.post("/knowledge/{kb_id}/search")
-async def search_knowledge_base(kb_id: str, req: KnowledgeQuery):
-    """在指定知识库中检索。"""
-    collection_name = kb_id if kb_id != "__default__" else "knowledge_base"
-    try:
-        from app.core.rag_engine import _get_or_create_collection
-        collection = _get_or_create_collection(collection_name)
-        results = collection.query(
-            query_texts=[req.query],
-            n_results=req.top_k,
-        )
-        hits = []
-        if results and results['documents'] and results['documents'][0]:
-            for i, doc in enumerate(results['documents'][0]):
-                hits.append({
-                    "text": doc,
-                    "score": round(1 - (results['distances'][0][i] if results['distances'] else 0), 3),
-                    "metadata": results['metadatas'][0][i] if results['metadatas'] else {},
-                })
-        return {"results": hits}
-    except Exception as e:
-        logger.warning(f"Knowledge search failed for {kb_id}: {e}")
-        return {"results": [], "error": str(e)}
-
-
-# ---- Stats ----
-
-@router.get("/knowledge/stats")
-async def knowledge_stats():
-    """获取所有知识库的总统计。"""
-    meta = _load_kb_meta()
-    total_chunks = 0
-    total_docs = 0
+async def search_knowledge_base(kb_id: str, body: KnowledgeQuery, request: Request):
+    user_id = request_user_id(request)
     with Session(engine) as session:
-        all_docs = session.exec(select(KnowledgeDoc)).all()
-        total_docs = len(all_docs)
-        total_chunks = sum(d.chunk_count for d in all_docs)
-    return {
-        "total_bases": len(meta),
-        "total_docs": total_docs,
-        "total_chunks": total_chunks,
-    }
+        _require_base(session, user_id, kb_id)
+    try:
+        hits = _search_collection(_collection_name(user_id, kb_id), body.query, body.top_k)
+        return {"results": hits}
+    except Exception as exc:
+        logger.warning("Knowledge search failed for %s: %s", kb_id, exc)
+        return {"results": [], "error": "Knowledge search is temporarily unavailable"}

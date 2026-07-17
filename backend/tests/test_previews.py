@@ -1,13 +1,15 @@
 """Generated project preview API tests."""
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.routers import previews
-from app.services.preview_runtime import PreviewRuntimeManager
+from app.services.preview_runtime import PreviewRuntime, PreviewRuntimeManager
 
 
 @pytest.fixture
@@ -90,3 +92,91 @@ def test_vite_runtime_detection_uses_structured_package_json(tmp_path: Path):
 
     (tmp_path / "package.json").write_text("{not-json", encoding="utf-8")
     assert not manager.supports_vite(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_preview_runtime_can_be_rediscovered_by_another_backend_instance(
+    tmp_path: Path, monkeypatch
+):
+    manager = PreviewRuntimeManager()
+    calls = []
+
+    async def docker(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "inspect":
+            return "true\n"
+        if args[0] == "port":
+            return "127.0.0.1:49173\n"
+        return ""
+
+    monkeypatch.setattr(manager, "_docker", docker)
+    runtime = await manager.get_or_discover(
+        "tenant__user-A__conv__conv-web", "conv-web", tmp_path
+    )
+
+    assert runtime is not None
+    assert runtime.runtime_url == "http://127.0.0.1:49173"
+    assert runtime.public_path == "/api/previews/conv-web/runtime/"
+    assert any(call[0] == "inspect" for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_preview_websocket_relays_vite_hmr_messages(preview_app, monkeypatch):
+    runtime = PreviewRuntime(
+        conversation_id="tenant__user-A__conv__conv-web",
+        container_name="agenthub-preview-0123456789abcdef",
+        runtime_url="http://agenthub-preview-0123456789abcdef:4173",
+        public_path="/api/previews/conv-web/runtime/",
+        started_at=1,
+    )
+
+    async def discover(*_args):
+        return runtime
+
+    class Upstream:
+        async def send(self, _data):
+            return None
+
+        def __aiter__(self):
+            async def messages():
+                yield "vite-update"
+            return messages()
+
+    class Connector:
+        async def __aenter__(self):
+            return Upstream()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class ClientWebSocket:
+        headers = {}
+        cookies = {}
+        url = SimpleNamespace(query="")
+
+        def __init__(self):
+            self.accepted = False
+            self.messages = []
+
+        async def accept(self):
+            self.accepted = True
+
+        async def receive(self):
+            await asyncio.sleep(60)
+
+        async def send_text(self, data):
+            self.messages.append(data)
+
+        async def send_bytes(self, data):
+            self.messages.append(data)
+
+    client = ClientWebSocket()
+    monkeypatch.setattr(previews.settings, "api_secret", "")
+    monkeypatch.setattr(previews, "websocket_user_id", lambda _websocket: "user-A")
+    monkeypatch.setattr(previews.preview_runtime_manager, "get_or_discover", discover)
+    monkeypatch.setattr(previews.websockets, "connect", lambda *_args, **_kwargs: Connector())
+
+    await previews._proxy_runtime_websocket(client, "conv-web", "")
+
+    assert client.accepted is True
+    assert client.messages == ["vite-update"]

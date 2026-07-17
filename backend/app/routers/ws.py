@@ -223,7 +223,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 "stream": False,
             })
 
-            current_agents = get_agents()
+            current_agents = get_agents(conversation_id)
             if target_agent and target_agent in current_agents:
                 create_tracked_task(
                     _run_admitted_flow(

@@ -40,7 +40,9 @@ def _database_checks() -> list[PreflightCheck]:
         return [PreflightCheck(
             "database", "数据库连接", "fail", str(exc)[:240], required=True,
         )]
-    required_tables = {"conversations", "messages", "tenant_configs", "alembic_version"}
+    required_tables = {
+        "conversations", "messages", "tenant_configs", "knowledge_bases", "alembic_version"
+    }
     missing = sorted(required_tables - tables)
     return [
         PreflightCheck("database", "数据库连接", "pass", "连接正常", required=True),

@@ -39,6 +39,7 @@ except Exception:
     _skill_lib = None
 from app.core.quality_gate import quality_gate
 from app.core.quality_retry import evaluate_and_retry
+from app.core.tenancy import conversation_user_id
 from app.core.websocket import manager
 from app.services.agent_registry import agent_registry
 from app.services.project_workspace import (
@@ -118,16 +119,18 @@ def parse_create_agent_tag(buffer: str) -> tuple[dict | None, str]:
     return None, buffer
 
 
-def get_agents() -> dict:
-    """Return the current agent registry dict (direct reference, not a copy)."""
-    return agent_registry._agents
+def get_agents(conversation_id: str | None = None) -> dict:
+    """Return built-in agents plus custom agents owned by this conversation tenant."""
+    user_id = conversation_user_id(conversation_id) if conversation_id else None
+    return agent_registry.get_agent_dict(user_id)
 # ============================================================
 # Custom Agent helpers
 # ============================================================
 
-async def _remove_custom_agent(agent_id: str):
+async def _remove_custom_agent(agent_id: str, conversation_id: str):
     """Delete a custom agent via the concurrency-safe agent registry."""
-    await agent_registry.unregister_custom_agent(agent_id)
+    user_id = conversation_user_id(conversation_id) or "legacy"
+    await agent_registry.unregister_custom_agent(agent_id, user_id)
 
 
 # ============================================================
@@ -389,6 +392,18 @@ async def stream_agent_reply(
     if context:
         effective_text = f"PM 的任务拆解：\n{context}\n\n用户原始需求：{user_text}"
 
+    user_id = conversation_user_id(conversation_id)
+    if user_id:
+        try:
+            from app.core.rag_engine import rag_engine
+            knowledge_context = await asyncio.to_thread(
+                rag_engine.build_tenant_context_prompt, user_id, user_text
+            )
+            if knowledge_context:
+                effective_text = f"{effective_text}\n\n{knowledge_context}"
+        except Exception as exc:
+            logger.debug("Tenant knowledge injection skipped: %s", exc)
+
     history = await async_get_messages_cached(conversation_id, limit=20)
 
     await manager.broadcast(conversation_id, {
@@ -488,7 +503,9 @@ async def stream_agent_reply(
                     if ca_match:
                         try:
                             agent_config = json.loads(ca_match.group(1))
-                            await agent_registry.register_custom_agent(agent_config)
+                            await agent_registry.register_custom_agent(
+                                agent_config, conversation_user_id(conversation_id) or "legacy"
+                            )
                             await manager.broadcast(conversation_id, {
                                 "type": "agent_created",
                                 "conversation_id": conversation_id,
@@ -533,7 +550,9 @@ async def stream_agent_reply(
                         if json_end != -1 and json_end < len(buffer) and buffer[json_end] == ']':
                             try:
                                 agent_config = json.loads(buffer[json_start:json_end])
-                                await agent_registry.register_custom_agent(agent_config)
+                                await agent_registry.register_custom_agent(
+                                    agent_config, conversation_user_id(conversation_id) or "legacy"
+                                )
                                 await manager.broadcast(conversation_id, {
                                     "type": "agent_created",
                                     "conversation_id": conversation_id,
@@ -551,7 +570,7 @@ async def stream_agent_reply(
                     if not da_match:
                         break
                     del_id = da_match.group(1)
-                    await _remove_custom_agent(del_id)
+                    await _remove_custom_agent(del_id, conversation_id)
                     await manager.broadcast(conversation_id, {
                         "type": "agent_deleted",
                         "conversation_id": conversation_id,
@@ -704,7 +723,7 @@ async def stream_agent_reply(
                 'stream': True,
             })
             # Get BrowserAgent
-            browser_agent = get_agents().get('agent_browser')
+            browser_agent = get_agents(conversation_id).get('agent_browser')
             if browser_agent:
                 # BrowserAgent looks up documentation
                 doc_task = '查阅文档解决以下错误: ' + browser_reason + '. 用户需求: ' + effective_text
@@ -908,7 +927,7 @@ async def stream_agent_reply(
 async def run_target_agent_flow(conversation_id: str, agent, text: str):
     """Background generation flow when user targets a specific agent."""
     logger.info(f"run_target_agent_flow: conv={conversation_id}, agent={agent.agent_id}")
-    AGENTS = get_agents()
+    AGENTS = get_agents(conversation_id)
     stop_event = asyncio.Event()
     _stop_events[conversation_id] = stop_event
     try:
@@ -947,7 +966,7 @@ async def run_target_agent_flow(conversation_id: str, agent, text: str):
 def build_group_chat_graph(conversation_id: str, text: str, trace: Any, stop_event: asyncio.Event) -> Any:
     """Build a StateGraph for multi-agent group chat orchestration."""
     from app.core.state_graph import StateGraph
-    AGENTS = get_agents()
+    AGENTS = get_agents(conversation_id)
 
     graph = StateGraph()
 

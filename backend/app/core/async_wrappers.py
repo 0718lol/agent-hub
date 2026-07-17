@@ -53,16 +53,18 @@ async def async_clear_messages(conversation_id):
     return await asyncio.to_thread(clear_messages, conversation_id)
 
 
-async def async_save_custom_agent(agent_id, name, avatar, role, style, system_prompt, tools):
-    return await asyncio.to_thread(save_custom_agent, agent_id, name, avatar, role, style, system_prompt, tools)
+async def async_save_custom_agent(agent_id, name, avatar, role, style, system_prompt, tools, user_id="legacy"):
+    return await asyncio.to_thread(
+        save_custom_agent, agent_id, name, avatar, role, style, system_prompt, tools, user_id
+    )
 
 
-async def async_get_custom_agents():
-    return await asyncio.to_thread(get_custom_agents)
+async def async_get_custom_agents(user_id=None):
+    return await asyncio.to_thread(get_custom_agents, user_id)
 
 
-async def async_delete_custom_agent(agent_id):
-    return await asyncio.to_thread(delete_custom_agent, agent_id)
+async def async_delete_custom_agent(agent_id, user_id=None):
+    return await asyncio.to_thread(delete_custom_agent, agent_id, user_id)
 
 
 async def async_create_conversation(conv_id, conv_type, name, avatar, agent_id=None, agents=None, preview=""):
@@ -143,4 +145,3 @@ async def async_save_artifact(conversation_id, agent_id, language, code, name=No
 
 async def async_get_artifacts(conversation_id, limit=50):
     return await asyncio.to_thread(get_artifacts, conversation_id, limit)
-

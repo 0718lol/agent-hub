@@ -1,16 +1,26 @@
 """Tenant-scoped generated project previews and runtime proxies."""
 
+import asyncio
+import hmac
 import json
 import mimetypes
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+import websockets
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
+from app.core.auth import SESSION_COOKIE, verify_session_token
+from app.core.config import settings
 from app.core.redis import redis_manager
-from app.core.tenancy import request_user_id, scope_conversation_id
+from app.core.tenancy import (
+    has_valid_api_client_id,
+    request_user_id,
+    scope_conversation_id,
+    websocket_user_id,
+)
 from app.core.workspace import resolve_workspace
 from app.services.deployment import DeploymentError, _web_root, detect_project_type
 from app.services.deployment_queue import deployment_queue
@@ -30,7 +40,8 @@ _PREVIEW_CSP = (
     "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; "
     "style-src * 'unsafe-inline'; "
     "img-src * data: blob:; font-src * data:; "
-    "connect-src https: wss:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+    "connect-src 'self' http: https: ws: wss:; "
+    "frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
 )
 
 
@@ -84,7 +95,9 @@ async def _live_api(scoped_id: str, user_id: str) -> dict | None:
 async def preview_summary(conversation_id: str, request: Request):
     scoped_id, workspace = _workspace(request, conversation_id)
     project_type = _project_type(workspace)
-    runtime = preview_runtime_manager.get(scoped_id)
+    runtime = await preview_runtime_manager.get_or_discover(
+        scoped_id, conversation_id, workspace
+    )
     static_url = ""
     try:
         _web_root(workspace)
@@ -134,7 +147,9 @@ async def stop_preview_runtime(conversation_id: str, request: Request):
 
 async def _proxy_runtime(conversation_id: str, path: str, request: Request):
     scoped_id, _workspace_path = _workspace(request, conversation_id)
-    runtime = preview_runtime_manager.get(scoped_id)
+    runtime = await preview_runtime_manager.get_or_discover(
+        scoped_id, conversation_id, _workspace_path
+    )
     if runtime is None or not validate_runtime_url(runtime.runtime_url):
         raise HTTPException(status_code=404, detail="Preview runtime is not running")
     query = f"?{request.url.query}" if request.url.query else ""
@@ -194,6 +209,105 @@ async def proxy_runtime_root(conversation_id: str, request: Request):
 )
 async def proxy_runtime_path(conversation_id: str, path: str, request: Request):
     return await _proxy_runtime(conversation_id, path, request)
+
+
+def _preview_websocket_authorized(websocket: WebSocket) -> bool:
+    if not settings.api_secret:
+        return True
+    header_token = websocket.headers.get("x-api-secret")
+    if header_token and hmac.compare_digest(header_token, settings.api_secret):
+        return settings.debug or has_valid_api_client_id(websocket.headers)
+    return verify_session_token(
+        websocket.cookies.get(SESSION_COOKIE), settings.api_secret
+    )
+
+
+async def _proxy_runtime_websocket(
+    websocket: WebSocket,
+    conversation_id: str,
+    path: str,
+) -> None:
+    if not _preview_websocket_authorized(websocket):
+        await websocket.accept()
+        await websocket.close(code=4001, reason="Unauthorized preview connection")
+        return
+    try:
+        scoped_id = scope_conversation_id(websocket_user_id(websocket), conversation_id)
+    except ValueError:
+        await websocket.accept()
+        await websocket.close(code=4002, reason="Invalid conversation ID")
+        return
+    workspace = resolve_workspace(scoped_id, create=False)
+    if workspace is None or not workspace.is_dir():
+        await websocket.accept()
+        await websocket.close(code=4004, reason="Generated project not found")
+        return
+    runtime = await preview_runtime_manager.get_or_discover(
+        scoped_id, conversation_id, workspace
+    )
+    if runtime is None or not validate_runtime_url(runtime.runtime_url):
+        await websocket.accept()
+        await websocket.close(code=4004, reason="Preview runtime is not running")
+        return
+
+    query = f"?{websocket.url.query}" if websocket.url.query else ""
+    upstream_url = (
+        runtime.runtime_url.replace("http://", "ws://", 1)
+        + runtime.public_path
+        + path
+        + query
+    )
+    await websocket.accept()
+    try:
+        async with websockets.connect(
+            upstream_url,
+            open_timeout=10,
+            close_timeout=5,
+            max_size=10 * 1024 * 1024,
+        ) as upstream:
+            async def client_to_upstream():
+                while True:
+                    message = await websocket.receive()
+                    if message["type"] == "websocket.disconnect":
+                        return
+                    data = message.get("bytes")
+                    if data is None:
+                        data = message.get("text", "")
+                    await upstream.send(data)
+
+            async def upstream_to_client():
+                async for data in upstream:
+                    if isinstance(data, bytes):
+                        await websocket.send_bytes(data)
+                    else:
+                        await websocket.send_text(data)
+
+            tasks = {
+                asyncio.create_task(client_to_upstream()),
+                asyncio.create_task(upstream_to_client()),
+            }
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                task.result()
+    except (OSError, WebSocketDisconnect, websockets.WebSocketException):
+        pass
+
+
+@router.websocket("/previews/{conversation_id}/runtime/")
+async def proxy_runtime_websocket_root(websocket: WebSocket, conversation_id: str):
+    await _proxy_runtime_websocket(websocket, conversation_id, "")
+
+
+@router.websocket("/previews/{conversation_id}/runtime/{path:path}")
+async def proxy_runtime_websocket_path(
+    websocket: WebSocket,
+    conversation_id: str,
+    path: str,
+):
+    await _proxy_runtime_websocket(websocket, conversation_id, path)
 
 
 def _static_file_response(workspace: Path, conversation_id: str, relative_path: str):

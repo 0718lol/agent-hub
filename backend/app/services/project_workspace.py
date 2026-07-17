@@ -6,12 +6,15 @@ import json
 import os
 import re
 import shlex
+import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from app.core.git_sandbox import git_checkpoint, git_log, git_rollback_to, run_git_cmd
+from app.core.redis import redis_manager
 from app.core.workspace import resolve_workspace
 
 MANIFEST_DIRECTORY = ".agenthub"
@@ -46,13 +49,50 @@ class GeneratedProjectFile:
     code: str
 
 
-def _workspace_lock(workspace: Path) -> asyncio.Lock:
+def _local_workspace_lock(workspace: Path) -> asyncio.Lock:
     key = str(workspace)
     lock = _workspace_locks.get(key)
     if lock is None:
         lock = asyncio.Lock()
         _workspace_locks[key] = lock
     return lock
+
+
+@asynccontextmanager
+async def _workspace_lock(workspace: Path):
+    """Serialize writes locally and across backend replicas when Redis is online."""
+    local_lock = _local_workspace_lock(workspace)
+    async with local_lock:
+        redis_key = "agenthub:workspace-lock:" + hashlib.sha256(
+            str(workspace).encode("utf-8")
+        ).hexdigest()
+        token = uuid.uuid4().hex
+        redis_client = None
+        acquired = False
+        if await redis_manager.check_connection():
+            redis_client = redis_manager.get_client()
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                acquired = bool(await redis_client.set(redis_key, token, nx=True, ex=180))
+                if acquired:
+                    break
+                await asyncio.sleep(0.1)
+            if not acquired:
+                raise TimeoutError("Timed out waiting for the project workspace lock")
+        try:
+            yield
+        finally:
+            if redis_client is not None and acquired:
+                try:
+                    await redis_client.eval(
+                        "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                        "return redis.call('del', KEYS[1]) else return 0 end",
+                        1,
+                        redis_key,
+                        token,
+                    )
+                except Exception:
+                    pass
 
 
 def _normalize_language(language: str) -> str:

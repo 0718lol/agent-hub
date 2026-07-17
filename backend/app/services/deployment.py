@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import shutil
 import tempfile
 import uuid
 import zipfile
@@ -211,7 +212,7 @@ def build_static_site_archive(workspace: Path) -> bytes:
 
 
 def _web_root(workspace: Path) -> Path:
-    for candidate in (workspace, workspace / "dist", workspace / "build"):
+    for candidate in (workspace / "dist", workspace / "build", workspace):
         if (candidate / "index.html").is_file():
             return candidate
     raise DeploymentError("Web pipeline requires index.html in the project root, dist, or build directory")
@@ -278,6 +279,11 @@ def _latest_apk(android_root: Path) -> Path | None:
     return max(apks, key=lambda path: path.stat().st_mtime) if apks else None
 
 
+def _clear_existing_apks(android_root: Path) -> None:
+    for apk in android_root.glob("**/build/outputs/apk/**/*.apk"):
+        apk.unlink(missing_ok=True)
+
+
 async def _build_apk(
     workspace: Path,
     progress: ProgressCallback,
@@ -285,10 +291,7 @@ async def _build_apk(
 ) -> bytes:
     await _raise_if_cancelled(cancelled)
     android_root = _android_root(workspace)
-    existing = await asyncio.to_thread(_latest_apk, android_root)
-    if existing:
-        await progress("build", f"发现现有 APK：{existing.name}，正在归档...", 60)
-        return await asyncio.to_thread(existing.read_bytes)
+    await asyncio.to_thread(_clear_existing_apks, android_root)
 
     await progress("dependencies", "正在解析 Gradle 和 Android 构建依赖...", 30)
     await progress("build", "执行 Gradle assembleRelease，首次构建可能需要下载 Android 依赖...", 45)
@@ -401,6 +404,89 @@ async def _run_docker_command(
     return text.strip()
 
 
+def _clear_web_build_outputs(workspace: Path) -> None:
+    for directory in (workspace / "dist", workspace / "build"):
+        if directory.is_dir():
+            shutil.rmtree(directory)
+
+
+async def _build_web_project(
+    workspace: Path,
+    progress: ProgressCallback,
+    cancelled: CancellationCallback | None = None,
+) -> Path:
+    package = _read_package_json(workspace)
+    scripts = package.get("scripts", {}) if isinstance(package, dict) else {}
+    if not isinstance(scripts, dict) or not scripts.get("build"):
+        return _web_root(workspace)
+
+    await _raise_if_cancelled(cancelled)
+    await asyncio.to_thread(_clear_web_build_outputs, workspace)
+    install = "npm ci" if (workspace / "package-lock.json").is_file() else "npm install"
+    await progress("dependencies", "正在隔离安装 Web 依赖...", 32)
+
+    if settings.docker_sandbox:
+        suffix = hashlib.sha256(str(workspace).encode("utf-8")).hexdigest()[:12]
+        if str(workspace).startswith("/agenthub_export/"):
+            project_subpath = workspace.relative_to("/agenthub_export").as_posix()
+            mount = (
+                f"type=volume,src={settings.generated_projects_volume},dst=/workspace,"
+                f"volume-subpath={project_subpath}"
+            )
+        else:
+            mount = f"type=bind,src={workspace},dst=/workspace"
+        command = [
+            "docker", "run", "--rm",
+            "--name", f"agenthub-web-build-{suffix}",
+            "--network", settings.runtime_dependency_network,
+            "--memory", settings.deployment_build_memory,
+            "--cpus", settings.deployment_build_cpus,
+            "--pids-limit", str(settings.deployment_build_pids),
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--tmpfs", "/tmp:rw,nosuid,size=1024m",
+            "--mount", mount,
+            "-w", "/workspace",
+            "-e", "HOME=/tmp",
+            "-e", "npm_config_cache=/tmp/.npm",
+            settings.runtime_sandbox_image,
+            "sh", "-lc",
+            f"{install} --no-audit --no-fund && npm run build",
+        ]
+        await _run_docker_command(command, 600, "Web 项目构建", cancelled)
+    elif settings.allow_unsandboxed_shell:
+        process = await asyncio.create_subprocess_exec(
+            *install.split(), "--no-audit", "--no-fund",
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output, _ = await _communicate_cancellable(
+            process, timeout=300, action="Web 依赖安装", cancelled=cancelled
+        )
+        if process.returncode != 0:
+            raise DeploymentError(output.decode("utf-8", errors="replace")[-1600:])
+        process = await asyncio.create_subprocess_exec(
+            "npm", "run", "build",
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output, _ = await _communicate_cancellable(
+            process, timeout=300, action="Web 项目构建", cancelled=cancelled
+        )
+        if process.returncode != 0:
+            raise DeploymentError(output.decode("utf-8", errors="replace")[-1600:])
+    else:
+        raise DeploymentError("没有可用的隔离构建环境，禁止在主机直接执行 Web 构建")
+
+    await progress("build", "Web 项目编译完成，正在校验发布产物...", 62)
+    for candidate in (workspace / "dist", workspace / "build"):
+        if (candidate / "index.html").is_file():
+            return candidate
+    raise DeploymentError("Web 构建完成但未找到 dist/index.html 或 build/index.html")
+
+
 async def _deploy_api_container(
     workspace: Path,
     deployment_id: str,
@@ -421,9 +507,18 @@ async def _deploy_api_container(
     container_name = f"agenthub-api-{suffix}"
     await progress("dependencies", "正在校验 Dockerfile、端口和服务依赖...", 30)
     await progress("build", "正在隔离构建 API 容器镜像...", 45)
+    try:
+        cpu_quota = max(10_000, int(float(settings.deployment_build_cpus) * 100_000))
+    except ValueError as exc:
+        raise DeploymentError("Invalid deployment build CPU limit") from exc
     await _run_docker_command(
         [
             "docker", "build", "--pull=false",
+            "--network", settings.deployment_build_network,
+            "--memory", settings.deployment_build_memory,
+            "--cpu-period", "100000",
+            "--cpu-quota", str(cpu_quota),
+            "--shm-size", "256m",
             "--label", "agenthub.managed=true",
             "--label", f"agenthub.deployment={deployment_id}",
             "-t", image_name, str(workspace),
@@ -697,11 +792,11 @@ async def run_deployment_pipeline(
         await progress("generate", f"已按手动选择覆盖自动识别结果（{detected}）。", 22)
 
     if selected == "web":
-        await progress("dependencies", "正在检查 Web 静态资源和发布目录...", 30)
-        root = _web_root(workspace)
+        await progress("dependencies", "正在检查 Web 工程和发布目录...", 28)
+        root = await _build_web_project(workspace, progress, cancelled)
         archive = await asyncio.to_thread(build_project_archive, root)
         await _raise_if_cancelled(cancelled)
-        await progress("build", "Web 静态资源校验和压缩完成。", 62)
+        await progress("build", "Web 发布产物校验和压缩完成。", 68)
         if token and site_id:
             await progress("upload", "正在上传 Netlify CDN...", 82)
             return await NetlifyDeploymentProvider(token, site_id).deploy(archive, cancelled)

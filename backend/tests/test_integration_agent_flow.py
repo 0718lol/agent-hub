@@ -125,7 +125,7 @@ def orchestration_mocks(mock_ws_manager, monkeypatch):
         "agent_designer": DesignerAgent(),
     }
     monkeypatch.setattr(
-        "app.services.agent_orchestrator.get_agents", lambda: dict(_agents)
+        "app.services.agent_orchestrator.get_agents", lambda _conversation_id=None: dict(_agents)
     )
 
     return lambda: _default_stream  # return a factory; tests override chat_stream

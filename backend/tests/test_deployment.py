@@ -143,19 +143,37 @@ async def test_artifact_pipelines_return_downloads(
 
 
 @pytest.mark.asyncio
-async def test_apk_pipeline_reuses_existing_build(tmp_path: Path, monkeypatch):
+async def test_apk_pipeline_rebuilds_instead_of_reusing_stale_artifact(tmp_path: Path, monkeypatch):
     (tmp_path / "gradlew").write_text("#!/bin/sh", encoding="utf-8")
     (tmp_path / "build.gradle").write_text("plugins {}", encoding="utf-8")
     apk_path = tmp_path / "app" / "build" / "outputs" / "apk" / "release" / "app-release.apk"
     apk_path.parent.mkdir(parents=True)
-    apk_path.write_bytes(b"valid-apk-placeholder")
+    apk_path.write_bytes(b"stale-apk")
+    saved = {}
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            apk_path.parent.mkdir(parents=True, exist_ok=True)
+            apk_path.write_bytes(b"fresh-apk")
+            return b"success", b""
+
+    async def create_process(*_args, **_kwargs):
+        return Process()
 
     async def progress(*_args):
         return None
 
+    def save_apk(content, _user_id, _extension):
+        saved["content"] = content
+        return "/uploads/app.apk"
+
     monkeypatch.setattr("app.services.deployment.get_workspace_path", lambda _conversation_id: tmp_path)
+    monkeypatch.setattr("app.services.deployment.asyncio.create_subprocess_exec", create_process)
     monkeypatch.setattr(
-        "app.services.deployment._save_artifact", lambda _content, _user_id, _extension: "/uploads/app.apk"
+        "app.services.deployment._save_artifact",
+        save_apk,
     )
     result = await run_deployment_pipeline(
         "conversation", user_id="user", target="auto", token="", site_id="", progress=progress
@@ -164,6 +182,49 @@ async def test_apk_pipeline_reuses_existing_build(tmp_path: Path, monkeypatch):
     assert result.target == "apk"
     assert result.provider == "gradle"
     assert result.url == "/uploads/app.apk"
+    assert saved["content"] == b"fresh-apk"
+
+
+@pytest.mark.asyncio
+async def test_web_pipeline_builds_package_project_before_archiving(tmp_path: Path, monkeypatch):
+    (tmp_path / "index.html").write_text("<div id='root'></div>", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"build":"vite build"},"devDependencies":{"vite":"latest"}}',
+        encoding="utf-8",
+    )
+    commands = []
+    archived = {}
+
+    async def run_command(command, *_args):
+        commands.append(command)
+        dist = tmp_path / "dist"
+        dist.mkdir()
+        (dist / "index.html").write_text("<script src='/assets/app.js'></script>", encoding="utf-8")
+        (dist / "assets").mkdir()
+        (dist / "assets" / "app.js").write_text("console.log('built')", encoding="utf-8")
+        return "ok"
+
+    async def progress(*_args):
+        return None
+
+    def save(content, *_args):
+        archived["content"] = content
+        return "/uploads/site.zip"
+
+    monkeypatch.setattr("app.services.deployment.get_workspace_path", lambda _conversation_id: tmp_path)
+    monkeypatch.setattr("app.services.deployment._run_docker_command", run_command)
+    monkeypatch.setattr("app.services.deployment._save_artifact", save)
+
+    result = await run_deployment_pipeline(
+        "conversation", user_id="user", target="web", token="", site_id="", progress=progress
+    )
+
+    assert commands and commands[0][:2] == ["docker", "run"]
+    assert result.url == "/uploads/site.zip"
+    import zipfile
+    from io import BytesIO
+    with zipfile.ZipFile(BytesIO(archived["content"])) as bundle:
+        assert set(bundle.namelist()) == {"index.html", "assets/app.js"}
 
 
 @pytest.mark.asyncio
@@ -243,6 +304,10 @@ async def test_api_pipeline_builds_restricted_runtime(tmp_path: Path, monkeypatc
     )
 
     run = next(command for command in commands if command[:2] == ["docker", "run"])
+    build = next(command for command in commands if command[:2] == ["docker", "build"])
+    assert build[build.index("--network") + 1] in {"none", "default"}
+    assert "--memory" in build
+    assert "--cpu-quota" in build
     assert "--read-only" in run
     assert ["--cap-drop", "ALL"] == run[run.index("--cap-drop"):run.index("--cap-drop") + 2]
     assert ["--user", "65532:65532"] == run[run.index("--user"):run.index("--user") + 2]
