@@ -51,9 +51,11 @@ def supports_tool_calling(model: str = "", api_url: str = "") -> bool:
 def get_project_tools(enabled_tools: list[str] = None) -> list[dict]:
     """获取项目中已注册的工具，返回原始定义。"""
     try:
-        from app.tools.registry import _tools
+        from app.tools.registry import TOOL_REGISTRY, is_tool_enabled
         tools = []
-        for name, tool in _tools.items():
+        for name, tool in TOOL_REGISTRY.items():
+            if not is_tool_enabled(name):
+                continue
             if enabled_tools and name not in enabled_tools:
                 continue
             tools.append({

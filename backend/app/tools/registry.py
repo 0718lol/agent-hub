@@ -4,6 +4,7 @@ This module provides executable tools that Agents can invoke during generation
 via the [tool_call:name]{params}[/tool_call] protocol.
 """
 
+import contextvars
 import json
 import logging
 import re
@@ -90,6 +91,9 @@ class AgentTool(ABC):
 
 # ---- Global Tool Registry ----
 TOOL_REGISTRY: dict[str, AgentTool] = {}
+_tool_tenant_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "agenthub_tool_tenant", default=None
+)
 
 
 def register_tool(tool: AgentTool):
@@ -102,9 +106,33 @@ def get_tool(name: str) -> AgentTool | None:
     return TOOL_REGISTRY.get(name)
 
 
+def set_tool_tenant(user_id: str):
+    return _tool_tenant_var.set(user_id)
+
+
+def reset_tool_tenant(token) -> None:
+    _tool_tenant_var.reset(token)
+
+
+def is_tool_enabled(name: str, user_id: str | None = None) -> bool:
+    tool = TOOL_REGISTRY.get(name)
+    if tool is None or not tool.enabled:
+        return False
+    tenant = user_id or _tool_tenant_var.get()
+    if not tenant:
+        return True
+    from app.core.tenant_settings import get_tenant_disabled_tools
+    return name not in get_tenant_disabled_tools(tenant)
+
+
 def list_tools() -> list[dict]:
     """List all registered tools as dicts."""
-    return [t.to_dict() for t in TOOL_REGISTRY.values()]
+    result = []
+    for name, tool in TOOL_REGISTRY.items():
+        item = tool.to_dict()
+        item["enabled"] = is_tool_enabled(name)
+        result.append(item)
+    return result
 
 
 def get_tools_prompt(tool_names: list[str] | None = None) -> str:
@@ -115,7 +143,7 @@ def get_tools_prompt(tool_names: list[str] | None = None) -> str:
     """
     tools = []
     for name, tool in TOOL_REGISTRY.items():
-        if not tool.enabled:
+        if not is_tool_enabled(name):
             continue
         if tool_names is not None and name not in tool_names:
             continue
@@ -168,7 +196,7 @@ async def execute_tool_call(tool_name: str, params: dict) -> ToolResult:
     tool = get_tool(tool_name)
     if not tool:
         return ToolResult(success=False, error=f"未知工具: {tool_name}")
-    if not tool.enabled:
+    if not is_tool_enabled(tool_name):
         return ToolResult(success=False, error=f"工具已禁用: {tool_name}")
 
     from app.core.metrics import active_step_var

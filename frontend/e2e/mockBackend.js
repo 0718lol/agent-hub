@@ -91,6 +91,38 @@ export async function installMockBackend(page, { holdDeployment = false } = {}) 
     if (path === '/api/conversations/conv_pm/messages') return json(route, [])
     if (path === '/api/agents/custom') return json(route, [])
     if (path === '/api/health') return json(route, { status: 'ok', agents: ['agent_pm'] })
+    if (path === '/api/projects/conv_pm') return json(route, {
+      exists: true,
+      manifest: { project_type: 'web' },
+      files: [
+        { path: 'index.html', name: 'index.html', language: 'html', size: 120 },
+        { path: 'src/app.js', name: 'app.js', language: 'javascript', size: 80 },
+      ],
+      snapshots: [{ hash: '1234567890abcdef', message: 'Generate project', timestamp: 1_784_100_000 }],
+    })
+    if (path === '/api/projects/conv_pm/files') return json(route, {
+      path: url.searchParams.get('path'),
+      language: url.searchParams.get('path')?.endsWith('.html') ? 'html' : 'javascript',
+      content: url.searchParams.get('path')?.endsWith('.html')
+        ? '<!doctype html><h1>团队待办</h1>'
+        : "export const ready = true",
+      size: 80,
+    })
+    if (path === '/api/previews/conv_pm') {
+      if (!state.deployed) return json(route, { detail: 'Generated project not persisted yet' }, 404)
+      return json(route, {
+        project_type: 'api',
+        web: {},
+        api: {
+          job_id: currentDeployment.id,
+          base_url: '/published/job-current/',
+          docs_url: '/published/job-current/docs',
+          openapi_url: '/published/job-current/openapi.json',
+        },
+        miniprogram: { credential_required: true },
+        apk: { browser_preview_supported: false },
+      })
+    }
 
     if (path === '/api/deployments' && method === 'GET') {
       const latest = state.cancelRequested
@@ -117,6 +149,16 @@ export async function installMockBackend(page, { holdDeployment = false } = {}) 
     }
 
     return json(route, { detail: `Unhandled E2E route: ${method} ${path}` }, 501)
+  })
+
+  await page.route('**/published/**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    state.requests.push({ method: request.method(), path, body: request.postDataJSON() || null })
+    if (path === '/published/job-current/health') {
+      return json(route, { status: 'ok', service: 'generated-api' })
+    }
+    return json(route, { detail: `Unhandled generated API route: ${path}` }, 404)
   })
 
   return state

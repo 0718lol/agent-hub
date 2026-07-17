@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     runtime_sandbox_docker_probe_ttl: float = 15.0
     runtime_sandbox_archive_max_bytes: int = 50 * 1024 * 1024
     runtime_sandbox_archive_max_files: int = 2_000
+    preview_runtime_max_total: int = 8
+    preview_runtime_max_per_tenant: int = 2
     runtime_dependency_network: str = "bridge"
     runtime_npm_registry: str = "https://registry.npmjs.org"
     runtime_pypi_index_url: str = "https://pypi.org/simple"

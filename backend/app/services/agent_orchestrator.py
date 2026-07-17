@@ -41,6 +41,11 @@ from app.core.quality_gate import quality_gate
 from app.core.quality_retry import evaluate_and_retry
 from app.core.websocket import manager
 from app.services.agent_registry import agent_registry
+from app.services.project_workspace import (
+    GeneratedProjectFile,
+    materialize_project_files,
+    parse_generated_files,
+)
 
 logger = logging.getLogger("agent_orchestrator")
 
@@ -180,16 +185,18 @@ VALID_AGENT_IDS = {
 FORMAT_INSTRUCTIONS = {
     "agent_frontend": (
         "你必须输出完整可运行的代码。根据任务选择合适格式：\n"
-        "- 页面/游戏 → ```html 代码块，以 <!DOCTYPE html> 开头\n"
-        "- React 组件 → ```jsx 代码块\n"
-        "- 样式 → ```css 代码块\n"
+        "- 页面/游戏 → ```html path=index.html 代码块，以 <!DOCTYPE html> 开头\n"
+        "- React 组件 → ```jsx path=src/App.jsx 代码块\n"
+        "- 样式 → ```css path=src/styles.css 代码块\n"
+        "每个代码块都必须提供 path=项目内相对路径。\n"
         "不要问用户任何问题，直接实现。"
     ),
     "agent_backend": (
         "你必须输出完整可运行的代码。根据任务选择合适格式：\n"
-        "- API/接口 → ```python 代码块（FastAPI）\n"
-        "- 数据库 → ```sql 代码块\n"
-        "- 配置 → ```yaml 代码块\n"
+        "- API/接口 → ```python path=main.py 代码块（FastAPI）\n"
+        "- 数据库 → ```sql path=schema.sql 代码块\n"
+        "- 配置 → ```yaml path=config.yml 代码块\n"
+        "每个代码块都必须提供 path=项目内相对路径。\n"
         "不要问用户任何问题，直接实现。"
     ),
     "agent_pm": (
@@ -199,11 +206,12 @@ FORMAT_INSTRUCTIONS = {
     ),
     "agent_tester": (
         "你必须输出测试代码。\n"
-        "用 ```python 代码块包裹，包含 def test_ 开头的测试函数。"
+        "用 ```python path=tests/test_generated.py 代码块包裹，包含 def test_ 开头的测试函数。"
     ),
     "agent_devops": (
         "你必须输出部署配置。\n"
-        "用 ```bash 或 ```yaml 或 ```dockerfile 代码块包裹。"
+        "用 ```bash path=scripts/setup.sh、```yaml path=docker-compose.yml 或 "
+        "```dockerfile path=Dockerfile 代码块包裹。"
     ),
 }
 
@@ -551,25 +559,22 @@ async def stream_agent_reply(
                     })
                     buffer = buffer[:da_match.start()] + buffer[da_match.end():]
 
-                # Extract and broadcast code blocks
+                # Extract and broadcast code blocks while streaming. Persistence
+                # happens after validation and self-reflection select the final output.
                 while True:
-                    code_match = re.search(r'```(\w*)\s*\n?(.*?)```', buffer, re.DOTALL)
+                    code_match = re.search(r'```([^\r\n`]*)\r?\n(.*?)```', buffer, re.DOTALL)
                     if not code_match:
                         break
-                    lang = code_match.group(1) or "html"
-                    code = code_match.group(2).strip()
-
-                    await asyncio.to_thread(save_artifact, conversation_id, agent.agent_id, lang, code)
-
-                    # Auto-debug: run Python code in sandbox, fix errors automatically
-                    if lang == "python" and agent.agent_id in ("agent_frontend", "agent_backend", "agent_tester"):
-                        try:
-                            _debug = await _auto_debug_code(code, effective_text, llm_client, max_retries=2)
-                            if _debug.get("fixed"):
-                                code = _debug["code"]
-                                logger.info(f"Auto-debug fixed code for {agent.agent_id}")
-                        except Exception as _de:
-                            logger.debug(f"Auto-debug skipped: {_de}")
+                    parsed_preview = parse_generated_files(code_match.group(0), agent.agent_id)
+                    if parsed_preview:
+                        preview_file = parsed_preview[0]
+                        lang = preview_file.language
+                        code = preview_file.code
+                        path = preview_file.path
+                    else:
+                        lang = "text"
+                        code = code_match.group(2).strip()
+                        path = ""
 
                     await manager.broadcast(conversation_id, {
                         "type": "code",
@@ -577,6 +582,7 @@ async def stream_agent_reply(
                         "agent_id": agent.agent_id,
                         "language": lang,
                         "code": code,
+                        "path": path,
                     })
                     if lang.lower() in ("html", "htm", ""):
                         await manager.broadcast(conversation_id, {
@@ -647,8 +653,9 @@ async def stream_agent_reply(
         raw_text = full_text
 
     # ---- Format validation layer (skip for external agents) ----
-    if not stopped and not _is_external and full_text and full_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）"):
-        is_valid, reason = validate_agent_output(full_text, agent.agent_id)
+    validation_text = raw_text.strip() or full_text
+    if not stopped and not _is_external and validation_text and validation_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）"):
+        is_valid, reason = validate_agent_output(validation_text, agent.agent_id)
         if not is_valid:
             logger.warning(f"Agent {agent.agent_id} format check failed: {reason}")
             await manager.broadcast(conversation_id, {
@@ -724,6 +731,10 @@ async def stream_agent_reply(
                         full_text = retry_text.strip()
                         raw_text = retry_text
 
+    artifact_score = None
+    artifact_sandbox_status = "skipped"
+    artifact_sandbox_output = None
+
     # ---- Auto self-reflection & retry (skip for external agents) ----
     if not stopped and agent.agent_id not in ("agent_builder", "agent_pm") and not _is_external:
         eval_result = await evaluate_and_retry(
@@ -740,28 +751,108 @@ async def stream_agent_reply(
             raw_text = eval_result["final_output"]
             full_text = eval_result["final_output"].strip()
 
-        try:
-            report_data = eval_result.get("report") or {}
-            sandbox_data = report_data.get("sandbox_run") or {}
-            sandbox_status = "skipped"
-            sandbox_output = None
-            if sandbox_data:
-                sandbox_status = "success" if sandbox_data.get("status") == "success" else "failed"
-                sandbox_output = sandbox_data.get("stderr") or sandbox_data.get("stdout")
+        report_data = eval_result.get("report") or {}
+        sandbox_data = report_data.get("sandbox_run") or {}
+        artifact_score = eval_result.get("total_score", 100)
+        if sandbox_data:
+            artifact_sandbox_status = "success" if sandbox_data.get("status") == "success" else "failed"
+            artifact_sandbox_output = sandbox_data.get("stderr") or sandbox_data.get("stdout")
 
+    # Don't persist LLM error responses
+    is_llm_error = ("[LLM Error" in raw_text) or ("[LLM 调用出错" in raw_text) or ("[Agent 回复出错" in raw_text)
+
+    # Materialize only the final, validated output into the deployable project.
+    materialized_files = []
+    if not stopped and not is_llm_error and raw_text:
+        try:
+            generated_files = parse_generated_files(raw_text, agent.agent_id)
+            prepared_files = []
+            for generated_file in generated_files:
+                code = generated_file.code
+                if generated_file.language == "python" and agent.agent_id in (
+                    "agent_frontend", "agent_backend", "agent_tester",
+                ):
+                    try:
+                        debug_result = await _auto_debug_code(
+                            code, effective_text, llm_client, max_retries=2,
+                        )
+                        if debug_result.get("fixed"):
+                            code = debug_result["code"]
+                            logger.info("Auto-debug fixed %s for %s", generated_file.path, agent.agent_id)
+                    except Exception as debug_error:
+                        logger.debug("Auto-debug skipped: %s", debug_error)
+                prepared_files.append(GeneratedProjectFile(
+                    path=generated_file.path,
+                    language=generated_file.language,
+                    code=code,
+                ))
+
+            if prepared_files:
+                project_result = await materialize_project_files(
+                    conversation_id, agent.agent_id, prepared_files,
+                )
+                materialized_files = project_result["files"]
+                for generated_file in prepared_files:
+                    await asyncio.to_thread(
+                        save_artifact,
+                        conversation_id,
+                        agent.agent_id,
+                        generated_file.language,
+                        generated_file.code,
+                        generated_file.path,
+                    )
+                    await manager.broadcast(conversation_id, {
+                        "type": "code",
+                        "conversation_id": conversation_id,
+                        "agent_id": agent.agent_id,
+                        "language": generated_file.language,
+                        "code": generated_file.code,
+                        "path": generated_file.path,
+                        "final": True,
+                    })
+
+                html_file = next(
+                    (item for item in prepared_files if item.language == "html"),
+                    None,
+                )
+                if html_file:
+                    await manager.broadcast(conversation_id, {
+                        "type": "preview",
+                        "conversation_id": conversation_id,
+                        "agent_id": agent.agent_id,
+                        "html": html_file.code,
+                        "path": html_file.path,
+                    })
+                await manager.broadcast(conversation_id, {
+                    "type": "project_update",
+                    "conversation_id": conversation_id,
+                    "agent_id": agent.agent_id,
+                    "files": materialized_files,
+                    "snapshot_id": project_result["snapshot_id"],
+                    "project_type": project_result["manifest"].get("project_type", "unknown"),
+                })
+        except Exception as project_error:
+            logger.exception("Failed to materialize generated project")
+            await manager.broadcast(conversation_id, {
+                "type": "project_error",
+                "conversation_id": conversation_id,
+                "agent_id": agent.agent_id,
+                "error": str(project_error)[:300],
+            })
+
+    if materialized_files and artifact_score is not None:
+        try:
             await asyncio.to_thread(
                 update_latest_artifact_quality,
                 conversation_id,
                 agent.agent_id,
-                eval_result.get("total_score", 100),
-                sandbox_status,
-                sandbox_output,
+                artifact_score,
+                artifact_sandbox_status,
+                artifact_sandbox_output,
             )
-        except Exception as e_art:
-            logger.error(f"Error updating artifact quality metrics: {e_art}")
+        except Exception as artifact_error:
+            logger.error("Error updating artifact quality metrics: %s", artifact_error)
 
-    # Don't persist LLM error responses
-    is_llm_error = ("[LLM Error" in raw_text) or ("[LLM 调用出错" in raw_text) or ("[Agent 回复出错" in raw_text)
     # Extract and store successful code as reusable skill
     if _skill_lib and not is_llm_error and raw_text:
         try:
@@ -1193,4 +1284,3 @@ async def run_user_message_flow(conversation_id: str, text: str, target_agent: s
             "conversation_id": conversation_id,
             "is_generating": False,
         })
-

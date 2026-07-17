@@ -4,7 +4,14 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from app.core.auth import SESSION_TTL_SECONDS, create_session_token, verify_session_token
+from app.core.auth import (
+    DEVICE_COOKIE,
+    SESSION_COOKIE,
+    SESSION_TTL_SECONDS,
+    create_session_token,
+    get_session_identity,
+    verify_session_token,
+)
 from app.core.config import Settings
 
 
@@ -66,3 +73,26 @@ async def test_login_rejects_wrong_secret(monkeypatch):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/api/auth/login", json={"secret": "wrong"})
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_relogin_preserves_the_browser_tenant_identity(monkeypatch):
+    from app.core.config import settings
+    from app.routers.auth import router
+
+    secret = "s" * 32
+    monkeypatch.setattr(settings, "api_secret", secret)
+    monkeypatch.setattr(settings, "debug", True)
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post("/api/auth/login", json={"secret": secret})
+        first_identity = get_session_identity(client.cookies.get(SESSION_COOKIE), secret)
+        device_cookie = client.cookies.get(DEVICE_COOKIE)
+        await client.post("/api/auth/logout")
+        await client.post("/api/auth/login", json={"secret": secret})
+        second_identity = get_session_identity(client.cookies.get(SESSION_COOKIE), secret)
+
+    assert device_cookie
+    assert first_identity == second_identity

@@ -166,6 +166,7 @@ class MetricsCollector:
         self.best_of_n_results: list[dict] = []
         self.debate_results: list[dict] = []
         self.sandbox_results: list[dict] = []
+        self.quality_gate_results: list[dict] = []
         self.total_requests: int = 0
         self.quality_gate_passes: int = 0
         self.quality_gate_retries: int = 0
@@ -190,37 +191,78 @@ class MetricsCollector:
             if len(d[agent_id]) > 50:
                 d[agent_id] = d[agent_id][-50:]
 
-    def record_quality_gate(self, passed: bool, retried: bool = False):
+    @staticmethod
+    def _active_conversation_id() -> str:
+        trace = active_trace_var.get()
+        return trace.conversation_id if trace else ""
+
+    def record_quality_gate(
+        self,
+        passed: bool,
+        retried: bool = False,
+        conversation_id: str = "",
+    ):
         if passed:
             self.quality_gate_passes += 1
         if retried:
             self.quality_gate_retries += 1
+        self.quality_gate_results.append({
+            "passed": passed,
+            "retried": retried,
+            "conversation_id": conversation_id or self._active_conversation_id(),
+        })
+        if len(self.quality_gate_results) > 100:
+            self.quality_gate_results = self.quality_gate_results[-100:]
 
-    def record_best_of_n(self, n: int, scores: list[float], best_idx: int):
+    def record_best_of_n(
+        self,
+        n: int,
+        scores: list[float],
+        best_idx: int,
+        conversation_id: str = "",
+    ):
         self.best_of_n_results.append({
             "n": n,
             "scores": scores,
             "best_idx": best_idx,
             "best_score": scores[best_idx] if scores else 0,
             "avg_score": sum(scores) / len(scores) if scores else 0,
+            "conversation_id": conversation_id or self._active_conversation_id(),
         })
         if len(self.best_of_n_results) > 50:
             self.best_of_n_results = self.best_of_n_results[-50:]
 
-    def record_debate(self, proposer_score: float, reviewer_score: float, final_score: float):
+    def record_debate(
+        self,
+        proposer_score: float,
+        reviewer_score: float,
+        final_score: float,
+        conversation_id: str = "",
+    ):
         self.debate_results.append({
             "proposer_score": proposer_score,
             "reviewer_score": reviewer_score,
             "final_score": final_score,
+            "conversation_id": conversation_id or self._active_conversation_id(),
         })
         if len(self.debate_results) > 50:
             self.debate_results = self.debate_results[-50:]
 
-    def record_sandbox(self, language: str, status: str, duration_ms: int):
+    def record_sandbox(
+        self,
+        language: str,
+        status: str,
+        duration_ms: int,
+        *,
+        user_id: str = "",
+        conversation_id: str = "",
+    ):
         self.sandbox_results.append({
             "language": language,
             "status": status,
             "duration_ms": duration_ms,
+            "user_id": user_id,
+            "conversation_id": conversation_id or self._active_conversation_id(),
         })
         if len(self.sandbox_results) > 50:
             self.sandbox_results = self.sandbox_results[-50:]
@@ -312,8 +354,102 @@ class MetricsCollector:
         thread = threading.Thread(target=_post_payload, daemon=True)
         thread.start()
 
-    def get_dashboard_data(self) -> dict:
-        """Get all metrics for the frontend dashboard."""
+    @staticmethod
+    def _summarize_traces(traces: list[TaskTrace]) -> dict:
+        by_agent: dict[str, dict[str, list]] = defaultdict(
+            lambda: {"scores": [], "latencies": [], "tokens": []}
+        )
+        for trace in traces:
+            for step in trace.steps:
+                values = by_agent[step.agent_id]
+                values["scores"].append(step.quality_score)
+                values["latencies"].append(step.duration_ms)
+                values["tokens"].append(step.tokens_used)
+
+        summary = {}
+        for agent_id, values in by_agent.items():
+            scores = values["scores"]
+            latencies = values["latencies"]
+            tokens = values["tokens"]
+            summary[agent_id] = {
+                "avg_score": round(sum(scores) / len(scores), 1) if scores else 0,
+                "max_score": round(max(scores), 1) if scores else 0,
+                "min_score": round(min(scores), 1) if scores else 0,
+                "avg_latency_ms": int(sum(latencies) / len(latencies)) if latencies else 0,
+                "total_tokens": sum(tokens),
+                "call_count": len(scores),
+            }
+        return summary
+
+    @staticmethod
+    def _best_of_n_stats(results: list[dict]) -> dict:
+        if not results:
+            return {}
+        best_scores = [result["best_score"] for result in results]
+        avg_scores = [result["avg_score"] for result in results]
+        return {
+            "total_runs": len(results),
+            "avg_best_score": round(sum(best_scores) / len(best_scores), 1),
+            "avg_avg_score": round(sum(avg_scores) / len(avg_scores), 1),
+            "improvement": round(
+                (sum(best_scores) / len(best_scores)) - (sum(avg_scores) / len(avg_scores)), 1
+            ),
+        }
+
+    @staticmethod
+    def _sandbox_stats(results: list[dict]) -> dict:
+        if not results:
+            return {}
+        success = sum(1 for result in results if result["status"] == "success")
+        return {
+            "total_runs": len(results),
+            "success_rate": round(success / len(results) * 100, 1),
+            "avg_duration_ms": int(
+                sum(result["duration_ms"] for result in results) / len(results)
+            ),
+        }
+
+    @staticmethod
+    def _quality_stats(results: list[dict]) -> dict:
+        passes = sum(1 for result in results if result["passed"])
+        retries = sum(1 for result in results if result["retried"])
+        total = passes + retries
+        return {
+            "total_evaluations": total,
+            "pass_rate": round(passes / total * 100, 1) if total else 0,
+            "retry_count": retries,
+        }
+
+    def get_dashboard_data(self, user_id: str | None = None) -> dict:
+        """Get dashboard metrics, optionally restricted to one tenant."""
+        if user_id is not None:
+            from app.core.tenancy import belongs_to_user
+
+            traces = [
+                trace for trace in self.traces
+                if belongs_to_user(trace.conversation_id, user_id)
+            ]
+            def event_belongs(event: dict) -> bool:
+                conversation_id = event.get("conversation_id", "")
+                return bool(conversation_id and belongs_to_user(conversation_id, user_id))
+            best_of_n_results = [event for event in self.best_of_n_results if event_belongs(event)]
+            debate_results = [event for event in self.debate_results if event_belongs(event)]
+            quality_results = [event for event in self.quality_gate_results if event_belongs(event)]
+            sandbox_results = [
+                event for event in self.sandbox_results
+                if event.get("user_id") == user_id or event_belongs(event)
+            ]
+            return {
+                "total_requests": len(traces),
+                "agent_summary": self._summarize_traces(traces),
+                "best_of_n": self._best_of_n_stats(best_of_n_results),
+                "sandbox": self._sandbox_stats(sandbox_results),
+                "quality_gate": self._quality_stats(quality_results),
+                "recent_traces": [trace.to_dict() for trace in traces[-10:]],
+                "debate_results": debate_results[-10:],
+            }
+
+        # Agent performance summary for trusted internal callers.
         # Agent performance summary
         agent_summary = {}
         for agent_id in self.agent_scores:
@@ -330,30 +466,10 @@ class MetricsCollector:
             }
 
         # Best-of-N stats
-        bon_stats = {}
-        if self.best_of_n_results:
-            best_scores = [r["best_score"] for r in self.best_of_n_results]
-            avg_scores = [r["avg_score"] for r in self.best_of_n_results]
-            bon_stats = {
-                "total_runs": len(self.best_of_n_results),
-                "avg_best_score": round(sum(best_scores) / len(best_scores), 1),
-                "avg_avg_score": round(sum(avg_scores) / len(avg_scores), 1),
-                "improvement": round(
-                    (sum(best_scores) / len(best_scores)) - (sum(avg_scores) / len(avg_scores)), 1
-                ),
-            }
+        bon_stats = self._best_of_n_stats(self.best_of_n_results)
 
         # Sandbox stats
-        sandbox_stats = {}
-        if self.sandbox_results:
-            success = sum(1 for r in self.sandbox_results if r["status"] == "success")
-            sandbox_stats = {
-                "total_runs": len(self.sandbox_results),
-                "success_rate": round(success / len(self.sandbox_results) * 100, 1),
-                "avg_duration_ms": int(
-                    sum(r["duration_ms"] for r in self.sandbox_results) / len(self.sandbox_results)
-                ),
-            }
+        sandbox_stats = self._sandbox_stats(self.sandbox_results)
 
         # Quality gate stats
         total_gate = self.quality_gate_passes + self.quality_gate_retries

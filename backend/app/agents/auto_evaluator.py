@@ -29,7 +29,7 @@ async def extract_code_from_text(text: str) -> str:
     Returns:
         提取到的代码字符串，或原文
     """
-    match = re.search(r'```[\w]*\n(.*?)```', text, re.DOTALL)
+    match = re.search(r'```[^\r\n`]*\r?\n(.*?)```', text, re.DOTALL)
     if match:
         return match.group(1).strip()
     return text.strip()

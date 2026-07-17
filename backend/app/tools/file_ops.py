@@ -9,10 +9,6 @@ from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_file_ops")
 
-# Sandbox root directory (per-conversation isolation)
-_SANDBOX_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "data", "sandbox")
-os.makedirs(_SANDBOX_ROOT, exist_ok=True)
-
 # Limits
 _MAX_READ_SIZE = 50000  # 50KB max read
 _MAX_WRITE_SIZE = 100000  # 100KB max write
@@ -42,16 +38,8 @@ def _read_text_file(path: str) -> str:
 
 
 def _safe_path(conversation_id: str, filepath: str) -> str | None:
-    """Resolve path within sandbox, preventing directory traversal."""
-    if not is_safe_conversation_id(conversation_id):
-        return None
-    sandbox_dir = os.path.realpath(os.path.join(_SANDBOX_ROOT, conversation_id))
-    os.makedirs(sandbox_dir, exist_ok=True)
-    resolved = os.path.realpath(os.path.join(sandbox_dir, filepath))
-    # Security: ensure resolved path is within sandbox
-    if not resolved.startswith(sandbox_dir + os.sep) and resolved != sandbox_dir:
-        return None
-    return resolved
+    """Backward-compatible alias for the unified generated-project workspace."""
+    return _safe_workspace_path(conversation_id, filepath)
 
 
 def _safe_workspace_path(conversation_id: str, filepath: str) -> str | None:

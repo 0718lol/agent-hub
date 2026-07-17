@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import json
 import logging
 import time
@@ -42,7 +43,7 @@ class ContextOptimizer:
 
         # Step 2: AST/Outline-based semantic code folding for extremely long code blocks (> 100 lines)
         # Identify fenced code blocks like ```python ... ``` or ```javascript ... ```
-        code_blocks = re.findall(r'(```(\w*)\n(.*?)```)', content, re.DOTALL)
+        code_blocks = re.findall(r'(```([^\r\n`]*)\r?\n(.*?)```)', content, re.DOTALL)
         for _full_block, _lang, code in code_blocks:
             lines = code.split("\n")
             if len(lines) > 100:
@@ -588,10 +589,10 @@ class LLMClient:
     def _get_api_tools(self, enabled_tools: list[str] | None = None) -> list[dict]:
         """Convert AgentTools dynamically into standard API tools definition format."""
         try:
-            from app.tools.registry import TOOL_REGISTRY
+            from app.tools.registry import TOOL_REGISTRY, is_tool_enabled
             api_tools = []
             for name, tool in TOOL_REGISTRY.items():
-                if not tool.enabled:
+                if not is_tool_enabled(name):
                     continue
                 if enabled_tools is not None and name not in enabled_tools:
                     continue
@@ -795,7 +796,42 @@ class LLMClient:
             yield chunk
 
 
-llm_client = LLMClient()
+class ContextualLLMClient:
+    """Proxy the legacy singleton API to a task-local tenant client."""
+
+    def __init__(self, default_client: LLMClient):
+        object.__setattr__(self, "_default_client", default_client)
+        object.__setattr__(
+            self,
+            "_current_client",
+            contextvars.ContextVar("agenthub_llm_client", default=None),
+        )
+
+    @property
+    def default_client(self) -> LLMClient:
+        return object.__getattribute__(self, "_default_client")
+
+    def current_client(self) -> LLMClient:
+        current = object.__getattribute__(self, "_current_client").get()
+        return current or self.default_client
+
+    def set_current(self, client: LLMClient):
+        return object.__getattribute__(self, "_current_client").set(client)
+
+    def reset_current(self, token) -> None:
+        object.__getattribute__(self, "_current_client").reset(token)
+
+    def __getattr__(self, name):
+        return getattr(self.current_client(), name)
+
+    def __setattr__(self, name, value):
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.current_client(), name, value)
+
+
+llm_client = ContextualLLMClient(LLMClient())
 
 
 def _sanitize_for_anthropic(messages: list[dict]) -> list[dict]:

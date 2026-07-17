@@ -14,6 +14,7 @@ const VirtualOffice = lazy(() => import('./components/VirtualOffice/VirtualOffic
 export default function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [officeOpen, setOfficeOpen] = useState(false)
+  const slidePanelOpen = useCanvasStore((state) => state.slidePanelOpen)
 
   useEffect(() => {
     const onOpen = () => setOfficeOpen(true)
@@ -50,7 +51,7 @@ export default function App() {
       <Sidebar mobileOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
       <ChatPanel onToggleSidebar={() => setMobileSidebarOpen((v) => !v)} />
       <SlidePanel />
-      <DesktopPet />
+      {!slidePanelOpen && <DesktopPet />}
       {officeOpen && (
         <Suspense fallback={null}>
           <VirtualOffice open={officeOpen} onClose={() => setOfficeOpen(false)} />

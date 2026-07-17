@@ -5,7 +5,13 @@ import re
 
 from fastapi import Request
 
-from app.core.auth import SESSION_COOKIE, get_session_identity, get_session_secret
+from app.core.auth import (
+    DEVICE_COOKIE,
+    SESSION_COOKIE,
+    get_device_identity,
+    get_session_identity,
+    get_session_secret,
+)
 from app.core.config import settings
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
@@ -29,12 +35,14 @@ def has_valid_api_client_id(headers) -> bool:
 def request_user_id(request: Request) -> str:
     secret = get_session_secret(settings.api_secret)
     identity = get_session_identity(request.cookies.get(SESSION_COOKIE), secret)
+    identity = identity or get_device_identity(request.cookies.get(DEVICE_COOKIE), secret)
     return identity or _api_client_user_id(request.headers)
 
 
 def websocket_user_id(websocket) -> str:
     secret = get_session_secret(settings.api_secret)
     identity = get_session_identity(websocket.cookies.get(SESSION_COOKIE), secret)
+    identity = identity or get_device_identity(websocket.cookies.get(DEVICE_COOKIE), secret)
     return identity or _api_client_user_id(websocket.headers)
 
 
@@ -48,6 +56,12 @@ def public_conversation_id(conversation_id: str) -> str:
     if conversation_id.startswith(_PREFIX) and _SEPARATOR in conversation_id:
         return conversation_id.split(_SEPARATOR, 1)[1]
     return conversation_id
+
+
+def conversation_user_id(conversation_id: str) -> str | None:
+    if conversation_id.startswith(_PREFIX) and _SEPARATOR in conversation_id:
+        return conversation_id[len(_PREFIX):].split(_SEPARATOR, 1)[0]
+    return None
 
 
 def belongs_to_user(conversation_id: str, user_id: str) -> bool:

@@ -3,7 +3,7 @@
 const ci = require('miniprogram-ci')
 
 async function main() {
-  const [projectPath, appid, privateKeyPath, version, desc] = process.argv.slice(2)
+  const [action, projectPath, appid, privateKeyPath, version, desc, qrcodeOutputDest] = process.argv.slice(2)
   const project = new ci.Project({
     appid,
     type: 'miniProgram',
@@ -11,17 +11,32 @@ async function main() {
     privateKeyPath,
     ignores: ['node_modules/**/*', '.git/**/*'],
   })
+  const onProgressUpdate = (progress) => {
+    const message = progress && (progress.message || progress.status)
+    if (message) process.stdout.write(`${String(message)}\n`)
+  }
+  if (action === 'preview') {
+    if (!qrcodeOutputDest) throw new Error('Missing preview QR code destination')
+    await ci.preview({
+      project,
+      desc,
+      setting: { useProjectConfig: true },
+      robot: 1,
+      threads: 2,
+      qrcodeFormat: 'image',
+      qrcodeOutputDest,
+      onProgressUpdate,
+    })
+    process.stdout.write('MINIPROGRAM_PREVIEW_SUCCESS\n')
+    return
+  }
+  if (action !== 'upload') throw new Error(`Unsupported action: ${action}`)
   await ci.upload({
-    project,
-    version,
-    desc,
+    project, version, desc,
     setting: { useProjectConfig: true },
     robot: 1,
     threads: 2,
-    onProgressUpdate: (progress) => {
-      const message = progress && (progress.message || progress.status)
-      if (message) process.stdout.write(`${String(message)}\n`)
-    },
+    onProgressUpdate,
   })
   process.stdout.write('MINIPROGRAM_UPLOAD_SUCCESS\n')
 }

@@ -50,6 +50,9 @@ from app.routers import (
     agents as agents_router,
 )
 from app.routers import (
+    artifacts as artifacts_router,
+)
+from app.routers import (
     auth as auth_router,
 )
 from app.routers import (
@@ -71,6 +74,12 @@ from app.routers import (
     metrics as metrics_router,
 )
 from app.routers import (
+    previews as previews_router,
+)
+from app.routers import (
+    projects as projects_router,
+)
+from app.routers import (
     prompt as prompt_router,
 )
 from app.routers import (
@@ -84,6 +93,9 @@ from app.routers import (
 )
 from app.routers import (
     speech as speech_router,
+)
+from app.routers import (
+    system as system_router,
 )
 from app.routers import (
     tools as tools_router,
@@ -131,9 +143,11 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to stop daemon scheduler during shutdown: {e}")
     try:
         from app.core.terminal import stateful_terminal_manager
+        from app.services.preview_runtime import preview_runtime_manager
         from app.tools.browser_tools import browser_session_manager
         await browser_session_manager.close_all()
         await stateful_terminal_manager.close_all()
+        await preview_runtime_manager.stop_all()
     except Exception as e:
         logger.warning(f"Failed to close browser/terminal sessions during shutdown: {e}")
 
@@ -200,6 +214,7 @@ AGENTS = get_agents()
 # ---- Mount all routers ----
 app.include_router(auth_router.router, prefix="/api")
 app.include_router(agents_router.router, prefix="/api")
+app.include_router(artifacts_router.router, prefix="/api")
 app.include_router(uploads_router.router, prefix="/api")
 app.include_router(uploads_router.router)
 app.include_router(settings_router.router, prefix="/api")
@@ -208,9 +223,12 @@ app.include_router(workflows_router.router, prefix="/api")
 app.include_router(mcp_router.router, prefix="/api")
 app.include_router(webhook_router.router, prefix="/api")
 app.include_router(conversations_router.router, prefix="/api")
+app.include_router(projects_router.router, prefix="/api")
+app.include_router(previews_router.router, prefix="/api")
 app.include_router(quality_router.router, prefix="/api")
 app.include_router(prompt_router.router, prefix="/api")
 app.include_router(speech_router.router, prefix="/api")
+app.include_router(system_router.router, prefix="/api")
 app.include_router(sandbox_router.router, prefix="/api")
 app.include_router(benchmark_router.router, prefix="/api")
 app.include_router(ws_router.router)
@@ -325,6 +343,7 @@ class DeployRequest(BaseModel):
     key_password: str = ""
     mini_appid: str = ""
     mini_private_key_file_id: str = ""
+    mini_action: str = "upload"
     version: str = "1.0.0"
     description: str = "AgentHub 演示发布"
 
@@ -349,6 +368,8 @@ def _deployment_options(user_id: str, options: DeployRequest) -> dict:
             raise HTTPException(status_code=422, detail="用户签名需要别名和 keystore 密码")
     if options.mini_private_key_file_id and not _owned_upload(user_id, options.mini_private_key_file_id):
         raise HTTPException(status_code=422, detail="请选择当前用户上传的小程序私钥")
+    if options.mini_action not in {"upload", "preview"}:
+        raise HTTPException(status_code=422, detail="Unsupported Mini Program action")
     return {
         "signing_mode": options.signing_mode,
         "keystore_file_id": options.keystore_file_id,
@@ -357,6 +378,7 @@ def _deployment_options(user_id: str, options: DeployRequest) -> dict:
         "key_password": obfuscate_key(options.key_password or options.store_password),
         "mini_appid": options.mini_appid.strip(),
         "mini_private_key_file_id": options.mini_private_key_file_id,
+        "mini_action": options.mini_action,
         "version": options.version.strip() or "1.0.0",
         "description": options.description.strip()[:100],
     }

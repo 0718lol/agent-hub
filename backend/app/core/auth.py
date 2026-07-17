@@ -8,6 +8,8 @@ import time
 
 SESSION_COOKIE = "agenthub_session"
 SESSION_TTL_SECONDS = 8 * 60 * 60
+DEVICE_COOKIE = "agenthub_device"
+DEVICE_TTL_SECONDS = 365 * 24 * 60 * 60
 _DEV_SESSION_SECRET = secrets.token_urlsafe(32)
 
 
@@ -23,7 +25,13 @@ def create_session_token(secret: str, now: int | None = None, user_id: str | Non
     return f"{payload}.{encoded_signature}"
 
 
-def verify_session_token(token: str | None, secret: str, now: int | None = None) -> bool:
+def verify_session_token(
+    token: str | None,
+    secret: str,
+    now: int | None = None,
+    *,
+    ttl_seconds: int = SESSION_TTL_SECONDS,
+) -> bool:
     if not token or not secret:
         return False
     try:
@@ -32,7 +40,7 @@ def verify_session_token(token: str | None, secret: str, now: int | None = None)
     except (TypeError, ValueError):
         return False
     current_time = int(now if now is not None else time.time())
-    if issued_at > current_time + 60 or current_time - issued_at > SESSION_TTL_SECONDS:
+    if issued_at > current_time + 60 or current_time - issued_at > ttl_seconds:
         return False
     payload = f"{issued_at}.{nonce}"
     signature = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).digest()
@@ -40,7 +48,17 @@ def verify_session_token(token: str | None, secret: str, now: int | None = None)
     return hmac.compare_digest(expected, supplied_signature)
 
 
-def get_session_identity(token: str | None, secret: str, now: int | None = None) -> str | None:
-    if not verify_session_token(token, secret, now=now):
+def get_session_identity(
+    token: str | None,
+    secret: str,
+    now: int | None = None,
+    *,
+    ttl_seconds: int = SESSION_TTL_SECONDS,
+) -> str | None:
+    if not verify_session_token(token, secret, now=now, ttl_seconds=ttl_seconds):
         return None
     return token.split(".", 2)[1]
+
+
+def get_device_identity(token: str | None, secret: str, now: int | None = None) -> str | None:
+    return get_session_identity(token, secret, now=now, ttl_seconds=DEVICE_TTL_SECONDS)

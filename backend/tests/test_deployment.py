@@ -10,6 +10,7 @@ from app.services.deployment import (
     DeploymentError,
     NetlifyDeploymentProvider,
     _build_apk,
+    _preview_miniprogram,
     _run_docker_command,
     _sign_apk,
     build_static_site_archive,
@@ -163,6 +164,42 @@ async def test_apk_pipeline_reuses_existing_build(tmp_path: Path, monkeypatch):
     assert result.target == "apk"
     assert result.provider == "gradle"
     assert result.url == "/uploads/app.apk"
+
+
+@pytest.mark.asyncio
+async def test_miniprogram_preview_generates_qrcode_artifact(tmp_path: Path, monkeypatch):
+    key_path = tmp_path / "private.key"
+    key_path.write_text("secret", encoding="utf-8")
+    commands = []
+
+    async def run_command(command, *_args):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"jpeg-qrcode")
+        return "MINIPROGRAM_PREVIEW_SUCCESS"
+
+    async def progress(*_args):
+        return None
+
+    monkeypatch.setattr("app.services.deployment._owned_secret_path", lambda *_args: key_path)
+    monkeypatch.setattr("app.services.deployment._run_trusted_command", run_command)
+    monkeypatch.setattr(
+        "app.services.deployment._save_artifact",
+        lambda content, _user_id, extension: f"/uploads/preview.{extension}" if content else "",
+    )
+    url = await _preview_miniprogram(
+        tmp_path,
+        "user-A",
+        {
+            "mini_appid": "wx0123456789abcdef",
+            "mini_private_key_file_id": "tenantfile__user-A__key",
+            "version": "1.0.0",
+        },
+        progress,
+    )
+
+    assert url == "/uploads/preview.jpg"
+    assert commands[0][2] == "preview"
+    assert commands[0][-1].endswith("preview.jpg")
 
 
 @pytest.mark.asyncio

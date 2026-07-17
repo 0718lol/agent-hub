@@ -5,16 +5,10 @@ on validation failure. Works with all LLM providers.
 """
 import logging
 import re
-from typing import Optional
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 logger = logging.getLogger("output_validator")
-
-
-# ============================================================
-# Pydantic schemas for expected output formats
-# ============================================================
-
-from pydantic import BaseModel, Field, validator
 
 
 class ToolCall(BaseModel):
@@ -22,7 +16,8 @@ class ToolCall(BaseModel):
     name: str = Field(..., description="Tool name")
     params: dict = Field(default_factory=dict, description="Tool parameters")
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_tool_name(cls, v):
         valid_tools = {
             "browser_open_url", "browser_get_content", "browser_screenshot",
@@ -41,18 +36,16 @@ class AgentOutput(BaseModel):
     has_code_block: bool = Field(default=False, description="Whether output contains code")
     ends_with_question: bool = Field(default=False, description="Whether output ends with question")
 
-    @validator("ends_with_question", always=True)
-    def check_question(cls, v, values):
-        text = values.get("text", "")
+    @model_validator(mode="after")
+    def check_question(self):
         # Exclude [ask_user:] tags
-        clean = re.sub(r'\[ask_user:.*?\]', '', text, flags=re.DOTALL)
+        clean = re.sub(r'\[ask_user:.*?\]', '', self.text, flags=re.DOTALL)
         # Exclude code blocks
         clean = re.sub(r'```.*?```', '', clean, flags=re.DOTALL)
         # Check if ends with question
         clean = clean.strip()
-        if clean and (clean.endswith('?') or clean.endswith('？')):
-            return True
-        return False
+        self.ends_with_question = bool(clean and (clean.endswith('?') or clean.endswith('？')))
+        return self
 
 
 # ============================================================

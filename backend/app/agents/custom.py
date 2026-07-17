@@ -10,14 +10,14 @@ AVAILABLE_TOOLS = {
         "name": "代码生成",
         "icon": "💻",
         "description": "生成代码片段和完整项目文件",
-        "prompt_addon": "\n- 你可以生成代码。使用 ```language 代码块输出代码，系统会自动高亮展示并发送到代码面板。",
+        "prompt_addon": "\n- 你可以生成代码。使用 ```language path=项目内相对路径 代码块输出，系统会自动写入工程并展示。",
     },
     "web_preview": {
         "id": "web_preview",
         "name": "网页预览",
         "icon": "🌐",
         "description": "生成可实时预览的 HTML 页面",
-        "prompt_addon": "\n- 你可以生成 HTML 页面。使用 ```html 代码块输出，系统会自动渲染到预览面板。HTML 必须是自包含的（内联 CSS/JS）。",
+        "prompt_addon": "\n- 你可以生成 HTML 页面。使用 ```html path=index.html 代码块输出，系统会自动渲染到预览面板。HTML 必须是自包含的（内联 CSS/JS）。",
     },
     "data_analysis": {
         "id": "data_analysis",
@@ -31,7 +31,7 @@ AVAILABLE_TOOLS = {
         "name": "API 设计",
         "icon": "🔌",
         "description": "设计 RESTful API 接口和数据模型",
-        "prompt_addon": "\n- 你擅长 API 设计，使用 RESTful 风格，输出接口文档和示例代码（```python 代码块）。",
+        "prompt_addon": "\n- 你擅长 API 设计，使用 RESTful 风格，输出接口文档和示例代码（```python path=main.py 代码块）。",
     },
     "testing": {
         "id": "testing",

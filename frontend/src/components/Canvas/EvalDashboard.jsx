@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Download, Code, FileCode, Terminal, ExternalLink, Box, X } from 'lucide-react'
+import { AlertCircle, RefreshCw, Download, Code, FileCode, Terminal, ExternalLink, Box, X } from 'lucide-react'
 
 // Unified Line-by-Line Diff Algorithm (Zero Dependency, Lookahead)
 const getUnifiedDiff = (oldText, newText) => {
@@ -61,6 +61,8 @@ const getUnifiedDiff = (oldText, newText) => {
 export default function EvalDashboard() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [metricsError, setMetricsError] = useState('')
+  const [artifactsError, setArtifactsError] = useState('')
   const [benchStatus, setBenchStatus] = useState(null)
   const [benchRunning, setBenchRunning] = useState(false)
   
@@ -84,18 +86,29 @@ export default function EvalDashboard() {
   const fetchMetrics = useCallback(async () => {
     try {
       const resp = await fetch('/api/metrics')
+      if (!resp.ok) throw new Error(`评估数据请求失败 (${resp.status})`)
       const d = await resp.json()
+      if (!d || typeof d !== 'object' || Array.isArray(d)) throw new Error('评估数据格式无效')
       setData(d)
-    } catch {}
-    setLoading(false)
+      setMetricsError('')
+    } catch (error) {
+      setMetricsError(error.message || '评估数据加载失败')
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   const fetchArtifacts = useCallback(async () => {
     try {
       const resp = await fetch('/api/artifacts?limit=15')
+      if (!resp.ok) throw new Error(`交付产物请求失败 (${resp.status})`)
       const arr = await resp.json()
+      if (!Array.isArray(arr)) throw new Error('交付产物数据格式无效')
       setArtifacts(arr)
-    } catch {}
+      setArtifactsError('')
+    } catch (error) {
+      setArtifactsError(error.message || '交付产物加载失败')
+    }
   }, [])
 
   useEffect(() => {
@@ -176,6 +189,17 @@ export default function EvalDashboard() {
           {benchRunning ? `⏳ 运行中 ${benchStatus?.progress || 0}/${benchStatus?.total || 0}` : '🚀 一键 Benchmark'}
         </button>
       </div>
+
+      {(metricsError || artifactsError) && (
+        <LoadErrorBanner
+          message={[metricsError, artifactsError].filter(Boolean).join('；')}
+          onRetry={() => {
+            setLoading(data === null)
+            fetchMetrics()
+            fetchArtifacts()
+          }}
+        />
+      )}
 
       {/* Overview cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
@@ -599,6 +623,32 @@ function StatCard({ title, value, color }) {
   )
 }
 
+function LoadErrorBanner({ message, onRetry }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, padding: '9px 10px',
+      borderRadius: 6, border: '1px solid rgba(239,68,68,0.28)',
+      background: 'rgba(239,68,68,0.08)', color: '#fca5a5', fontSize: 12,
+    }}>
+      <AlertCircle size={15} aria-hidden="true" />
+      <span style={{ flex: 1 }}>{message}</span>
+      <button
+        type="button"
+        onClick={onRetry}
+        title="重新加载"
+        aria-label="重新加载"
+        style={{
+          width: 28, height: 28, border: 'none', borderRadius: 4, cursor: 'pointer',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(255,255,255,0.08)', color: 'currentColor',
+        }}
+      >
+        <RefreshCw size={14} />
+      </button>
+    </div>
+  )
+}
+
 function SectionTitle({ children }) {
   return <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 10 }}>{children}</div>
 }
@@ -617,4 +667,3 @@ function ScoreBar({ score }) {
 
 const thStyle = { padding: '8px 12px', textAlign: 'left', fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }
 const tdStyle = { padding: '8px 12px', color: 'var(--text-primary)' }
-

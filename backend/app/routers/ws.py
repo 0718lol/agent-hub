@@ -11,8 +11,11 @@ from app.core.auth import SESSION_COOKIE, verify_session_token
 from app.core.concurrency import generation_admission
 from app.core.config import settings
 from app.core.crud import create_conversation
+from app.core.llm_client import llm_client
 from app.core.logging_config import get_logger
+from app.core.quality_gate import quality_gate
 from app.core.tenancy import has_valid_api_client_id, scope_conversation_id, websocket_user_id
+from app.core.tenant_settings import get_tenant_llm_client, get_tenant_quality_gate
 from app.core.websocket import manager
 from app.routers.harness_handler import handle_verdict
 from app.services.agent_orchestrator import (
@@ -23,6 +26,7 @@ from app.services.agent_orchestrator import (
     run_user_message_flow,
 )
 from app.tools.judge_tools import _pending_interactions
+from app.tools.registry import reset_tool_tenant, set_tool_tenant
 
 router = APIRouter()
 logger = get_logger("ws")
@@ -89,6 +93,8 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
         await websocket.accept()
         await websocket.close(code=4002, reason="Invalid conversation ID")
         return
+    tenant_client = await asyncio.to_thread(get_tenant_llm_client, user_id)
+    tenant_quality_gate = await asyncio.to_thread(get_tenant_quality_gate, user_id)
     # Direct WebSocket clients may connect before the REST conversation list
     # initializes this tenant's default rows.
     await asyncio.to_thread(
@@ -103,6 +109,9 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     )
 
     await manager.connect(websocket, conversation_id)
+    tenant_client_token = llm_client.set_current(tenant_client)
+    tenant_quality_token = quality_gate.set_current(tenant_quality_gate)
+    tenant_tool_token = set_tool_tenant(user_id)
     try:
         while True:
             data = await websocket.receive_text()
@@ -238,3 +247,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
         manager.disconnect(websocket, conversation_id)
         # A browser refresh or brief network loss must not abort generation.
         # The explicit "stop" message remains the only user cancellation path.
+    finally:
+        reset_tool_tenant(tenant_tool_token)
+        quality_gate.reset_current(tenant_quality_token)
+        llm_client.reset_current(tenant_client_token)

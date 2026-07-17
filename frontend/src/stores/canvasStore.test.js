@@ -19,6 +19,7 @@ describe('canvasStore', () => {
       deployResultType: 'site',
       deployTarget: 'web',
       deployStatus: 'idle',
+      deployResultVisible: false,
       tasks: [
         { id: 1, title: '设计页面 UI', assignee: 'agent_designer', status: 'todo' },
         { id: 2, title: '实现前端组件', assignee: 'agent_frontend', status: 'todo' },
@@ -123,6 +124,16 @@ describe('canvasStore', () => {
     expect(state.isDeploying).toBe(false)
     expect(state.deployStatus).toBe('success')
     expect(state.deployedUrl).toBe('https://example.com')
+    expect(state.deployResultVisible).toBe(true)
+  })
+
+  it('should dismiss a completed deploy result without clearing deployment data', () => {
+    useCanvasStore.getState().finishDeploy('https://example.com')
+    useCanvasStore.getState().dismissDeployResult()
+    const state = useCanvasStore.getState()
+    expect(state.deployResultVisible).toBe(false)
+    expect(state.deployStatus).toBe('success')
+    expect(state.deployedUrl).toBe('https://example.com')
   })
 
   it('should fail deploy', () => {
@@ -151,6 +162,7 @@ describe('canvasStore', () => {
     expect(state.deployStatus).toBe('idle')
     expect(state.deployLogs).toEqual([])
     expect(state.deployedUrl).toBe('')
+    expect(state.deployResultVisible).toBe(false)
   })
 
   // ---------- Task management ----------

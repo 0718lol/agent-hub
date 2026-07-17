@@ -42,21 +42,23 @@ export const useCanvasStore = create((set) => ({
   deployTarget: 'web',
   deployJobId: '',
   deployStatus: 'idle',
+  deployResultVisible: false,
 
   startDeploy: () =>
-    set({ isDeploying: true, deployStatus: 'running', deployLogs: [], deployedUrl: '', deployResultType: 'site', deployJobId: '' }),
+    set({ isDeploying: true, deployStatus: 'running', deployLogs: [], deployedUrl: '', deployResultType: 'site', deployJobId: '', deployResultVisible: false }),
   markDeployRunning: () => set({ isDeploying: true, deployStatus: 'running' }),
   setDeployJobId: (jobId) => set({ deployJobId: jobId }),
   appendDeployLog: (log) =>
     set((state) => ({ deployLogs: [...state.deployLogs, log] })),
   finishDeploy: (url, resultType = 'site', target = 'web') =>
-    set({ isDeploying: false, deployStatus: 'success', deployedUrl: url, deployResultType: resultType, deployTarget: target }),
+    set({ isDeploying: false, deployStatus: 'success', deployedUrl: url, deployResultType: resultType, deployTarget: target, deployResultVisible: true }),
+  dismissDeployResult: () => set({ deployResultVisible: false }),
   failDeploy: () =>
-    set({ isDeploying: false, deployStatus: 'failed' }),
+    set({ isDeploying: false, deployStatus: 'failed', deployResultVisible: false }),
   cancelDeploy: () =>
-    set({ isDeploying: false, deployStatus: 'cancelled' }),
+    set({ isDeploying: false, deployStatus: 'cancelled', deployResultVisible: false }),
   resetDeploy: () =>
-    set({ isDeploying: false, deployStatus: 'idle', deployLogs: [], deployedUrl: '', deployResultType: 'site', deployJobId: '' }),
+    set({ isDeploying: false, deployStatus: 'idle', deployLogs: [], deployedUrl: '', deployResultType: 'site', deployJobId: '', deployResultVisible: false }),
 
   tasks: [
     { id: 1, title: '设计页面 UI', assignee: 'agent_designer', status: 'todo' },

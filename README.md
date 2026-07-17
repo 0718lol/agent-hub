@@ -45,8 +45,8 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户像在钉钉/飞�
 **可视化协作画布**
 - DAG 图实时展示 Agent 间任务流转
 - 任务看板（自动根据 Agent 进度更新）
-- 代码面板（语法高亮，Agent 生成的代码自动显示）
-- 网页预览（iframe 实时渲染 Agent 生成的 HTML）
+- 代码面板（真实多文件树、语法高亮、Git 快照与版本恢复）
+- 项目预览（静态多文件 Web、隔离 Vite、API 请求调试、小程序体验二维码）
 
 **消息系统**
 - 代码卡片 — 语法高亮 + 一键复制
@@ -208,7 +208,7 @@ npm run test:e2e
 | Web | 校验 `index.html` → 打包 → Netlify | 公网地址；未配置 Netlify 时为 ZIP |
 | API | Docker 镜像构建 → 受限容器运行 → 反向代理 | 可分享的公网 API 地址 |
 | Android APK | 独立容器构建 → 演示密钥或用户 keystore 签名 → 校验 | 受当前用户权限保护的已签名 APK |
-| 微信小程序 | 工程校验 → `miniprogram-ci` 真实上传 | 凭证齐全时上传代码；否则生成开发者工具上传包 |
+| 微信小程序 | 工程校验 → `miniprogram-ci` 体验预览或真实上传 | 凭证齐全时返回二维码或上传代码；否则生成开发者工具上传包 |
 
 Web 公网发布需要在 `.env` 配置 `AGENTHUB_NETLIFY_TOKEN` 和
 `AGENTHUB_NETLIFY_SITE_ID`。基础服务使用 `docker compose up --build` 启动；需要本机 Docker
@@ -238,6 +238,10 @@ matplotlib；能力不完整时会停止使用该实例并回退到 Docker，而
 `AGENTHUB_RUNTIME_SANDBOX_MAX_PER_TENANT` 和
 `AGENTHUB_RUNTIME_SANDBOX_QUEUE_TIMEOUT` 调整。
 
+Vite 开发预览同样运行在只读源目录的受限 Docker 容器中，默认全局最多 8 个、每租户最多
+2 个；超出后自动回收最早的预览实例。可通过 `AGENTHUB_PREVIEW_RUNTIME_MAX_TOTAL` 和
+`AGENTHUB_PREVIEW_RUNTIME_MAX_PER_TENANT` 调整。
+
 只需单独构建运行沙箱时，可以执行：
 
 ```bash
@@ -266,6 +270,9 @@ APK 构建运行在没有 Docker Socket 的临时容器中；
 生成的 API 以非 root、只读文件系统、无 Linux capabilities 的方式运行，并限制 CPU、内存和进程数。
 API 容器只加入内部 `agenthub_runtime` 网络，由 `/published/{deployment_id}/` 反向代理访问。
 生产环境需将 `AGENTHUB_PUBLIC_BASE_URL` 设置为 AgentHub 的公网 Origin。
+
+上线前执行 `cd backend && python -m app.scripts.preflight --profile production`。完整演示流程、
+凭证矩阵、能力边界和验收命令见 [docs/DELIVERY_ACCEPTANCE.md](docs/DELIVERY_ACCEPTANCE.md)。
 
 ## 集成 Claude Code (Model Context Protocol - MCP)
 
@@ -325,7 +332,7 @@ agent-hub/
 
 ## 测试覆盖
 
-**后端测试：381 个**（14 个测试文件）
+**后端测试：488 个**
 
 | 测试类别 | 测试数 | 覆盖模块 |
 |---------|--------|---------|
@@ -339,9 +346,9 @@ agent-hub/
 | Git 工具测试（新增） | 14 | commit、push、create PR |
 | 其他测试 | 45 | Agent 回复逻辑、API 端点、配置持久化、工具注册 |
 
-**前端测试：91 个**（7 个测试文件）
+**前端测试：98 个**（8 个测试文件）
 
-**总计：472 个**
+**单元与组件测试总计：586 个，另含 Playwright 端到端场景**
 
 | 测试类别 | 测试数 | 覆盖模块 |
 |---------|--------|---------|

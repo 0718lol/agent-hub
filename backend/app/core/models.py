@@ -65,6 +65,16 @@ class UploadedFile(SQLModel, table=True):
     uploaded_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
+class TenantConfig(SQLModel, table=True):
+    __tablename__ = "tenant_configs"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="idx_tenant_config_key"),)
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    key: str
+    value: str
+    updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
 class CronTask(SQLModel, table=True):
     __tablename__ = "cron_tasks"
     id: str = Field(primary_key=True)
@@ -87,6 +97,7 @@ class KnowledgeDoc(SQLModel, table=True):
     chunk_count: int = Field(default=0)
     char_count: int = Field(default=0)
     status: str = Field(default="ready")
+    knowledge_base_id: str | None = Field(default=None, index=True)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 

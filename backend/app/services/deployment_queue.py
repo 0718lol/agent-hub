@@ -87,7 +87,9 @@ class DeploymentQueue:
 
     async def ensure_available(self):
         if not await redis_manager.check_connection():
-            raise DeploymentQueueUnavailable("Redis 不可用，无法安全启动持久化发布任务")
+            raise DeploymentQueueUnavailable(
+                "Redis 不可用，无法安全启动持久化发布任务；请先启动 Redis 和构建 Worker"
+            )
         client = redis_manager.get_client()
         try:
             await client.xgroup_create(self.stream, GROUP, id="0", mkstream=True)

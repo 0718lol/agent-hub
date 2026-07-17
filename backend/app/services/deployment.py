@@ -17,10 +17,11 @@ import httpx
 
 from app.core.config import deobfuscate_key, settings
 from app.core.file_storage import FileStorageManager
+from app.core.workspace import resolve_workspace
 
 MAX_DEPLOY_FILES = 2_000
 MAX_DEPLOY_BYTES = 100 * 1024 * 1024
-IGNORED_DIRECTORIES = {".git", "node_modules", ".venv", "venv", "__pycache__"}
+IGNORED_DIRECTORIES = {".git", ".agenthub", "node_modules", ".venv", "venv", "__pycache__"}
 DEPLOY_TARGETS = {"auto", "web", "api", "apk", "miniprogram"}
 ProgressCallback = Callable[[str, str, int], Awaitable[None]]
 CancellationCallback = Callable[[], Awaitable[bool]]
@@ -123,11 +124,10 @@ class DeploymentResult:
 
 
 def get_workspace_path(conversation_id: str) -> Path:
-    if not conversation_id or any(char in conversation_id for char in ("/", "\\")) or ".." in conversation_id:
+    workspace = resolve_workspace(conversation_id, create=False)
+    if workspace is None:
         raise DeploymentError("Invalid conversation ID")
-    root = Path(__file__).resolve().parents[3] / "agenthub_export"
-    workspace = (root / conversation_id).resolve()
-    if workspace.parent != root.resolve() or not workspace.is_dir():
+    if not workspace.is_dir():
         raise DeploymentError("No generated project was found for this conversation")
     return workspace
 
@@ -635,9 +635,39 @@ async def _upload_miniprogram(
     script = Path(__file__).resolve().parents[1] / "scripts" / "miniprogram_upload.js"
     await progress("upload", f"正在通过微信 miniprogram-ci 上传版本 {version}...", 82)
     await _run_trusted_command([
-        "node", str(script), str(workspace), appid, str(private_key), version,
-        options.get("description", "AgentHub 发布"),
+        "node", str(script), "upload", str(workspace), appid, str(private_key), version,
+        options.get("description", "AgentHub 发布"), "",
     ], 600, "微信小程序上传", cancelled)
+
+
+async def _preview_miniprogram(
+    workspace: Path,
+    user_id: str,
+    options: dict,
+    progress: ProgressCallback,
+    cancelled: CancellationCallback | None = None,
+) -> str:
+    await _raise_if_cancelled(cancelled)
+    appid = options.get("mini_appid", "")
+    private_key_id = options.get("mini_private_key_file_id", "")
+    if not appid or not private_key_id:
+        raise DeploymentError("生成体验二维码需要微信 AppID 和代码上传私钥")
+    if not re.fullmatch(r"wx[a-fA-F0-9]{16}", appid):
+        raise DeploymentError("微信小程序 AppID 格式不正确")
+    private_key = _owned_secret_path(user_id, private_key_id)
+    script = Path(__file__).resolve().parents[1] / "scripts" / "miniprogram_upload.js"
+    await progress("upload", "正在通过微信 miniprogram-ci 编译体验版并生成二维码...", 82)
+    with tempfile.TemporaryDirectory(prefix="agenthub-mini-preview-") as temp:
+        qrcode_path = Path(temp) / "preview.jpg"
+        await _run_trusted_command([
+            "node", str(script), "preview", str(workspace), appid, str(private_key),
+            options.get("version", "1.0.0"),
+            options.get("description", "AgentHub 体验预览"),
+            str(qrcode_path),
+        ], 600, "微信小程序体验版预览", cancelled)
+        if not qrcode_path.is_file() or qrcode_path.stat().st_size == 0:
+            raise DeploymentError("微信编译成功，但没有生成体验二维码")
+        return await asyncio.to_thread(_save_artifact, qrcode_path.read_bytes(), user_id, "jpg")
 
 
 async def run_deployment_pipeline(
@@ -710,6 +740,15 @@ async def run_deployment_pipeline(
     await _raise_if_cancelled(cancelled)
     await progress("build", "微信小程序工程检查和打包完成。", 62)
     if options.get("mini_appid") and options.get("mini_private_key_file_id"):
+        if options.get("mini_action") == "preview":
+            url = await _preview_miniprogram(
+                workspace, user_id, options, progress, cancelled
+            )
+            await progress("upload", "体验版二维码已生成，请使用微信扫码预览。", 94)
+            return DeploymentResult(
+                url=url, provider="miniprogram-ci", target="miniprogram",
+                result_type="miniprogram-preview", published=False,
+            )
         await _upload_miniprogram(
             workspace, user_id, options, progress, cancelled
         )
