@@ -29,6 +29,9 @@ export const useCanvasStore = create((set) => ({
 
   generatedCode: null,
   previousCode: '',
+  projectRevision: 0,
+  notifyProjectChanged: () =>
+    set((state) => ({ projectRevision: state.projectRevision + 1 })),
   setGeneratedCode: (language, code) =>
     set((state) => ({
       previousCode: state.generatedCode?.code || '',

@@ -1,9 +1,15 @@
 """Tenant-scoped generated project inspection and version endpoints."""
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from app.core.tenancy import request_user_id, scope_conversation_id
 from app.core.workspace import resolve_workspace
+from app.services.project_templates import (
+    ProjectTemplateNotFound,
+    initialize_project_template,
+    list_project_templates,
+)
 from app.services.project_workspace import (
     project_summary,
     read_project_file,
@@ -13,12 +19,44 @@ from app.services.project_workspace import (
 router = APIRouter(tags=["projects"])
 
 
-def _workspace_for_request(request: Request, conversation_id: str):
+class ProjectInitializeRequest(BaseModel):
+    template_id: str
+
+
+def _scoped_id(request: Request, conversation_id: str) -> str:
     try:
-        scoped_id = scope_conversation_id(request_user_id(request), conversation_id)
+        return scope_conversation_id(request_user_id(request), conversation_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return resolve_workspace(scoped_id, create=False)
+
+
+def _workspace_for_request(request: Request, conversation_id: str):
+    return resolve_workspace(_scoped_id(request, conversation_id), create=False)
+
+
+@router.get("/projects/templates")
+async def get_project_templates():
+    return list_project_templates()
+
+
+@router.post("/projects/{conversation_id}/initialize")
+async def initialize_project(
+    request: Request,
+    conversation_id: str,
+    payload: ProjectInitializeRequest,
+):
+    try:
+        return await initialize_project_template(
+            _scoped_id(request, conversation_id),
+            payload.template_id,
+        )
+    except ProjectTemplateNotFound as exc:
+        raise HTTPException(status_code=404, detail="Project template not found") from exc
+    except FileExistsError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Project already contains files; restore a clean snapshot or use another conversation",
+        ) from exc
 
 
 @router.get("/projects/{conversation_id}")

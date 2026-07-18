@@ -25,10 +25,16 @@ IGNORED_TREE_DIRECTORIES = {
 }
 MAX_PROJECT_FILES = 2_000
 MAX_FILE_READ_BYTES = 1_000_000
+MAX_STRUCTURED_FILES = 200
+MAX_GENERATED_FILE_BYTES = 2_000_000
 
 _workspace_locks: dict[str, asyncio.Lock] = {}
 
 _FENCE_PATTERN = re.compile(r"```([^\r\n`]*)\r?\n(.*?)```", re.DOTALL)
+_STRUCTURED_FILES_PATTERN = re.compile(
+    r"<agenthub-files>\s*(.*?)\s*</agenthub-files>",
+    re.DOTALL | re.IGNORECASE,
+)
 _PATH_LABEL_PATTERN = re.compile(
     r"(?:文件|文件名|路径|file|filename|path)\s*[:：]\s*[`\"']?([^`\"'\s]+)[`\"']?\s*$",
     re.IGNORECASE,
@@ -48,6 +54,7 @@ class GeneratedProjectFile:
     path: str
     language: str
     code: str
+    operation: str = "write"
 
 
 def _local_workspace_lock(workspace: Path) -> asyncio.Lock:
@@ -233,8 +240,55 @@ def _deduplicate_path(path: str, used_paths: set[str]) -> str:
         index += 1
 
 
+def _parse_structured_files(text: str) -> list[GeneratedProjectFile]:
+    match = _STRUCTURED_FILES_PATTERN.search(text or "")
+    if not match:
+        return []
+    try:
+        payload = json.loads(match.group(1))
+    except (TypeError, ValueError):
+        return []
+    raw_files = payload.get("files") if isinstance(payload, dict) else None
+    if not isinstance(raw_files, list) or len(raw_files) > MAX_STRUCTURED_FILES:
+        return []
+
+    files = []
+    used_paths: set[str] = set()
+    for item in raw_files:
+        if not isinstance(item, dict):
+            continue
+        path = _safe_relative_path(str(item.get("path", "")))
+        if path is None or path in used_paths:
+            continue
+        operation = str(item.get("operation", "write")).strip().lower()
+        operation = {
+            "create": "write",
+            "update": "write",
+            "upsert": "write",
+            "remove": "delete",
+        }.get(operation, operation)
+        if operation not in {"write", "delete"}:
+            continue
+        content = item.get("content", item.get("code", ""))
+        if operation == "write" and not isinstance(content, str):
+            continue
+        content = content if isinstance(content, str) else ""
+        if len(content.encode("utf-8")) > MAX_GENERATED_FILE_BYTES:
+            continue
+        language = _normalize_language(
+            str(item.get("language") or _language_from_path(path))
+        )
+        used_paths.add(path)
+        files.append(GeneratedProjectFile(path, language, content, operation))
+    return files
+
+
 def parse_generated_files(text: str, agent_id: str) -> list[GeneratedProjectFile]:
-    """Parse path-aware Markdown fences while remaining compatible with legacy output."""
+    """Parse the structured file envelope, then compatible Markdown fences."""
+    structured = _parse_structured_files(text)
+    if structured:
+        return structured
+
     files = []
     used_paths: set[str] = set()
     for match in _FENCE_PATTERN.finditer(text or ""):
@@ -308,6 +362,8 @@ async def materialize_project_files(
     conversation_id: str,
     agent_id: str,
     files: list[GeneratedProjectFile],
+    *,
+    require_empty: bool = False,
 ) -> dict:
     """Atomically write generated files, update the manifest, and create one snapshot."""
     workspace = resolve_workspace(conversation_id)
@@ -315,6 +371,8 @@ async def materialize_project_files(
         raise ValueError("Invalid conversation ID")
 
     async with _workspace_lock(workspace):
+        if require_empty and list_project_files(workspace):
+            raise FileExistsError("Project workspace is not empty")
         manifest = _load_manifest(workspace)
         manifest_files = {
             item["path"]: item
@@ -322,10 +380,19 @@ async def materialize_project_files(
             if isinstance(item, dict) and isinstance(item.get("path"), str)
         }
         written = []
+        deleted = []
         timestamp = datetime.now(UTC).isoformat()
         for generated_file in files:
             target = _target_path(workspace, generated_file.path)
             if target is None:
+                continue
+            if generated_file.operation == "delete":
+                existed = target.is_file()
+                if existed:
+                    target.unlink()
+                removed_manifest = manifest_files.pop(generated_file.path, None)
+                if existed or removed_manifest is not None:
+                    deleted.append(generated_file.path)
                 continue
             _atomic_write_text(target, generated_file.code)
             encoded = generated_file.code.encode("utf-8")
@@ -340,8 +407,13 @@ async def materialize_project_files(
             manifest_files[generated_file.path] = entry
             written.append(entry)
 
-        if not written:
-            return {"files": [], "snapshot_id": "", "manifest": manifest}
+        if not written and not deleted:
+            return {
+                "files": [],
+                "deleted": [],
+                "snapshot_id": "",
+                "manifest": manifest,
+            }
 
         paths = set(manifest_files)
         manifest = {
@@ -352,8 +424,16 @@ async def materialize_project_files(
             "files": sorted(manifest_files.values(), key=lambda item: item["path"]),
         }
         _atomic_write_text(workspace / MANIFEST_PATH, json.dumps(manifest, ensure_ascii=False, indent=2))
-        snapshot_id = await git_checkpoint(str(workspace), f"Generate {len(written)} file(s) with {agent_id}")
-        return {"files": written, "snapshot_id": snapshot_id, "manifest": manifest}
+        snapshot_id = await git_checkpoint(
+            str(workspace),
+            f"Apply {len(written)} write(s) and {len(deleted)} deletion(s) with {agent_id}",
+        )
+        return {
+            "files": written,
+            "deleted": deleted,
+            "snapshot_id": snapshot_id,
+            "manifest": manifest,
+        }
 
 
 def list_project_files(workspace: Path) -> list[dict]:

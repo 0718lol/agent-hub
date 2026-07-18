@@ -230,6 +230,54 @@ class AlignmentJudgeTool:
 _pending_interactions: dict[str, Any] = {}
 
 
+def _hil_reply_key(conversation_id: str) -> str:
+    import hashlib
+
+    digest = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()
+    return f"agenthub:hil:reply:{digest}"
+
+
+async def submit_distributed_hil_reply(
+    conversation_id: str,
+    answer: str,
+) -> bool:
+    from app.core.redis import redis_manager
+
+    if not await redis_manager.check_connection():
+        return False
+    try:
+        await redis_manager.get_client().set(
+            _hil_reply_key(conversation_id),
+            answer,
+            ex=24 * 60 * 60,
+        )
+        return True
+    except Exception as exc:
+        redis_manager.mark_unavailable(exc, "HIL reply submit")
+        return False
+
+
+async def _wait_for_distributed_hil_reply(conversation_id: str) -> str:
+    import asyncio
+
+    from app.core.redis import redis_manager
+
+    key = _hil_reply_key(conversation_id)
+    while True:
+        if not await redis_manager.check_connection():
+            await asyncio.sleep(1)
+            continue
+        try:
+            client = redis_manager.get_client()
+            answer = await client.get(key)
+            if answer is not None:
+                await client.delete(key)
+                return answer
+        except Exception as exc:
+            redis_manager.mark_unavailable(exc, "HIL reply wait")
+        await asyncio.sleep(0.5)
+
+
 class UserInteractionJudgeTool:
     """像 Claude Code 一样交互式询问用户哪种方案合适，支持 Yes/No/Else"""
 
@@ -266,8 +314,24 @@ class UserInteractionJudgeTool:
                 "recommended": recommended
             })
 
-        # CLI / Terminal 模式 (如果没有活跃连接或者没有 conversation_id)
-        is_cli = not conversation_id or not hasattr(manager, "active_connections") or conversation_id not in manager.active_connections
+        from app.core.config import settings
+        from app.core.redis import redis_manager
+
+        has_local_connection = (
+            bool(conversation_id)
+            and hasattr(manager, "active_connections")
+            and conversation_id in manager.active_connections
+        )
+        distributed_mode = (
+            bool(conversation_id)
+            and settings.generation_worker_enabled
+            and await redis_manager.check_connection()
+        )
+        # Worker replicas have no local WebSocket object, but can still reach
+        # the browser through Redis broadcast and the durable reply key.
+        is_cli = not conversation_id or (
+            not has_local_connection and not distributed_mode
+        )
 
         if is_cli:
             # 打印类似 claude code 风格的提示
@@ -310,6 +374,14 @@ class UserInteractionJudgeTool:
 
         # WebSocket 模式
         else:
+            if distributed_mode:
+                try:
+                    await redis_manager.get_client().delete(
+                        _hil_reply_key(conversation_id)
+                    )
+                except Exception as exc:
+                    redis_manager.mark_unavailable(exc, "HIL stale reply cleanup")
+
             # 构造前端 [ask_user:...] 标记格式
             # 格式: [ask_user: Question | Option1::Description1 | *Option2::Description2]
             opt_segments = []
@@ -343,8 +415,11 @@ class UserInteractionJudgeTool:
             _pending_interactions[conversation_id] = fut
 
             try:
-                # 等待用户回复（通过 websocket 触发的 set_result）
-                answer = await fut
+                if distributed_mode and not has_local_connection:
+                    answer = await _wait_for_distributed_hil_reply(conversation_id)
+                else:
+                    # Local API mode resolves the in-process Future directly.
+                    answer = await fut
             finally:
                 _pending_interactions.pop(conversation_id, None)
 
@@ -359,4 +434,3 @@ class UserInteractionJudgeTool:
             signals={"answer": answer},
             raw={"options": parsed_options, "user_answer": answer}
         )
-

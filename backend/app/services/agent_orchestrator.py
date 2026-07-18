@@ -184,6 +184,16 @@ VALID_AGENT_IDS = {
     "agent_devops", "agent_designer", "agent_builder",
 }
 
+FILE_OPERATION_PROTOCOL = """
+【工程文件操作协议】
+普通新增或更新可继续使用带 path= 的 Markdown 代码块。
+需要删除文件或精确执行一组文件变更时，输出：
+<agenthub-files>
+{"files":[{"path":"src/app.js","operation":"write","language":"javascript","content":"完整内容"},{"path":"src/old.js","operation":"delete"}]}
+</agenthub-files>
+使用该协议时，所有本轮文件变更都必须放进同一个 JSON files 数组，路径只能是项目内相对路径。
+"""
+
 # Format instructions for retry prompts
 FORMAT_INSTRUCTIONS = {
     "agent_frontend": (
@@ -403,6 +413,11 @@ async def stream_agent_reply(
                 effective_text = f"{effective_text}\n\n{knowledge_context}"
         except Exception as exc:
             logger.debug("Tenant knowledge injection skipped: %s", exc)
+
+    if agent.agent_id in {
+        "agent_frontend", "agent_backend", "agent_tester", "agent_devops",
+    }:
+        effective_text = f"{effective_text}\n\n{FILE_OPERATION_PROTOCOL}"
 
     history = await async_get_messages_cached(conversation_id, limit=20)
 
@@ -788,8 +803,12 @@ async def stream_agent_reply(
             prepared_files = []
             for generated_file in generated_files:
                 code = generated_file.code
-                if generated_file.language == "python" and agent.agent_id in (
-                    "agent_frontend", "agent_backend", "agent_tester",
+                if (
+                    generated_file.operation == "write"
+                    and generated_file.language == "python"
+                    and agent.agent_id in (
+                        "agent_frontend", "agent_backend", "agent_tester",
+                    )
                 ):
                     try:
                         debug_result = await _auto_debug_code(
@@ -804,6 +823,7 @@ async def stream_agent_reply(
                     path=generated_file.path,
                     language=generated_file.language,
                     code=code,
+                    operation=generated_file.operation,
                 ))
 
             if prepared_files:
@@ -812,6 +832,14 @@ async def stream_agent_reply(
                 )
                 materialized_files = project_result["files"]
                 for generated_file in prepared_files:
+                    if generated_file.operation == "delete":
+                        await manager.broadcast(conversation_id, {
+                            "type": "project_file_deleted",
+                            "conversation_id": conversation_id,
+                            "agent_id": agent.agent_id,
+                            "path": generated_file.path,
+                        })
+                        continue
                     await asyncio.to_thread(
                         save_artifact,
                         conversation_id,
@@ -831,7 +859,11 @@ async def stream_agent_reply(
                     })
 
                 html_file = next(
-                    (item for item in prepared_files if item.language == "html"),
+                    (
+                        item
+                        for item in prepared_files
+                        if item.operation == "write" and item.language == "html"
+                    ),
                     None,
                 )
                 if html_file:
@@ -847,6 +879,7 @@ async def stream_agent_reply(
                     "conversation_id": conversation_id,
                     "agent_id": agent.agent_id,
                     "files": materialized_files,
+                    "deleted": project_result["deleted"],
                     "snapshot_id": project_result["snapshot_id"],
                     "project_type": project_result["manifest"].get("project_type", "unknown"),
                 })

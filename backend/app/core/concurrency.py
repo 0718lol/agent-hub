@@ -260,6 +260,34 @@ class GenerationAdmissionController:
                 redis_manager.mark_unavailable(exc, "generation status")
         return dict(self._statuses.get(conversation_id, {}))
 
+    async def set_status(
+        self,
+        conversation_id: str,
+        state: str,
+        **details,
+    ) -> None:
+        """Persist queue and terminal states that exist outside an active lease."""
+        now = int(time.time())
+        mapping = {
+            "state": state,
+            "updated_at": now,
+            **{
+                key: value
+                for key, value in details.items()
+                if value is not None and isinstance(value, (str, int, float))
+            },
+        }
+        if await redis_manager.check_connection():
+            try:
+                client = redis_manager.get_client()
+                await client.hset(self._status_key(conversation_id), mapping=mapping)
+                await client.expire(self._status_key(conversation_id), self.status_ttl)
+                return
+            except Exception as exc:
+                redis_manager.mark_unavailable(exc, "generation status update")
+        previous = self._statuses.get(conversation_id, {})
+        self._statuses[conversation_id] = {**previous, **mapping}
+
     def reset(self) -> None:
         self._active_conversations.clear()
         self._active_users.clear()

@@ -30,7 +30,16 @@ from app.services.agent_orchestrator import (
     run_target_agent_flow,
     run_user_message_flow,
 )
-from app.tools.judge_tools import _pending_interactions
+from app.services.generation_queue import (
+    GenerationAlreadyQueued,
+    GenerationQueueUnavailable,
+    generation_queue,
+)
+from app.services.generation_runner import run_admitted_flow
+from app.tools.judge_tools import (
+    _pending_interactions,
+    submit_distributed_hil_reply,
+)
 from app.tools.registry import reset_tool_tenant, set_tool_tenant
 
 router = APIRouter()
@@ -38,43 +47,6 @@ logger = get_logger("ws")
 
 # Background task tracking
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
-
-
-async def _run_admitted_flow(user_id: str, conversation_id: str, flow) -> None:
-    async def maintain_lease() -> None:
-        last_heartbeat = 0.0
-        while True:
-            if await generation_admission.cancel_requested(conversation_id):
-                event = _stop_events.get(conversation_id)
-                if event:
-                    event.set()
-            now = asyncio.get_running_loop().time()
-            if now - last_heartbeat >= max(5, generation_admission.lease_ttl // 3):
-                if not await generation_admission.heartbeat(user_id, conversation_id):
-                    event = _stop_events.get(conversation_id)
-                    if event:
-                        event.set()
-                    logger.error("Generation lease was lost for %s", conversation_id)
-                    return
-                last_heartbeat = now
-            await asyncio.sleep(0.5)
-
-    maintenance = asyncio.create_task(
-        maintain_lease(), name=f"generation_lease_{conversation_id}"
-    )
-    status = "completed"
-    try:
-        await flow
-    except Exception:
-        status = "failed"
-        raise
-    finally:
-        if await generation_admission.cancel_requested(conversation_id):
-            status = "cancelled"
-        maintenance.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await maintenance
-        await generation_admission.release(user_id, conversation_id, status=status)
 
 
 def create_tracked_task(coro, name: str | None = None) -> asyncio.Task:
@@ -150,7 +122,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
 
     await manager.connect(websocket, conversation_id)
     generation_status = await generation_admission.get_status(conversation_id)
-    if generation_status.get("state") in {"running", "cancelling"}:
+    if generation_status.get("state") in {"queued", "running", "cancelling"}:
         await websocket.send_json({
             "type": "generating",
             "conversation_id": public_conversation_id,
@@ -214,8 +186,22 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                         with contextlib.suppress(asyncio.InvalidStateError):
                             fut.set_result(reply_text)
                 else:
-                    # Recovery path: trigger asynchronous recovery task
-                    create_tracked_task(resume_graph_from_checkpoint(conversation_id, reply_text), name=f"resume_graph_{conversation_id}")
+                    status = await generation_admission.get_status(conversation_id)
+                    bridged = (
+                        settings.generation_worker_enabled
+                        and status.get("state") in {"queued", "running", "cancelling"}
+                        and await submit_distributed_hil_reply(
+                            conversation_id, reply_text
+                        )
+                    )
+                    if not bridged:
+                        # No live Worker owns the flow; resume from the DB checkpoint.
+                        create_tracked_task(
+                            resume_graph_from_checkpoint(
+                                conversation_id, reply_text
+                            ),
+                            name=f"resume_graph_{conversation_id}",
+                        )
 
                 # We still want to save and broadcast this message to display it in the Chat UI as a user reply
                 await async_save_message(conversation_id, sender, content, streaming=False)
@@ -232,6 +218,11 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             # the in-flight generation task (which is why generation runs as a
             # background task, not awaited here).
             if msg_type == "stop":
+                if settings.generation_worker_enabled:
+                    with contextlib.suppress(GenerationQueueUnavailable):
+                        await generation_queue.request_cancel_by_conversation(
+                            conversation_id
+                        )
                 await generation_admission.request_cancel(conversation_id)
                 event = _stop_events.get(conversation_id)
                 logger.debug(f"[STOP] conv={conversation_id} event_exists={event is not None} already_set={event.is_set() if event else 'N/A'}")
@@ -261,14 +252,37 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 if stripped.isdigit() or all(c in "!@#$%^&*()_+-=[]{}|;:',.<>?/~`" for c in stripped):
                     continue
 
-                admitted, reason = await generation_admission.acquire(user_id, conversation_id)
-                if not admitted:
-                    await manager.broadcast(conversation_id, {
-                        "type": "error",
-                        "conversation_id": conversation_id,
-                        "content": {"text": reason},
-                    })
-                    continue
+                current_agents = get_agents(conversation_id)
+                queued_job = None
+                if settings.generation_worker_enabled:
+                    try:
+                        queued_job = await generation_queue.enqueue(
+                            conversation_id,
+                            user_id,
+                            text,
+                            target_agent if target_agent in current_agents else None,
+                        )
+                    except (GenerationAlreadyQueued, GenerationQueueUnavailable) as exc:
+                        await manager.broadcast(conversation_id, {
+                            "type": "error",
+                            "conversation_id": conversation_id,
+                            "content": {"text": str(exc)},
+                        })
+                        continue
+                else:
+                    admitted, reason = await generation_admission.acquire(
+                        user_id, conversation_id
+                    )
+                    if not admitted:
+                        await manager.broadcast(conversation_id, {
+                            "type": "error",
+                            "conversation_id": conversation_id,
+                            "content": {"text": reason},
+                        })
+                        continue
+            else:
+                current_agents = get_agents(conversation_id)
+                queued_job = None
 
             await async_save_message(conversation_id, sender, content, streaming=False)
 
@@ -280,10 +294,17 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 "stream": False,
             })
 
-            current_agents = get_agents(conversation_id)
-            if target_agent and target_agent in current_agents:
+            if queued_job is not None:
+                await manager.broadcast(conversation_id, {
+                    "type": "generating",
+                    "conversation_id": conversation_id,
+                    "is_generating": True,
+                    "state": "queued",
+                    "job_id": queued_job.id,
+                })
+            elif sender == "user" and target_agent and target_agent in current_agents:
                 create_tracked_task(
-                    _run_admitted_flow(
+                    run_admitted_flow(
                         user_id,
                         conversation_id,
                         run_target_agent_flow(conversation_id, current_agents[target_agent], text),
@@ -292,7 +313,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 )
             elif sender == "user":
                 create_tracked_task(
-                    _run_admitted_flow(
+                    run_admitted_flow(
                         user_id,
                         conversation_id,
                         run_user_message_flow(conversation_id, text, target_agent),

@@ -206,15 +206,27 @@ npm run test:e2e
 
 - 本地单机可以使用 SQLite、本地上传目录和内嵌 Chroma；多 API 实例使用 PostgreSQL 和 Redis。
 - `migration` 服务先执行 Alembic 和默认数据初始化，成功后 API 副本才启动，避免多副本并发迁移。
-- Redis 负责 WebSocket 广播、生成租约/停止信号、调度器主节点、定时任务执行租约和发布队列。
+- Redis 负责 WebSocket 广播、持久化生成/发布队列、生成租约/停止信号、调度器主节点和定时任务执行租约。
 - 多主机部署应配置 S3/MinIO 与独立 Chroma；生成项目工作区仍需共享 RWX 卷或同一远程 Docker 数据卷。
 - 公网用户建议由 OIDC/OAuth2 身份代理注入用户与角色，并配置
   `AGENTHUB_AUTH_MODE=proxy`。`viewer` 角色只读；机器客户端使用独立 Token 映射。
 - `GET /api/metrics/summary` 返回当前租户当日模型实际 Token 用量；
   `AGENTHUB_LLM_DAILY_TOKEN_QUOTA` 可设置每日限额。
 
-生成任务的租约、停止信号和状态已跨实例共享，API 故障后过期任务会标记为 `interrupted`，用户可重试。
-当前尚未提供 Token 级断点续跑，进程崩溃前未完成的模型输出不会自动接续。
+生产 Compose 中，用户消息先写入 Redis Streams，再由独立 `generation-worker` 执行；浏览器断线或
+API 实例重启不会丢失排队任务。Worker 使用执行租约避免多副本重复消费，崩溃任务会被重新认领，
+生成状态可通过 `GET /api/conversations/{id}/generation` 恢复。当前尚未提供 Token 级断点续跑，
+Worker 在一次模型流式输出中崩溃时会从本轮任务起点重试。
+
+## 官方项目模板与文件协议
+
+`GET /api/projects/templates` 返回 Web、FastAPI、微信小程序和原生 Kotlin APK 四类模板；
+`POST /api/projects/{conversation_id}/initialize` 传入 `{"template_id":"web-static"}` 可在空工程中
+创建可预览、可继续对话修改的确定性骨架。初始化与 Agent 生成共用分布式工作区锁和 Git 快照。
+
+Agent 普通写文件仍兼容带 `path=relative/path` 的 Markdown 代码块。需要精确批量修改或删除文件时，
+可输出 `<agenthub-files>` JSON 协议，`operation` 支持 `write` 和 `delete`；路径穿越、超大文件、
+重复路径和受保护目录会在写盘前被拒绝。
 
 ## 构建与发布流水线
 

@@ -1,6 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { DiffEditor, Editor } from '@monaco-editor/react'
-import { AlertCircle, FileCode2, GitCommit, History, RefreshCw, RotateCcw } from 'lucide-react'
+import {
+  AlertCircle,
+  AppWindow,
+  FileCode2,
+  GitCommit,
+  Globe2,
+  History,
+  RefreshCw,
+  RotateCcw,
+  Server,
+  Smartphone,
+} from 'lucide-react'
 import { useCanvasStore } from '../../stores/canvasStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useThemeStore } from '../../stores/themeStore'
@@ -12,6 +23,13 @@ const LANGUAGE_MAP = {
   python: 'python', py: 'python', json: 'json', yaml: 'yaml', yml: 'yaml',
   kotlin: 'kotlin', java: 'java', xml: 'xml', sql: 'sql',
   dockerfile: 'dockerfile', bash: 'shell', sh: 'shell',
+}
+
+const TEMPLATE_ICONS = {
+  web: Globe2,
+  api: Server,
+  miniprogram: AppWindow,
+  apk: Smartphone,
 }
 
 function monacoLanguage(language = '') {
@@ -28,6 +46,7 @@ function formatSnapshotTime(timestamp) {
 export default function DiffViewer() {
   const generatedCode = useCanvasStore((state) => state.generatedCode)
   const previousCode = useCanvasStore((state) => state.previousCode)
+  const projectRevision = useCanvasStore((state) => state.projectRevision)
   const activeConversationId = useChatStore((state) => state.activeConversationId)
   const theme = useThemeStore((state) => state.theme)
   const [project, setProject] = useState(null)
@@ -37,7 +56,9 @@ export default function DiffViewer() {
   const [error, setError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [restoring, setRestoring] = useState('')
-  const [projectRevision, setProjectRevision] = useState(0)
+  const [loadedRevision, setLoadedRevision] = useState(0)
+  const [templates, setTemplates] = useState([])
+  const [initializing, setInitializing] = useState('')
 
   const fetchProject = useCallback(async () => {
     if (!activeConversationId) return
@@ -49,7 +70,7 @@ export default function DiffViewer() {
         throw new Error('工程信息格式无效')
       }
       setProject(data)
-      setProjectRevision((revision) => revision + 1)
+      setLoadedRevision((revision) => revision + 1)
       setSelectedPath((currentPath) => {
         if (currentPath && data.files.some((file) => file.path === currentPath)) return currentPath
         const preferred = data.files.find((file) => file.path === 'index.html') || data.files[0]
@@ -76,6 +97,26 @@ export default function DiffViewer() {
   }, [generatedCode?.code, fetchProject])
 
   useEffect(() => {
+    if (projectRevision > 0) fetchProject()
+  }, [projectRevision, fetchProject])
+
+  useEffect(() => {
+    let active = true
+    fetch('/api/projects/templates')
+      .then((response) => {
+        if (!response.ok) throw new Error(`模板请求失败 (${response.status})`)
+        return response.json()
+      })
+      .then((data) => {
+        if (active && Array.isArray(data)) setTemplates(data)
+      })
+      .catch(() => {
+        if (active) setTemplates([])
+      })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
     if (!selectedPath || !activeConversationId) {
       setSelectedFile(null)
       return undefined
@@ -98,7 +139,31 @@ export default function DiffViewer() {
     }
     loadFile()
     return () => controller.abort()
-  }, [activeConversationId, selectedPath, projectRevision])
+  }, [activeConversationId, selectedPath, loadedRevision])
+
+  const initializeTemplate = async (templateId) => {
+    if (!activeConversationId || initializing) return
+    setInitializing(templateId)
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(activeConversationId)}/initialize`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template_id: templateId }),
+        },
+      )
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        throw new Error(body.detail || `模板初始化失败 (${response.status})`)
+      }
+      await fetchProject()
+    } catch (initializeError) {
+      setError(initializeError.message || '模板初始化失败')
+    } finally {
+      setInitializing('')
+    }
+  }
 
   const restoreSnapshot = async (snapshot) => {
     if (!window.confirm(`确认恢复到版本 ${snapshot.hash.slice(0, 8)}？当前未提交修改会被替换。`)) return
@@ -144,7 +209,7 @@ export default function DiffViewer() {
         height: '100%', color: 'var(--text-muted)', gap: 12,
       }}>
         {error ? <AlertCircle size={30} color="#f87171" /> : <FileCode2 size={34} opacity={0.45} />}
-        <div style={{ fontSize: 13 }}>{error || 'Agent 生成的工程文件会显示在这里'}</div>
+        <div style={{ fontSize: 13 }}>{error || '选择工程骨架，或直接向 Agent 描述需求'}</div>
         {error && (
           <button
             type="button"
@@ -157,6 +222,56 @@ export default function DiffViewer() {
             <RefreshCw size={13} />
             重新加载
           </button>
+        )}
+        {!error && templates.length > 0 && (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, minmax(132px, 1fr))',
+            gap: 8,
+            width: 'min(320px, calc(100% - 32px))',
+          }}>
+            {templates.map((template) => {
+              const TemplateIcon = TEMPLATE_ICONS[template.project_type] || FileCode2
+              const isInitializing = initializing === template.id
+              return (
+                <button
+                  key={template.id}
+                  type="button"
+                  title={template.description}
+                  disabled={Boolean(initializing)}
+                  onClick={() => initializeTemplate(template.id)}
+                  style={{
+                    minWidth: 0,
+                    height: 42,
+                    padding: '0 10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'flex-start',
+                    gap: 8,
+                    border: '1px solid var(--border)',
+                    borderRadius: 6,
+                    background: 'var(--bg-secondary)',
+                    color: 'var(--text-secondary)',
+                    cursor: initializing ? 'wait' : 'pointer',
+                    opacity: initializing && !isInitializing ? 0.5 : 1,
+                  }}
+                >
+                  {isInitializing
+                    ? <RefreshCw size={15} className="spin" />
+                    : <TemplateIcon size={15} />}
+                  <span style={{
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    fontSize: 12,
+                  }}>
+                    {template.name}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
         )}
       </div>
     )

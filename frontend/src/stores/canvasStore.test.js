@@ -12,6 +12,7 @@ describe('canvasStore', () => {
       previewHtml: null,
       generatedCode: null,
       previousCode: '',
+      projectRevision: 0,
       isDeploying: false,
       deployLogs: [],
       deployedUrl: '',
@@ -96,6 +97,12 @@ describe('canvasStore', () => {
     const state = useCanvasStore.getState()
     expect(state.generatedCode).toEqual({ language: 'python', code: 'second code' })
     expect(state.previousCode).toBe('first code')
+  })
+
+  it('should increment project revision for external file updates', () => {
+    useCanvasStore.getState().notifyProjectChanged()
+    useCanvasStore.getState().notifyProjectChanged()
+    expect(useCanvasStore.getState().projectRevision).toBe(2)
   })
 
   // ---------- Deploy lifecycle ----------

@@ -97,7 +97,7 @@ async def generation_status(conversation_id: str, request: Request):
     return {
         **status,
         "state": state,
-        "is_generating": state in {"running", "cancelling"},
+        "is_generating": state in {"queued", "running", "cancelling"},
     }
 
 

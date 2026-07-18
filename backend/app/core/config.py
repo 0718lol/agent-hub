@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     deployment_retention_days: int = 7
     deployment_max_per_user: int = 20
     scheduler_leader_ttl: int = 20
+    generation_worker_enabled: bool = False
+    generation_queue: str = "agenthub:generations"
+    generation_status_ttl: int = 7 * 24 * 60 * 60
+    generation_reclaim_idle_ms: int = 2 * 60_000
+    generation_max_attempts: int = 1
     generation_lease_ttl: int = 90
     generation_max_per_user: int = 2
     llm_daily_token_quota: int = 0

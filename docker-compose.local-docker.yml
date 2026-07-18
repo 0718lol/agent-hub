@@ -6,6 +6,12 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
+  generation-worker:
+    environment:
+      - AGENTHUB_RUNTIME_SANDBOX_IMAGE=${AGENTHUB_RUNTIME_SANDBOX_IMAGE:-agenthub-runtime-sandbox:local}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
   deployment-worker:
     environment:
       - AGENTHUB_ALLOW_HOST_DOCKER_SOCKET=true

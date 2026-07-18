@@ -17,7 +17,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 | 后端框架   | Python 3.12 + FastAPI + WebSocket                       |
 | 前端框架   | React 18 + Zustand + Vite                               |
 | 数据库     | SQLite（本地）/ PostgreSQL（多人部署）+ SQLModel/Alembic |
-| 协调层     | Redis（广播、租约、配额、调度主节点、发布队列）          |
+| 协调层     | Redis（广播、租约、配额、调度主节点、生成/发布队列）     |
 | LLM 客户端 | httpx，支持 OpenAI / Claude / Ollama 多后端             |
 | 协议       | MCP (Model Context Protocol) Stdio 桥接                 |
 | 容器化     | Docker + docker-compose                                 |
@@ -102,7 +102,7 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - **位置**: backend/app/services/agent_orchestrator.py
 - **核心流程**:
 
-用户消息 → WebSocket 接收 → PM Agent 拆解任务（输出包含 [assign:agent_xxx] 标签）→ 编排器解析标签分配任务 → 多 Agent 并行执行（asyncio.gather）→ 流式输出 → WebSocket 广播 → 前端渲染 → 质量门禁检测（不合格则自动重试）
+用户消息 → WebSocket 接收并持久化入队 → generation-worker 获取执行租约 → PM Agent 拆解任务（输出包含 [assign:agent_xxx] 标签）→ 编排器解析标签分配任务 → 多 Agent 并行执行（asyncio.gather）→ 流式输出 → Redis/WebSocket 广播 → 前端渲染 → 质量门禁检测（不合格则自动重试）
 
 - **关键协议标签**:
   - [assign:agent_xxx] — PM 指定任务分配给某个 Agent
@@ -111,6 +111,9 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
   - [tool_call:name]{params}[/tool_call] — Agent 调用运行时工具
 - **停止机制**: 每个会话维护独立的 asyncio.Event 停止信号，用户可通过 WebSocket 发送 stop 指令中断生成
 - **检查点恢复**: resume_graph_from_checkpoint() 支持从 HIL 检查点恢复执行
+- **持久队列**: Redis Streams 保存提示词、目标 Agent、租户和重试状态；API 与执行 Worker 独立扩缩容
+- **工程协议**: 兼容 `path=` Markdown 代码块，并支持 `<agenthub-files>` 的 write/delete 原子变更
+- **官方模板**: Web、FastAPI、小程序、APK 骨架通过项目 API 初始化，并共用分布式锁与 Git 快照
 
 ### 3.5 WebSocket 双通道通信
 

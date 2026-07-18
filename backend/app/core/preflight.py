@@ -15,6 +15,9 @@ from app.core.file_storage import UPLOAD_DIR, FileStorageManager
 from app.core.redis import redis_manager
 from app.core.workspace import WORKSPACE_ROOT
 from app.services.deployment_queue import WORKER_HEARTBEAT_KEY
+from app.services.generation_queue import (
+    WORKER_HEARTBEAT_KEY as GENERATION_WORKER_HEARTBEAT_KEY,
+)
 
 PreflightProfile = Literal["core", "deployment", "production"]
 
@@ -67,29 +70,62 @@ def _writable_check(key: str, label: str, directory: Path) -> PreflightCheck:
         return PreflightCheck(key, label, "fail", str(exc)[:240], required=True)
 
 
-async def _redis_checks(required: bool) -> list[PreflightCheck]:
+async def _redis_checks(
+    deployment_required: bool,
+    generation_required: bool,
+) -> list[PreflightCheck]:
     try:
         if not await redis_manager.check_connection():
             raise RuntimeError("Redis ping failed")
         client = redis_manager.get_client()
-        worker = await client.get(WORKER_HEARTBEAT_KEY)
+        deployment_worker = await client.get(WORKER_HEARTBEAT_KEY)
+        generation_worker = await client.get(GENERATION_WORKER_HEARTBEAT_KEY)
     except Exception as exc:
-        status = "fail" if required else "warn"
+        redis_required = deployment_required or generation_required
+        redis_status = "fail" if redis_required else "warn"
         return [
-            PreflightCheck("redis", "Redis", status, str(exc)[:240], required=required),
             PreflightCheck(
-                "deployment_worker", "构建 Worker", status,
-                "Redis 不可用，无法读取 Worker 心跳", required=required,
+                "redis", "Redis", redis_status, str(exc)[:240],
+                required=redis_required,
+            ),
+            PreflightCheck(
+                "deployment_worker",
+                "构建 Worker",
+                "fail" if deployment_required else "warn",
+                "Redis 不可用，无法读取 Worker 心跳",
+                required=deployment_required,
+            ),
+            PreflightCheck(
+                "generation_worker",
+                "生成 Worker",
+                "fail" if generation_required else "warn",
+                "Redis 不可用，无法读取 Worker 心跳",
+                required=generation_required,
             ),
         ]
     return [
-        PreflightCheck("redis", "Redis", "pass", "队列连接正常", required=required),
+        PreflightCheck(
+            "redis",
+            "Redis",
+            "pass",
+            "队列连接正常",
+            required=deployment_required or generation_required,
+        ),
         PreflightCheck(
             "deployment_worker",
             "构建 Worker",
-            "pass" if worker else ("fail" if required else "warn"),
-            f"在线：{worker}" if worker else "未检测到 15 秒内的 Worker 心跳",
-            required=required,
+            "pass" if deployment_worker else ("fail" if deployment_required else "warn"),
+            f"在线：{deployment_worker}"
+            if deployment_worker else "未检测到 15 秒内的 Worker 心跳",
+            required=deployment_required,
+        ),
+        PreflightCheck(
+            "generation_worker",
+            "生成 Worker",
+            "pass" if generation_worker else ("fail" if generation_required else "warn"),
+            f"在线：{generation_worker}"
+            if generation_worker else "未检测到 15 秒内的 Worker 心跳",
+            required=generation_required,
         ),
     ]
 
@@ -192,6 +228,9 @@ def _configuration_checks(profile: PreflightProfile) -> list[PreflightCheck]:
 
 async def run_preflight(profile: PreflightProfile = "core") -> dict:
     deployment_required = profile in {"deployment", "production"}
+    generation_required = (
+        profile == "production" or settings.generation_worker_enabled
+    )
     checks = await asyncio.to_thread(_database_checks)
     checks.extend([
         await asyncio.to_thread(
@@ -201,7 +240,7 @@ async def run_preflight(profile: PreflightProfile = "core") -> dict:
             _writable_check, "uploads", "构建产物目录", Path(UPLOAD_DIR)
         ),
     ])
-    checks.extend(await _redis_checks(deployment_required))
+    checks.extend(await _redis_checks(deployment_required, generation_required))
     checks.append(await _docker_check())
     checks.extend(await asyncio.to_thread(_configuration_checks, profile))
     required_failures = [check for check in checks if check.required and check.status == "fail"]

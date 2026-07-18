@@ -12,7 +12,12 @@ from app.core import workspace as workspace_module
 from app.core.tenancy import scope_conversation_id
 from app.routers import projects as projects_router
 from app.services import project_workspace
-from app.services.project_workspace import GeneratedProjectFile, materialize_project_files, parse_generated_files
+from app.services.project_templates import initialize_project_template, list_project_templates
+from app.services.project_workspace import (
+    GeneratedProjectFile,
+    materialize_project_files,
+    parse_generated_files,
+)
 from app.tools.registry import TOOL_REGISTRY, AgentTool, ToolResult
 
 
@@ -61,6 +66,24 @@ def test_parse_generated_files_never_writes_a_traversal_path():
     files = parse_generated_files("```python path=../../outside.py\nprint('safe')\n```", "agent_backend")
 
     assert files[0].path == "main.py"
+
+
+def test_parse_structured_file_operations_supports_write_and_delete():
+    output = """<agenthub-files>
+{"files":[
+  {"path":"src/app.js","operation":"update","content":"console.log('new')"},
+  {"path":"src/legacy.js","operation":"delete"}
+]}
+</agenthub-files>"""
+
+    files = parse_generated_files(output, "agent_frontend")
+
+    assert [(item.path, item.operation) for item in files] == [
+        ("src/app.js", "write"),
+        ("src/legacy.js", "delete"),
+    ]
+    assert files[0].language == "javascript"
+    assert files[1].code == ""
 
 
 @pytest.mark.asyncio
@@ -113,6 +136,75 @@ async def test_materialization_merges_concurrent_agent_files(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_materialization_deletes_files_and_manifest_entries(tmp_path, monkeypatch):
+    workspace_root = tmp_path / "agenthub_export"
+    monkeypatch.setattr(workspace_module, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace_module, "LEGACY_WORKSPACE_ROOT", tmp_path / "legacy")
+    monkeypatch.setattr(
+        project_workspace,
+        "git_checkpoint",
+        AsyncMock(return_value="snapshot-delete"),
+    )
+    await materialize_project_files(
+        "conversation",
+        "agent_frontend",
+        [GeneratedProjectFile("src/legacy.js", "javascript", "old")],
+    )
+
+    result = await materialize_project_files(
+        "conversation",
+        "agent_frontend",
+        [GeneratedProjectFile("src/legacy.js", "javascript", "", "delete")],
+    )
+
+    workspace = workspace_root / "conversation"
+    assert not (workspace / "src" / "legacy.js").exists()
+    assert result["deleted"] == ["src/legacy.js"]
+    assert result["manifest"]["files"] == []
+
+
+@pytest.mark.asyncio
+async def test_official_templates_initialize_each_supported_project_type(tmp_path, monkeypatch):
+    workspace_root = tmp_path / "agenthub_export"
+    monkeypatch.setattr(workspace_module, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace_module, "LEGACY_WORKSPACE_ROOT", tmp_path / "legacy")
+    monkeypatch.setattr(
+        project_workspace,
+        "git_checkpoint",
+        AsyncMock(return_value="snapshot-template"),
+    )
+
+    templates = list_project_templates()
+    assert {item["project_type"] for item in templates} == {
+        "web", "api", "miniprogram", "apk",
+    }
+
+    for template in templates:
+        result = await initialize_project_template(
+            f"conversation-{template['id']}",
+            template["id"],
+        )
+        assert result["manifest"]["project_type"] == template["project_type"]
+        assert result["snapshot_id"] == "snapshot-template"
+
+
+@pytest.mark.asyncio
+async def test_template_initialization_refuses_nonempty_project(tmp_path, monkeypatch):
+    workspace_root = tmp_path / "agenthub_export"
+    monkeypatch.setattr(workspace_module, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace_module, "LEGACY_WORKSPACE_ROOT", tmp_path / "legacy")
+    monkeypatch.setattr(
+        project_workspace,
+        "git_checkpoint",
+        AsyncMock(return_value="snapshot-template"),
+    )
+    await initialize_project_template("conversation", "web-static")
+
+    with pytest.raises(FileExistsError):
+        await initialize_project_template("conversation", "api-fastapi")
+
+
+@pytest.mark.asyncio
 async def test_project_api_reads_only_the_current_tenant(tmp_path, monkeypatch):
     workspace_root = tmp_path / "agenthub_export"
     monkeypatch.setattr(workspace_module, "WORKSPACE_ROOT", workspace_root)
@@ -142,10 +234,13 @@ async def test_project_api_reads_only_the_current_tenant(tmp_path, monkeypatch):
     app.include_router(projects_router.router, prefix="/api")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
+        templates_response = await client.get("/api/projects/templates")
         summary_response = await client.get("/api/projects/shared")
         file_response = await client.get("/api/projects/shared/files?path=index.html")
         secret_response = await client.get("/api/projects/shared/files?path=secret.html")
 
+    assert templates_response.status_code == 200
+    assert len(templates_response.json()) == 4
     assert summary_response.status_code == 200
     assert [item["path"] for item in summary_response.json()["files"]] == ["index.html"]
     assert file_response.json()["content"] == "<h1>own</h1>"
