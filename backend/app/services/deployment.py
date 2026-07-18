@@ -675,7 +675,9 @@ async def _sign_apk(
                 raise
         await progress("sign", "正在使用系统演示密钥签名 APK（仅用于测试安装）...", 74)
     elif mode == "uploaded":
-        keystore = _owned_secret_path(user_id, options.get("keystore_file_id", ""))
+        keystore = await asyncio.to_thread(
+            _owned_secret_path, user_id, options.get("keystore_file_id", "")
+        )
         alias = options.get("key_alias", "")
         store_password = deobfuscate_key(options.get("store_password", ""))
         key_password = deobfuscate_key(options.get("key_password", "")) or store_password
@@ -726,7 +728,7 @@ async def _upload_miniprogram(
     version = options.get("version", "1.0.0")
     if not re.fullmatch(r"[0-9A-Za-z._-]{1,32}", version):
         raise DeploymentError("小程序版本号格式不正确")
-    private_key = _owned_secret_path(user_id, private_key_id)
+    private_key = await asyncio.to_thread(_owned_secret_path, user_id, private_key_id)
     script = Path(__file__).resolve().parents[1] / "scripts" / "miniprogram_upload.js"
     await progress("upload", f"正在通过微信 miniprogram-ci 上传版本 {version}...", 82)
     await _run_trusted_command([
@@ -749,7 +751,7 @@ async def _preview_miniprogram(
         raise DeploymentError("生成体验二维码需要微信 AppID 和代码上传私钥")
     if not re.fullmatch(r"wx[a-fA-F0-9]{16}", appid):
         raise DeploymentError("微信小程序 AppID 格式不正确")
-    private_key = _owned_secret_path(user_id, private_key_id)
+    private_key = await asyncio.to_thread(_owned_secret_path, user_id, private_key_id)
     script = Path(__file__).resolve().parents[1] / "scripts" / "miniprogram_upload.js"
     await progress("upload", "正在通过微信 miniprogram-ci 编译体验版并生成二维码...", 82)
     with tempfile.TemporaryDirectory(prefix="agenthub-mini-preview-") as temp:

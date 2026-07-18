@@ -133,6 +133,46 @@ async def test_upload_endpoint_rejects_oversized_file_without_writing(app, tmp_p
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.asyncio
+async def test_upload_list_reports_storage_outage(app, monkeypatch):
+    from app.routers import uploads
+
+    def unavailable(_user_id):
+        raise ConnectionError("storage offline")
+
+    monkeypatch.setattr(uploads, "_list_upload_rows", unavailable)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/uploads/list")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "File storage is temporarily unavailable"
+
+
+@pytest.mark.asyncio
+async def test_generation_status_endpoint_restores_running_state(app, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.core.concurrency import generation_admission
+
+    monkeypatch.setattr(
+        "app.core.redis.redis_manager.check_connection",
+        AsyncMock(return_value=False),
+    )
+    generation_admission.reset()
+    scoped_id = "tenant__api-client__conv__conv-status"
+    assert (await generation_admission.acquire("api-client", scoped_id))[0]
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/conversations/conv-status/generation")
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "running"
+    assert response.json()["is_generating"] is True
+    await generation_admission.release("api-client", scoped_id)
+
+
 def test_upload_router_has_single_api_prefix(app):
     included = next(
         route for route in app.routes

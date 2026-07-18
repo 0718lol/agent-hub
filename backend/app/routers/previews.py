@@ -1,7 +1,6 @@
 """Tenant-scoped generated project previews and runtime proxies."""
 
 import asyncio
-import hmac
 import json
 import mimetypes
 from pathlib import Path
@@ -12,11 +11,15 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
-from app.core.auth import SESSION_COOKIE, verify_session_token
+from app.core.auth import (
+    SESSION_COOKIE,
+    bearer_client_identity,
+    trusted_proxy_identity,
+    verify_session_token,
+)
 from app.core.config import settings
 from app.core.redis import redis_manager
 from app.core.tenancy import (
-    has_valid_api_client_id,
     request_user_id,
     scope_conversation_id,
     websocket_user_id,
@@ -212,13 +215,19 @@ async def proxy_runtime_path(conversation_id: str, path: str, request: Request):
 
 
 def _preview_websocket_authorized(websocket: WebSocket) -> bool:
-    if not settings.api_secret:
+    auth_required = (
+        bool(settings.api_secret or settings.api_client_tokens_json)
+        or settings.auth_mode == "proxy"
+    )
+    if not auth_required:
         return True
-    header_token = websocket.headers.get("x-api-secret")
-    if header_token and hmac.compare_digest(header_token, settings.api_secret):
-        return settings.debug or has_valid_api_client_id(websocket.headers)
-    return verify_session_token(
-        websocket.cookies.get(SESSION_COOKIE), settings.api_secret
+    if trusted_proxy_identity(websocket.headers) or bearer_client_identity(
+        websocket.headers
+    ):
+        return True
+    return bool(settings.api_secret) and verify_session_token(
+        websocket.cookies.get(SESSION_COOKIE),
+        settings.api_secret,
     )
 
 

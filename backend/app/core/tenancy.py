@@ -8,9 +8,11 @@ from fastapi import Request
 from app.core.auth import (
     DEVICE_COOKIE,
     SESSION_COOKIE,
+    bearer_client_identity,
     get_device_identity,
     get_session_identity,
     get_session_secret,
+    trusted_proxy_identity,
 )
 from app.core.config import settings
 
@@ -33,17 +35,26 @@ def has_valid_api_client_id(headers) -> bool:
 
 
 def request_user_id(request: Request) -> str:
+    state_identity = getattr(getattr(request, "state", None), "auth_user_id", None)
+    if state_identity:
+        return state_identity
+    proxy_identity = trusted_proxy_identity(request.headers)
+    if proxy_identity:
+        return proxy_identity
     secret = get_session_secret(settings.api_secret)
     identity = get_session_identity(request.cookies.get(SESSION_COOKIE), secret)
     identity = identity or get_device_identity(request.cookies.get(DEVICE_COOKIE), secret)
-    return identity or _api_client_user_id(request.headers)
+    return identity or bearer_client_identity(request.headers) or _api_client_user_id(request.headers)
 
 
 def websocket_user_id(websocket) -> str:
+    proxy_identity = trusted_proxy_identity(websocket.headers)
+    if proxy_identity:
+        return proxy_identity
     secret = get_session_secret(settings.api_secret)
     identity = get_session_identity(websocket.cookies.get(SESSION_COOKIE), secret)
     identity = identity or get_device_identity(websocket.cookies.get(DEVICE_COOKIE), secret)
-    return identity or _api_client_user_id(websocket.headers)
+    return identity or bearer_client_identity(websocket.headers) or _api_client_user_id(websocket.headers)
 
 
 def scope_conversation_id(user_id: str, conversation_id: str) -> str:

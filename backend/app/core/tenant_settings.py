@@ -88,6 +88,7 @@ def get_tenant_llm_client(user_id: str) -> LLMClient:
             return cached
 
         client = _clone_default_client()
+        client.tenant_id = user_id
         config = get_tenant_config(user_id, "llm", {}) or {}
         if config:
             client.configure(

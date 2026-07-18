@@ -34,6 +34,15 @@ def tenant_collection_name(user_id: str, knowledge_base_id: str) -> str:
 def _get_chroma_client():
     """延迟加载 chromadb 客户端（避免启动时未安装报错）"""
     import chromadb
+
+    from app.core.config import settings
+
+    if settings.chroma_host:
+        return chromadb.HttpClient(
+            host=settings.chroma_host,
+            port=settings.chroma_port,
+            ssl=settings.chroma_ssl,
+        )
     return chromadb.PersistentClient(path=CHROMA_DIR)
 
 

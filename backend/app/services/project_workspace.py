@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from app.core.config import settings
 from app.core.git_sandbox import git_checkpoint, git_log, git_rollback_to, run_git_cmd
 from app.core.redis import redis_manager
 from app.core.workspace import resolve_workspace
@@ -70,15 +71,29 @@ async def _workspace_lock(workspace: Path):
         redis_client = None
         acquired = False
         if await redis_manager.check_connection():
-            redis_client = redis_manager.get_client()
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
-                acquired = bool(await redis_client.set(redis_key, token, nx=True, ex=180))
-                if acquired:
-                    break
-                await asyncio.sleep(0.1)
-            if not acquired:
-                raise TimeoutError("Timed out waiting for the project workspace lock")
+            try:
+                redis_client = redis_manager.get_client()
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    acquired = bool(
+                        await redis_client.set(redis_key, token, nx=True, ex=180)
+                    )
+                    if acquired:
+                        break
+                    await asyncio.sleep(0.1)
+                if not acquired:
+                    raise TimeoutError("Timed out waiting for the project workspace lock")
+            except TimeoutError:
+                raise
+            except Exception as exc:
+                redis_manager.mark_unavailable(exc, "workspace lock acquire")
+                redis_client = None
+                if not settings.debug:
+                    raise RuntimeError(
+                        "Distributed workspace coordination is unavailable"
+                    ) from exc
+        elif not settings.debug:
+            raise RuntimeError("Distributed workspace coordination is unavailable")
         try:
             yield
         finally:
@@ -91,8 +106,8 @@ async def _workspace_lock(workspace: Path):
                         redis_key,
                         token,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    redis_manager.mark_unavailable(exc, "workspace lock release")
 
 
 def _normalize_language(language: str) -> str:

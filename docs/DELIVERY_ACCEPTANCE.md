@@ -46,7 +46,9 @@ AgentHub 已形成从自然语言需求到工程文件、运行预览、多轮�
 - 小程序二维码是体验版入口，上传版本仍需在微信公众平台提交审核和发布。
 - Web 公网链接依赖 Netlify 配置；API 公网可达性依赖反向代理、域名和 TLS。
 - 任意模型都可能生成不完整的第三方工程。质量门禁、沙箱和构建流水线会发现问题，但不能保证一次生成即达到生产质量。
-- 自定义 Agent 和知识库资源仍需进一步增加严格的 owner 字段隔离，当前生产多租户验收不应开放这两项共享管理入口。
+- 自定义 Agent、知识库、上传、工程和发布记录已按租户隔离；身份代理本身需由部署方提供 OIDC/OAuth2 登录与账号生命周期管理。
+- 生成状态与停止信号可跨实例恢复，但模型执行仍在接收任务的 API 进程；进程崩溃后任务标记为 `interrupted`，不会从中间 Token 自动续跑。
+- S3/MinIO 已覆盖上传和构建产物；可变工程工作区在多主机部署时仍要求共享 RWX 卷或同一远程 Docker 数据卷。
 
 ## 5. 上线预检
 
@@ -68,6 +70,8 @@ python -m app.scripts.preflight --profile production
 - `ready=true`，数据库连接和 Alembic Schema 均通过。
 - Redis 与 deployment-worker 心跳通过。
 - `AGENTHUB_API_SECRET`、`AGENTHUB_ENCRYPT_KEY`、`AGENTHUB_PUBLIC_BASE_URL` 已配置。
+- 公网多用户部署启用身份代理与只读角色策略；多主机部署启用 S3/MinIO 和远程 Chroma。
+- Alembic 由独立 `migration` 服务完成，API 设置 `AGENTHUB_AUTO_MIGRATE=false`。
 - 生成项目目录和构建产物目录可写。
 - Nginx 已代理 `/api/`、`/ws/`、`/uploads/` 和 `/published/`。
 
@@ -85,4 +89,5 @@ npm run build
 npm run test:e2e
 ```
 
-端到端场景覆盖生成对话、真实文件树、流式预览、多轮修改、部署进度、API 请求调试、失败日志、取消和历史回滚。
+模拟端到端场景覆盖生成、文件树、流式预览、多轮修改、部署进度、API 调试、失败日志、取消和回滚。
+真实后端场景使用 PostgreSQL、Redis、FastAPI 和 WebSocket 覆盖迁移、会话、上传及发布队列；外部 LLM、Android SDK 和微信平台由凭证环境单独验收。

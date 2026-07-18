@@ -52,7 +52,12 @@ async def push_trace(trace_data: dict):
 @router.get("/metrics")
 async def get_metrics(request: Request):
     """Return evaluation metrics belonging to the current tenant."""
-    return metrics.get_dashboard_data(user_id=request_user_id(request))
+    from app.core.llm_client import get_daily_llm_usage
+
+    user_id = request_user_id(request)
+    data = metrics.get_dashboard_data(user_id=user_id)
+    data["daily_llm_usage"] = await get_daily_llm_usage(user_id)
+    return data
 
 
 @router.get("/metrics/traces")

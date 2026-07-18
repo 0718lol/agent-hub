@@ -48,7 +48,7 @@ class ConnectionManager:
                 return
             except Exception as e:
                 logger.warning(f"Failed to publish broadcast to Redis: {e}. Falling back to local broadcast.")
-                redis_manager._is_connected = False
+                redis_manager.mark_unavailable(e, "WebSocket publish")
 
         # Fallback to local broadcast
         await self._local_broadcast(conversation_id, message)
@@ -124,14 +124,14 @@ class ConnectionManager:
                     except Exception as e:
                         if isinstance(e, (ConnectionError, TimeoutError)):
                             logger.warning(f"Redis connection lost in Pub/Sub listener: {e}. Reconnecting...")
-                            redis_manager._is_connected = False
+                            redis_manager.mark_unavailable(e, "WebSocket subscription")
                             break
                         else:
                             logger.error(f"Unexpected error in Redis Pub/Sub listener loop: {e}")
                             await asyncio.sleep(1)
             except Exception as e:
                 logger.warning(f"Error subscribing to Redis Pub/Sub: {e}. Retrying in {backoff}s...")
-                redis_manager._is_connected = False
+                redis_manager.mark_unavailable(e, "WebSocket subscribe")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
             finally:

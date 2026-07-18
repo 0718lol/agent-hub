@@ -1,5 +1,7 @@
 """Tests for persistent deployment queue state and admission locks."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from app.services.deployment_queue import (
@@ -170,3 +172,48 @@ async def test_cancel_request_is_visible_until_worker_clears_it(queue):
 
     await instance.clear_cancel(job.id)
     assert await instance.is_cancel_requested(job.id) is False
+
+
+@pytest.mark.asyncio
+async def test_command_failure_is_reported_as_queue_unavailable(monkeypatch):
+    from app.core.redis import redis_manager
+
+    class BrokenRedis:
+        async def get(self, key):
+            del key
+            raise ConnectionError("redis disconnected")
+
+    instance = DeploymentQueue()
+
+    async def available():
+        return BrokenRedis()
+
+    monkeypatch.setattr(instance, "ensure_available", available)
+    monkeypatch.setattr(redis_manager, "mark_unavailable", MagicMock())
+
+    with pytest.raises(DeploymentQueueUnavailable, match="Worker 心跳"):
+        await instance.enqueue("tenant__u__conv__c", "u", "web")
+
+    redis_manager.mark_unavailable.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_consumer_group_initialization_is_cached(monkeypatch):
+    from app.core.redis import redis_manager
+
+    class GroupRedis:
+        def __init__(self):
+            self.creates = 0
+
+        async def xgroup_create(self, *args, **kwargs):
+            del args, kwargs
+            self.creates += 1
+
+    client = GroupRedis()
+    instance = DeploymentQueue()
+    monkeypatch.setattr(redis_manager, "check_connection", AsyncMock(return_value=True))
+    monkeypatch.setattr(redis_manager, "get_client", lambda: client)
+
+    assert await instance.ensure_available() is client
+    assert await instance.ensure_available() is client
+    assert client.creates == 1

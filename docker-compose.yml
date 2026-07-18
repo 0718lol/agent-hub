@@ -17,7 +17,23 @@ services:
       - AGENTHUB_DEBUG=false
       - AGENTHUB_API_SECRET=${AGENTHUB_API_SECRET:-}
       - AGENTHUB_ENCRYPT_KEY=${AGENTHUB_ENCRYPT_KEY:-}
+      - AGENTHUB_AUTH_MODE=${AGENTHUB_AUTH_MODE:-shared}
+      - AGENTHUB_TRUSTED_PROXY_SECRET=${AGENTHUB_TRUSTED_PROXY_SECRET:-}
+      - AGENTHUB_TRUSTED_IDENTITY_HEADER=${AGENTHUB_TRUSTED_IDENTITY_HEADER:-x-agenthub-auth-user}
+      - AGENTHUB_TRUSTED_ROLE_HEADER=${AGENTHUB_TRUSTED_ROLE_HEADER:-x-agenthub-auth-role}
+      - AGENTHUB_API_CLIENT_TOKENS_JSON=${AGENTHUB_API_CLIENT_TOKENS_JSON:-}
+      - AGENTHUB_STORAGE_BACKEND=${AGENTHUB_STORAGE_BACKEND:-local}
+      - AGENTHUB_S3_BUCKET=${AGENTHUB_S3_BUCKET:-}
+      - AGENTHUB_S3_PREFIX=${AGENTHUB_S3_PREFIX:-agenthub}
+      - AGENTHUB_S3_ENDPOINT_URL=${AGENTHUB_S3_ENDPOINT_URL:-}
+      - AGENTHUB_S3_REGION=${AGENTHUB_S3_REGION:-us-east-1}
+      - AGENTHUB_S3_ACCESS_KEY_ID=${AGENTHUB_S3_ACCESS_KEY_ID:-}
+      - AGENTHUB_S3_SECRET_ACCESS_KEY=${AGENTHUB_S3_SECRET_ACCESS_KEY:-}
+      - AGENTHUB_CHROMA_HOST=${AGENTHUB_CHROMA_HOST:-}
+      - AGENTHUB_CHROMA_PORT=${AGENTHUB_CHROMA_PORT:-8000}
+      - AGENTHUB_CHROMA_SSL=${AGENTHUB_CHROMA_SSL:-false}
       - AGENTHUB_REDIS_URL=redis://:${REDIS_PASSWORD:-agenthub_redis_secret}@redis:6379/0
+      - AGENTHUB_AUTO_MIGRATE=false
       - DATABASE_URL=postgresql+psycopg://agenthub:${POSTGRES_PASSWORD:-agenthub_postgres_secret}@postgres:5432/agenthub
       # LLM config (can override via .env file)
       - AGENTHUB_LLM_PROVIDER=${LLM_PROVIDER:-openai}
@@ -38,6 +54,10 @@ services:
       - AGENTHUB_RUNTIME_SANDBOX_MAX_PER_TENANT=${AGENTHUB_RUNTIME_SANDBOX_MAX_PER_TENANT:-1}
       - AGENTHUB_PREVIEW_RUNTIME_MAX_TOTAL=${AGENTHUB_PREVIEW_RUNTIME_MAX_TOTAL:-8}
       - AGENTHUB_PREVIEW_RUNTIME_MAX_PER_TENANT=${AGENTHUB_PREVIEW_RUNTIME_MAX_PER_TENANT:-2}
+      - AGENTHUB_SCHEDULER_LEADER_TTL=${AGENTHUB_SCHEDULER_LEADER_TTL:-20}
+      - AGENTHUB_GENERATION_LEASE_TTL=${AGENTHUB_GENERATION_LEASE_TTL:-90}
+      - AGENTHUB_GENERATION_MAX_PER_USER=${AGENTHUB_GENERATION_MAX_PER_USER:-2}
+      - AGENTHUB_LLM_DAILY_TOKEN_QUOTA=${AGENTHUB_LLM_DAILY_TOKEN_QUOTA:-0}
       - AGENTHUB_RUNTIME_SANDBOX_QUEUE_TIMEOUT=${AGENTHUB_RUNTIME_SANDBOX_QUEUE_TIMEOUT:-30}
       - AGENTHUB_RUNTIME_SANDBOX_DEPENDENCY_TIMEOUT=${AGENTHUB_RUNTIME_SANDBOX_DEPENDENCY_TIMEOUT:-300}
       - AGENTHUB_RUNTIME_SANDBOX_DEPENDENCY_CACHE_MAX=${AGENTHUB_RUNTIME_SANDBOX_DEPENDENCY_CACHE_MAX:-100}
@@ -57,6 +77,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health')"]
       interval: 30s
@@ -79,6 +101,20 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  migration:
+    build: ./backend
+    restart: "no"
+    command: ["python", "-m", "app.scripts.migrate"]
+    environment:
+      - AGENTHUB_DEBUG=false
+      - AGENTHUB_ENCRYPT_KEY=${AGENTHUB_ENCRYPT_KEY:-local-migration-key}
+      - DATABASE_URL=postgresql+psycopg://agenthub:${POSTGRES_PASSWORD:-agenthub_postgres_secret}@postgres:5432/agenthub
+    volumes:
+      - backend_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   deployment-worker:
     profiles: ["deployment"]
@@ -103,6 +139,13 @@ services:
       - AGENTHUB_ALLOW_HOST_DOCKER_SOCKET=false
       - DOCKER_HOST=${DOCKER_HOST:-}
       - AGENTHUB_ENCRYPT_KEY=${AGENTHUB_ENCRYPT_KEY:-}
+      - AGENTHUB_STORAGE_BACKEND=${AGENTHUB_STORAGE_BACKEND:-local}
+      - AGENTHUB_S3_BUCKET=${AGENTHUB_S3_BUCKET:-}
+      - AGENTHUB_S3_PREFIX=${AGENTHUB_S3_PREFIX:-agenthub}
+      - AGENTHUB_S3_ENDPOINT_URL=${AGENTHUB_S3_ENDPOINT_URL:-}
+      - AGENTHUB_S3_REGION=${AGENTHUB_S3_REGION:-us-east-1}
+      - AGENTHUB_S3_ACCESS_KEY_ID=${AGENTHUB_S3_ACCESS_KEY_ID:-}
+      - AGENTHUB_S3_SECRET_ACCESS_KEY=${AGENTHUB_S3_SECRET_ACCESS_KEY:-}
       - AGENTHUB_NETLIFY_TOKEN=${AGENTHUB_NETLIFY_TOKEN:-}
       - AGENTHUB_NETLIFY_SITE_ID=${AGENTHUB_NETLIFY_SITE_ID:-}
       - AGENTHUB_PUBLIC_BASE_URL=${AGENTHUB_PUBLIC_BASE_URL:-}

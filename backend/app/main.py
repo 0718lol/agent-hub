@@ -24,7 +24,6 @@ Business logic is delegated to focused router modules and services:
 - routers/tools.py — Tool listing & testing
 """
 import asyncio
-import hmac
 import json
 import os
 import re
@@ -123,17 +122,15 @@ import app.tools  # noqa: F401
 # ---- App lifespan ----
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from datetime import UTC, datetime
-
-    from app.core.crud.cron import recover_running_cron_tasks
     from app.services.daemon_scheduler import daemon_scheduler
 
-    # A process crash can leave a task marked "running", which otherwise
-    # prevents the scheduler from ever picking it up again.
-    await asyncio.to_thread(
-        recover_running_cron_tasks,
-        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-    )
+    if settings.auto_migrate:
+        await asyncio.to_thread(init_db)
+    # Container deployments run migrations and seed defaults in the one-shot
+    # migration service before any API replica starts.
+
+    # Recovery is performed only after the scheduler owns the distributed
+    # leader lease. Running it in every API replica can duplicate active jobs.
     daemon_scheduler.start()
     yield
     try:
@@ -182,25 +179,32 @@ async def api_security_middleware(request: Request, call_next):
         return await call_next(request)
     if not (path.startswith("/api") or path.startswith("/uploads")):
         return await call_next(request)
-    if settings.api_secret:
-        from app.core.auth import SESSION_COOKIE, verify_session_token
-        auth_header = request.headers.get("Authorization")
-        bearer_valid = bool(
-            auth_header
-            and auth_header.startswith("Bearer ")
-            and hmac.compare_digest(auth_header.split(" ", 1)[1], settings.api_secret)
+    auth_required = bool(settings.api_secret or settings.api_client_tokens_json) or settings.auth_mode == "proxy"
+    if auth_required:
+        from app.core.auth import (
+            SESSION_COOKIE,
+            bearer_client_identity,
+            get_session_identity,
+            trusted_proxy_identity,
+            trusted_proxy_role,
+            verify_session_token,
         )
-        if bearer_valid and not settings.debug:
-            from app.core.tenancy import has_valid_api_client_id
-
-            if not has_valid_api_client_id(request.headers):
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": "Production Bearer clients must provide X-AgentHub-Client-ID"},
-                )
-        session_valid = verify_session_token(request.cookies.get(SESSION_COOKIE), settings.api_secret)
-        if not bearer_valid and not session_valid:
+        proxy_identity = trusted_proxy_identity(request.headers)
+        bearer_identity = bearer_client_identity(request.headers)
+        session_valid = bool(settings.api_secret) and verify_session_token(
+            request.cookies.get(SESSION_COOKIE), settings.api_secret
+        )
+        session_identity = (
+            get_session_identity(request.cookies.get(SESSION_COOKIE), settings.api_secret)
+            if settings.api_secret
+            else None
+        )
+        if not proxy_identity and not bearer_identity and not session_valid:
             return JSONResponse(status_code=401, content={"detail": "Unauthorized: Sign in or provide a valid bearer token"})
+        request.state.auth_user_id = proxy_identity or bearer_identity or session_identity
+        request.state.auth_role = trusted_proxy_role(request.headers) if proxy_identity else "user"
+        if request.state.auth_role == "viewer" and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            return JSONResponse(status_code=403, content={"detail": "Viewer role is read-only"})
     # No secret means authentication is deliberately disabled. Docker/Nginx
     # proxy requests originate from the proxy container, not localhost.
     return await call_next(request)
@@ -236,9 +240,6 @@ app.include_router(tools_router.router, prefix="/api")
 app.include_router(knowledge_router.router, prefix="/api")
 app.include_router(adapters_router.router, prefix="/api")
 app.include_router(metrics_router.router, prefix="/api")
-
-# ---- Initialize database ----
-init_db()
 
 # ---- Load LLM config at startup ----
 load_llm_config(llm_client, settings)
@@ -396,8 +397,9 @@ async def deploy_project(conversation_id: str, request: Request, options: Deploy
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
+        deployment_options = await asyncio.to_thread(_deployment_options, user_id, options)
         job = await deployment_queue.enqueue(
-            scoped_id, user_id, target, options=_deployment_options(user_id, options)
+            scoped_id, user_id, target, options=deployment_options
         )
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -472,7 +474,10 @@ async def deployment_history(request: Request, limit: int = 30):
 
 @app.post("/api/deployments/{job_id}/retry")
 async def retry_deployment(job_id: str, request: Request):
-    source = await deployment_queue.get(job_id)
+    try:
+        source = await deployment_queue.get(job_id)
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     user_id = request_user_id(request)
     if not source or source.user_id != user_id or source.action != "deploy":
         raise HTTPException(status_code=404, detail="Deployment not found")
@@ -486,6 +491,8 @@ async def retry_deployment(job_id: str, request: Request):
         )
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "queued", "job_id": job.id}
 
 
@@ -515,7 +522,10 @@ async def cancel_deployment(job_id: str, request: Request):
 async def deployment_action(job_id: str, action: str, request: Request):
     if action not in {"rollback", "offline"}:
         raise HTTPException(status_code=404, detail="Unsupported deployment action")
-    source = await deployment_queue.get(job_id)
+    try:
+        source = await deployment_queue.get(job_id)
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     user_id = request_user_id(request)
     if not source or source.user_id != user_id or source.provider != "docker-runtime":
         raise HTTPException(status_code=404, detail="API deployment not found")
@@ -529,6 +539,8 @@ async def deployment_action(job_id: str, action: str, request: Request):
         )
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "queued", "job_id": job.id}
 
 
@@ -542,6 +554,8 @@ async def cleanup_deployments(request: Request):
         )
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "queued", "job_id": job.id}
 
 
@@ -560,7 +574,15 @@ async def proxy_published_api(deployment_id: str, path: str, request: Request):
     from app.core.redis import redis_manager
     if not await redis_manager.check_connection():
         raise HTTPException(status_code=503, detail="Published service registry is unavailable")
-    raw = await redis_manager.get_client().get(f"agenthub:published:{deployment_id}")
+    try:
+        raw = await redis_manager.get_client().get(
+            f"agenthub:published:{deployment_id}"
+        )
+    except Exception as exc:
+        redis_manager.mark_unavailable(exc, "published service lookup")
+        raise HTTPException(
+            status_code=503, detail="Published service registry is unavailable"
+        ) from exc
     if not raw:
         raise HTTPException(status_code=404, detail="Published service not found")
     runtime_url = json.loads(raw).get("runtime_url", "")

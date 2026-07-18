@@ -11,6 +11,7 @@ from app.core.async_wrappers import (
     async_get_messages,
     async_search_messages,
 )
+from app.core.concurrency import generation_admission
 from app.core.database import (
     async_clear_messages_cached,
     async_get_conversations_cached,
@@ -87,6 +88,17 @@ async def create_conv(req: ConversationCreateRequest, request: Request):
 @router.get("/conversations/{conversation_id}/messages")
 async def list_messages(conversation_id: str, request: Request, limit: int = 100):
     return await async_get_messages_cached(_scoped_id(request, conversation_id), limit)
+
+
+@router.get("/conversations/{conversation_id}/generation")
+async def generation_status(conversation_id: str, request: Request):
+    status = await generation_admission.get_status(_scoped_id(request, conversation_id))
+    state = status.get("state", "idle")
+    return {
+        **status,
+        "state": state,
+        "is_generating": state in {"running", "cancelling"},
+    }
 
 
 @router.delete("/conversations/{conversation_id}/messages")

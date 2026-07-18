@@ -41,6 +41,7 @@ class Settings(BaseSettings):
 
     # Redis config
     redis_url: str = "redis://localhost:6379/0"
+    auto_migrate: bool = True
 
     # Sandbox config
     docker_sandbox: bool = True
@@ -66,12 +67,30 @@ class Settings(BaseSettings):
 
     # Security config
     api_secret: str = ""
+    auth_mode: str = "shared"  # shared | proxy
+    trusted_proxy_secret: str = ""
+    trusted_identity_header: str = "x-agenthub-auth-user"
+    trusted_role_header: str = "x-agenthub-auth-role"
+    api_client_tokens_json: str = ""
+    login_attempts_per_minute: int = 10
     allow_unsandboxed_shell: bool = False
     shell_timeout: float = 15.0
     shell_memory_limit_mb: int = 256
     upload_max_bytes: int = 50 * 1024 * 1024
     knowledge_upload_max_bytes: int = 25 * 1024 * 1024
     speech_upload_max_bytes: int = 25 * 1024 * 1024
+
+    # Shared file/vector storage for multi-host deployments
+    storage_backend: str = "local"  # local | s3
+    s3_bucket: str = ""
+    s3_prefix: str = "agenthub"
+    s3_endpoint_url: str = ""
+    s3_region: str = "us-east-1"
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    chroma_host: str = ""
+    chroma_port: int = 8000
+    chroma_ssl: bool = False
 
     # Static site deployment (Netlify Deploy API)
     netlify_token: str = ""
@@ -94,6 +113,10 @@ class Settings(BaseSettings):
     allow_host_docker_socket: bool = False
     deployment_retention_days: int = 7
     deployment_max_per_user: int = 20
+    scheduler_leader_ttl: int = 20
+    generation_lease_ttl: int = 90
+    generation_max_per_user: int = 2
+    llm_daily_token_quota: int = 0
 
     def validate_production_security(self) -> None:
         """Reject production startup when required secrets are absent."""
@@ -104,6 +127,14 @@ class Settings(BaseSettings):
             missing.append("AGENTHUB_API_SECRET (at least 32 characters)")
         if not os.environ.get("AGENTHUB_ENCRYPT_KEY", ""):
             missing.append("AGENTHUB_ENCRYPT_KEY")
+        if self.auth_mode == "proxy" and len(self.trusted_proxy_secret) < 32:
+            missing.append("AGENTHUB_TRUSTED_PROXY_SECRET (at least 32 characters)")
+        if self.auth_mode not in {"shared", "proxy"}:
+            missing.append("AGENTHUB_AUTH_MODE (shared or proxy)")
+        if self.storage_backend not in {"local", "s3"}:
+            missing.append("AGENTHUB_STORAGE_BACKEND (local or s3)")
+        if self.storage_backend == "s3" and not self.s3_bucket.strip():
+            missing.append("AGENTHUB_S3_BUCKET")
         if missing:
             raise RuntimeError("Production security configuration missing: " + ", ".join(missing))
 
@@ -120,6 +151,8 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "AGENTHUB_DEPLOYMENT_BUILD_NETWORK must be 'none' or 'default'; host networking is forbidden."
             )
+        if self.storage_backend not in {"local", "s3"}:
+            raise RuntimeError("AGENTHUB_STORAGE_BACKEND must be 'local' or 's3'")
 
 
 settings = Settings()

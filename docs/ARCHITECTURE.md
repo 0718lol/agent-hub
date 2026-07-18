@@ -16,8 +16,8 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 | ---------- | ------------------------------------------------------- |
 | 后端框架   | Python 3.12 + FastAPI + WebSocket                       |
 | 前端框架   | React 18 + Zustand + Vite                               |
-| 数据库     | SQLite (WAL 模式) + SQLModel (SQLAlchemy)               |
-| 缓存/广播  | Redis (可选，用于 WebSocket 多实例 Pub/Sub 广播)        |
+| 数据库     | SQLite（本地）/ PostgreSQL（多人部署）+ SQLModel/Alembic |
+| 协调层     | Redis（广播、租约、配额、调度主节点、发布队列）          |
 | LLM 客户端 | httpx，支持 OpenAI / Claude / Ollama 多后端             |
 | 协议       | MCP (Model Context Protocol) Stdio 桥接                 |
 | 容器化     | Docker + docker-compose                                 |
@@ -29,9 +29,9 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 
 - **位置**: backend/app/main.py
 - **框架**: FastAPI，使用 lifespan 上下文管理器处理启动/关闭
-- **启动时**: 初始化数据库 (init_db)、加载 LLM 配置、启动 DaemonScheduler、注册所有路由
+- **启动时**: 本地模式执行迁移；容器模式等待独立 migration 服务；随后启动 DaemonScheduler
 - **关闭时**: 停止 DaemonScheduler、关闭浏览器会话和终端会话
-- **中间件**: CORS、RequestId 日志追踪、API 密钥/IP 鉴权
+- **中间件**: CORS、RequestId、共享密钥或受信任身份代理鉴权、viewer 只读策略
 - **路由挂载**: 18 个独立路由模块，统一挂载在 /api 前缀下
 
 **路由模块清单**:
@@ -639,13 +639,13 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 
 ### 3.30 数据层
 
-- **数据库**: SQLite + SQLModel (SQLAlchemy ORM)
+- **数据库**: 本地 SQLite；生产 PostgreSQL；SQLModel + Alembic
 - **位置**: backend/app/core/database.py + backend/app/core/_engine.py
 - **模型定义**: backend/app/core/models.py
 - **CRUD 操作**: backend/app/core/crud/
 - **WAL 模式**: 启用 Write-Ahead Logging，支持读写并发
 - **主要实体**: 会话 (Conversation)、消息 (Message)、制品 (Artifact)、自定义 Agent、HIL 检查点
-- **文件存储**: backend/app/core/file_storage.py，上传目录 data/uploads/
+- **文件存储**: 本地缓存 + 可选 S3/MinIO；向量库支持内嵌或远程 Chroma
 
 ## 4. 关键设计决策
 
@@ -656,12 +656,11 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 - WebSocket 支持二进制数据传输（未来扩展文件/图片流）
 - 前端需要实时反馈连接状态（connected/reconnecting/disconnected），WebSocket 原生支持
 
-### 4.2 为什么用 SQLite 而非 PostgreSQL？
+### 4.2 为什么同时支持 SQLite 和 PostgreSQL？
 
-- 项目定位是内部工具/挑战赛作品，不需要高并发
-- SQLite 零配置，开箱即用，无需额外部署
-- WAL 模式支持读写并发，足够应对 demo 场景
-- SQLModel/SQLAlchemy 抽象层使得未来切换到 PostgreSQL 只需改连接字符串
+- SQLite 零配置，适合单机演示和开发。
+- PostgreSQL 是多人、多副本部署的默认数据层，迁移由一次性 migration 服务串行执行。
+- 两种数据库共用 SQLModel 模型和 Alembic 版本，CI 在 PostgreSQL 上验证真实启动路径。
 
 ### 4.3 为什么自建 StateGraph 而非 LangGraph？
 
@@ -672,8 +671,8 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户可以像在钉钉
 
 ### 4.4 为什么用 Redis Pub/Sub 而非 Sticky Session？
 
-- 单实例部署时 Redis 是可选的，自动降级为本地广播
-- 多实例部署时，Redis Pub/Sub 确保所有连接都能收到消息
+- 单实例开发时 Redis 可降级为本地状态
+- 多实例部署时 Redis 同步广播、生成租约、取消、调度选主和发布队列
 - 比 Sticky Session 更灵活，不依赖负载均衡器配置
 - Redis 还可用于缓存、限流等其他场景
 
@@ -893,4 +892,4 @@ docker-compose -f docker-compose.prod.yml up -d  # 生产环境
                     +-------------+
 ```
 
-多实例部署时，Redis Pub/Sub 确保 WebSocket 消息在所有实例间同步。单实例部署时 Redis 为可选组件。
+多实例部署还需 PostgreSQL、S3/MinIO、远程 Chroma，以及共享 RWX 工程卷或同一远程 Docker 数据卷。Redis 不只同步 WebSocket，也承担生成和调度租约；生产模式下 Redis 故障时调度暂停，不会降级为重复执行风险更高的本地选主。

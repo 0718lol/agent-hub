@@ -94,6 +94,23 @@ def test_vite_runtime_detection_uses_structured_package_json(tmp_path: Path):
     assert not manager.supports_vite(tmp_path)
 
 
+def test_preview_websocket_accepts_trusted_proxy_identity(monkeypatch):
+    monkeypatch.setattr(previews.settings, "auth_mode", "proxy")
+    monkeypatch.setattr(previews.settings, "api_secret", "s" * 32)
+    monkeypatch.setattr(previews.settings, "trusted_proxy_secret", "p" * 32)
+    websocket = SimpleNamespace(
+        headers={
+            "x-agenthub-proxy-secret": "p" * 32,
+            "x-agenthub-auth-user": "user@example.test",
+        },
+        cookies={},
+    )
+
+    assert previews._preview_websocket_authorized(websocket)
+    websocket.headers["x-agenthub-proxy-secret"] = "wrong"
+    assert not previews._preview_websocket_authorized(websocket)
+
+
 @pytest.mark.asyncio
 async def test_preview_runtime_can_be_rediscovered_by_another_backend_instance(
     tmp_path: Path, monkeypatch

@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import secrets
 import time
 
@@ -62,3 +63,75 @@ def get_session_identity(
 
 def get_device_identity(token: str | None, secret: str, now: int | None = None) -> str | None:
     return get_session_identity(token, secret, now=now, ttl_seconds=DEVICE_TTL_SECONDS)
+
+
+def _hashed_identity(prefix: str, value: str) -> str:
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+    return f"{prefix}-{digest}"
+
+
+def trusted_proxy_identity(headers) -> str | None:
+    """Return an upstream IdP identity only when the proxy signature matches."""
+    from app.core.config import settings
+
+    if settings.auth_mode != "proxy" or not settings.trusted_proxy_secret:
+        return None
+    supplied = headers.get("x-agenthub-proxy-secret", "")
+    if not supplied or not hmac.compare_digest(supplied, settings.trusted_proxy_secret):
+        return None
+    external_id = headers.get(settings.trusted_identity_header, "").strip()
+    if not external_id or len(external_id) > 320:
+        return None
+    return _hashed_identity("user", external_id.casefold())
+
+
+def trusted_proxy_role(headers) -> str:
+    from app.core.config import settings
+
+    if not trusted_proxy_identity(headers):
+        return "user"
+    role = headers.get(settings.trusted_role_header, "user").strip().lower()
+    return role if role in {"user", "admin", "viewer"} else "user"
+
+
+def _configured_client_tokens() -> dict[str, str]:
+    from app.core.config import settings
+
+    if not settings.api_client_tokens_json.strip():
+        return {}
+    try:
+        payload = json.loads(settings.api_client_tokens_json)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(client_id): str(token)
+        for client_id, token in payload.items()
+        if client_id and token
+    }
+
+
+def bearer_client_identity(headers) -> str | None:
+    """Authenticate a machine client with its own token or the legacy secret."""
+    from app.core.config import settings
+
+    authorization = headers.get("authorization", "")
+    token = authorization.split(" ", 1)[1] if authorization.startswith("Bearer ") else ""
+    token = token or headers.get("x-api-secret", "")
+    client_id = headers.get("x-agenthub-client-id", "").strip()
+    if not token:
+        return None
+
+    client_tokens = _configured_client_tokens()
+    if client_tokens:
+        if not client_id:
+            return None
+        expected = client_tokens.get(client_id, "")
+        if not expected or not hmac.compare_digest(token, expected):
+            return None
+    elif not settings.api_secret or not hmac.compare_digest(token, settings.api_secret):
+        return None
+    elif not client_id:
+        return "api-client"
+    return _hashed_identity("api-client", client_id)

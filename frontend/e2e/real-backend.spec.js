@@ -9,6 +9,10 @@ test('真实后端支持会话、上传与部署可用性反馈', async ({ page 
   await page.goto('/')
   await expect(page.locator('#root')).not.toBeEmpty()
 
+  await page.getByLabel('输入消息').fill('谢谢你的帮助')
+  await page.getByLabel('发送消息').click()
+  await expect(page.getByText('不客气！有新的需求随时告诉我，我会帮你拆解和协调资源。', { exact: true })).toBeVisible({ timeout: 20_000 })
+
   const conversations = await page.request.get(apiUrl('/api/conversations'))
   expect(conversations.ok()).toBeTruthy()
   const rows = await conversations.json()

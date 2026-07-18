@@ -1,20 +1,25 @@
 ﻿"""WebSocket endpoint for real-time agent communication."""
 import asyncio
 import contextlib
-import hmac
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save_message
-from app.core.auth import SESSION_COOKIE, verify_session_token
+from app.core.auth import (
+    SESSION_COOKIE,
+    bearer_client_identity,
+    trusted_proxy_identity,
+    trusted_proxy_role,
+    verify_session_token,
+)
 from app.core.concurrency import generation_admission
 from app.core.config import settings
 from app.core.crud import create_conversation
 from app.core.llm_client import llm_client
 from app.core.logging_config import get_logger
 from app.core.quality_gate import quality_gate
-from app.core.tenancy import has_valid_api_client_id, scope_conversation_id, websocket_user_id
+from app.core.tenancy import scope_conversation_id, websocket_user_id
 from app.core.tenant_settings import get_tenant_llm_client, get_tenant_quality_gate
 from app.core.websocket import manager
 from app.routers.harness_handler import handle_verdict
@@ -36,10 +41,40 @@ _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
 async def _run_admitted_flow(user_id: str, conversation_id: str, flow) -> None:
+    async def maintain_lease() -> None:
+        last_heartbeat = 0.0
+        while True:
+            if await generation_admission.cancel_requested(conversation_id):
+                event = _stop_events.get(conversation_id)
+                if event:
+                    event.set()
+            now = asyncio.get_running_loop().time()
+            if now - last_heartbeat >= max(5, generation_admission.lease_ttl // 3):
+                if not await generation_admission.heartbeat(user_id, conversation_id):
+                    event = _stop_events.get(conversation_id)
+                    if event:
+                        event.set()
+                    logger.error("Generation lease was lost for %s", conversation_id)
+                    return
+                last_heartbeat = now
+            await asyncio.sleep(0.5)
+
+    maintenance = asyncio.create_task(
+        maintain_lease(), name=f"generation_lease_{conversation_id}"
+    )
+    status = "completed"
     try:
         await flow
+    except Exception:
+        status = "failed"
+        raise
     finally:
-        await generation_admission.release(user_id, conversation_id)
+        if await generation_admission.cancel_requested(conversation_id):
+            status = "cancelled"
+        maintenance.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await maintenance
+        await generation_admission.release(user_id, conversation_id, status=status)
 
 
 def create_tracked_task(coro, name: str | None = None) -> asyncio.Task:
@@ -72,20 +107,25 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     # An empty secret explicitly means authentication is disabled. This is
     # needed for local Docker deployments, where the peer is the nginx
     # container rather than 127.0.0.1. Production compose requires a secret.
-    authorized = not settings.api_secret
+    auth_required = bool(settings.api_secret or settings.api_client_tokens_json) or settings.auth_mode == "proxy"
+    authorized = not auth_required
 
-    if settings.api_secret:
-        header_token = websocket.headers.get("x-api-secret")
-        header_authorized = header_token and hmac.compare_digest(header_token, settings.api_secret)
-        if header_authorized and (settings.debug or has_valid_api_client_id(websocket.headers)):
+    if auth_required:
+        if trusted_proxy_identity(websocket.headers) or bearer_client_identity(websocket.headers):
             authorized = True
-        if verify_session_token(websocket.cookies.get(SESSION_COOKIE), settings.api_secret):
+        if settings.api_secret and verify_session_token(
+            websocket.cookies.get(SESSION_COOKIE), settings.api_secret
+        ):
             authorized = True
     if not authorized:
         await websocket.accept()
         await websocket.close(code=4001, reason="Unauthorized connection attempt")
         return
 
+    read_only = (
+        bool(trusted_proxy_identity(websocket.headers))
+        and trusted_proxy_role(websocket.headers) == "viewer"
+    )
     user_id = websocket_user_id(websocket)
     try:
         conversation_id = scope_conversation_id(user_id, public_conversation_id)
@@ -109,6 +149,14 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     )
 
     await manager.connect(websocket, conversation_id)
+    generation_status = await generation_admission.get_status(conversation_id)
+    if generation_status.get("state") in {"running", "cancelling"}:
+        await websocket.send_json({
+            "type": "generating",
+            "conversation_id": public_conversation_id,
+            "is_generating": True,
+            "state": generation_status["state"],
+        })
     tenant_client_token = llm_client.set_current(tenant_client)
     tenant_quality_token = quality_gate.set_current(tenant_quality_gate)
     tenant_tool_token = set_tool_tenant(user_id)
@@ -129,6 +177,14 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             content = msg.get("content", {})
             text = content.get("text", "")
             target_agent = content.get("target_agent")
+
+            if read_only and msg_type != "read":
+                await websocket.send_json({
+                    "type": "error",
+                    "conversation_id": public_conversation_id,
+                    "content": {"text": "Viewer role is read-only"},
+                })
+                continue
 
             logger.debug(f"conv={conversation_id} type={msg_type} sender={sender} target_agent={target_agent} text={text[:60]}")
 
@@ -176,6 +232,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             # the in-flight generation task (which is why generation runs as a
             # background task, not awaited here).
             if msg_type == "stop":
+                await generation_admission.request_cancel(conversation_id)
                 event = _stop_events.get(conversation_id)
                 logger.debug(f"[STOP] conv={conversation_id} event_exists={event is not None} already_set={event.is_set() if event else 'N/A'}")
                 if event:

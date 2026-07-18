@@ -1,5 +1,6 @@
 """Tenant-scoped knowledge base CRUD, ingestion, and semantic search."""
 
+import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -117,7 +118,7 @@ def _search_collection(collection_name: str, query: str, top_k: int) -> list[dic
 
 
 @router.get("/knowledge")
-async def list_knowledge_bases(request: Request):
+def list_knowledge_bases(request: Request):
     """List only the current tenant's bases and retain the legacy UI payload."""
     user_id = request_user_id(request)
     with Session(engine) as session:
@@ -159,7 +160,7 @@ async def list_knowledge_bases(request: Request):
 
 
 @router.post("/knowledge")
-async def create_knowledge_base(body: KnowledgeBaseCreate, request: Request):
+def create_knowledge_base(body: KnowledgeBaseCreate, request: Request):
     user_id = request_user_id(request)
     knowledge_base = KnowledgeBase(
         id=f"kb_{uuid.uuid4().hex[:12]}",
@@ -179,7 +180,7 @@ async def create_knowledge_base(body: KnowledgeBaseCreate, request: Request):
 
 
 @router.get("/knowledge/stats")
-async def knowledge_stats(request: Request):
+def knowledge_stats(request: Request):
     with Session(engine) as session:
         return _stats(session, request_user_id(request))
 
@@ -191,7 +192,7 @@ async def upload_default_knowledge_file(request: Request, file: UploadFile = Fil
 
 
 @router.post("/knowledge/query")
-async def query_default_knowledge(body: KnowledgeQuery, request: Request):
+def query_default_knowledge(body: KnowledgeQuery, request: Request):
     user_id = request_user_id(request)
     try:
         results = _search_collection(
@@ -204,7 +205,7 @@ async def query_default_knowledge(body: KnowledgeQuery, request: Request):
 
 
 @router.get("/knowledge/{kb_id}")
-async def get_knowledge_base(kb_id: str, request: Request):
+def get_knowledge_base(kb_id: str, request: Request):
     user_id = request_user_id(request)
     with Session(engine) as session:
         knowledge_base = _require_base(session, user_id, kb_id)
@@ -219,7 +220,7 @@ async def get_knowledge_base(kb_id: str, request: Request):
 
 
 @router.put("/knowledge/{kb_id}")
-async def update_knowledge_base(kb_id: str, body: KnowledgeBaseUpdate, request: Request):
+def update_knowledge_base(kb_id: str, body: KnowledgeBaseUpdate, request: Request):
     if kb_id == "__default__":
         raise HTTPException(status_code=400, detail="Cannot rename default knowledge base")
     with Session(engine) as session:
@@ -234,7 +235,7 @@ async def update_knowledge_base(kb_id: str, body: KnowledgeBaseUpdate, request: 
 
 
 @router.delete("/knowledge/{kb_id}")
-async def delete_knowledge_base(kb_id: str, request: Request):
+def delete_knowledge_base(kb_id: str, request: Request):
     if kb_id == "__default__":
         raise HTTPException(status_code=400, detail="Cannot delete default knowledge base")
     user_id = request_user_id(request)
@@ -255,30 +256,34 @@ async def delete_knowledge_base(kb_id: str, request: Request):
     return {"status": "deleted", "id": kb_id}
 
 
-async def _upload_file(kb_id: str, user_id: str, file: UploadFile) -> dict:
-    from app.core.config import settings
+def _validate_knowledge_base(kb_id: str, user_id: str) -> None:
+    with Session(engine) as session:
+        _require_base(session, user_id, kb_id)
+
+
+def _index_knowledge_file(
+    kb_id: str,
+    user_id: str,
+    filename: str,
+    content_type: str,
+    content: bytes,
+) -> dict:
     from app.core.document_parser import DocumentParser
     from app.core.file_storage import FileStorageManager
     from app.core.rag_engine import _get_or_create_collection, split_text
-    from app.core.upload_security import UploadLimitExceeded, read_upload_limited
 
     with Session(engine) as session:
         _require_base(session, user_id, kb_id)
-    try:
-        content = await read_upload_limited(file, settings.knowledge_upload_max_bytes)
-    except UploadLimitExceeded as exc:
-        raise HTTPException(status_code=413, detail=f"File too large (max {exc.max_bytes} bytes)") from exc
-    filename = Path(file.filename or "unnamed.txt").name
     if not DocumentParser.is_supported(filename):
         supported = ", ".join(DocumentParser.SUPPORTED_EXTENSIONS)
         raise HTTPException(status_code=400, detail=f"不支持的文件类型，支持: {supported}")
 
     suffix = Path(filename).suffix.lower()
     stored_name = f"tenantfile__{user_id}__kb_{uuid.uuid4().hex}{suffix}"
-    file_path = FileStorageManager.save(content, stored_name)
     doc = None
     collection_name = _collection_name(user_id, kb_id)
     try:
+        file_path = FileStorageManager.save(content, stored_name)
         text = DocumentParser.extract_text(file_path)
         chunks = split_text(text)
         if not chunks:
@@ -288,7 +293,7 @@ async def _upload_file(kb_id: str, user_id: str, file: UploadFile) -> dict:
             user_id=user_id,
             filename=filename,
             file_path=file_path,
-            content_type=file.content_type or "",
+            content_type=content_type,
             chunk_count=len(chunks),
             char_count=len(text),
             knowledge_base_id=None if kb_id == "__default__" else kb_id,
@@ -306,7 +311,10 @@ async def _upload_file(kb_id: str, user_id: str, file: UploadFile) -> dict:
             session.add(doc)
             session.commit()
     except HTTPException:
-        FileStorageManager.delete(stored_name)
+        try:
+            FileStorageManager.delete(stored_name)
+        except Exception:
+            pass
         raise
     except Exception as exc:
         if doc is not None:
@@ -314,7 +322,10 @@ async def _upload_file(kb_id: str, user_id: str, file: UploadFile) -> dict:
                 _delete_from_chroma(collection_name, doc.id)
             except Exception:
                 pass
-        FileStorageManager.delete(stored_name)
+        try:
+            FileStorageManager.delete(stored_name)
+        except Exception:
+            pass
         raise HTTPException(status_code=503, detail="Knowledge indexing failed") from exc
     return {
         "doc_id": doc.id,
@@ -324,13 +335,33 @@ async def _upload_file(kb_id: str, user_id: str, file: UploadFile) -> dict:
     }
 
 
+async def _upload_file(kb_id: str, user_id: str, file: UploadFile) -> dict:
+    from app.core.config import settings
+    from app.core.upload_security import UploadLimitExceeded, read_upload_limited
+
+    await asyncio.to_thread(_validate_knowledge_base, kb_id, user_id)
+    try:
+        content = await read_upload_limited(file, settings.knowledge_upload_max_bytes)
+    except UploadLimitExceeded as exc:
+        raise HTTPException(status_code=413, detail=f"File too large (max {exc.max_bytes} bytes)") from exc
+    filename = Path(file.filename or "unnamed.txt").name
+    return await asyncio.to_thread(
+        _index_knowledge_file,
+        kb_id,
+        user_id,
+        filename,
+        file.content_type or "",
+        content,
+    )
+
+
 @router.post("/knowledge/{kb_id}/files")
 async def upload_file_to_kb(kb_id: str, request: Request, file: UploadFile = File(...)):
     return {"status": "uploaded", **await _upload_file(kb_id, request_user_id(request), file)}
 
 
 @router.delete("/knowledge/{kb_id}/files/{doc_id}")
-async def delete_file_from_kb(kb_id: str, doc_id: str, request: Request):
+def delete_file_from_kb(kb_id: str, doc_id: str, request: Request):
     user_id = request_user_id(request)
     with Session(engine) as session:
         _require_base(session, user_id, kb_id)
@@ -354,7 +385,7 @@ async def delete_file_from_kb(kb_id: str, doc_id: str, request: Request):
 
 
 @router.post("/knowledge/{kb_id}/search")
-async def search_knowledge_base(kb_id: str, body: KnowledgeQuery, request: Request):
+def search_knowledge_base(kb_id: str, body: KnowledgeQuery, request: Request):
     user_id = request_user_id(request)
     with Session(engine) as session:
         _require_base(session, user_id, kb_id)

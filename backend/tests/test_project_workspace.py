@@ -1,6 +1,7 @@
 """Structured project parsing, materialization, and tenant API tests."""
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -60,6 +61,21 @@ def test_parse_generated_files_never_writes_a_traversal_path():
     files = parse_generated_files("```python path=../../outside.py\nprint('safe')\n```", "agent_backend")
 
     assert files[0].path == "main.py"
+
+
+@pytest.mark.asyncio
+async def test_production_workspace_write_requires_distributed_lock(tmp_path, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(
+        "app.core.redis.redis_manager.check_connection",
+        AsyncMock(return_value=False),
+    )
+
+    with pytest.raises(RuntimeError, match="coordination"):
+        async with project_workspace._workspace_lock(tmp_path):
+            pass
 
 
 @pytest.mark.asyncio

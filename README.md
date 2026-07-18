@@ -188,7 +188,10 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-端到端测试使用真实 React 页面和状态管理，并在浏览器层模拟 HTTP 与 WebSocket 后端，因此不需要模型密钥、Docker 或微信凭证。失败时会在 `frontend/test-results/` 保留截图、视频和 trace；GitHub Actions 同时上传测试报告。
+`core-journey.spec.js` 使用确定性 HTTP/WebSocket 模拟完成完整 UI 流程；
+`real-backend.spec.js` 在 CI 中连接真实 FastAPI、PostgreSQL 和 Redis，验证数据库迁移、WebSocket
+对话、文件上传与发布队列可用性。两类测试都不调用收费模型、Android SDK 或微信平台。失败时会在
+`frontend/test-results/` 保留截图、视频和 trace；GitHub Actions 同时上传测试报告。
 
 ## LLM 配置
 
@@ -197,7 +200,21 @@ npm run test:e2e
 3. 输入 API Key 和模型名称
 4. 保存即可
 
-无 API Key 时 Agent 使用 Mock 回复，功能完整可用。
+无 API Key 时 Agent 使用固定 Mock 回复，可体验界面和流水线；真实自然语言理解与代码生成必须配置模型 API。
+
+## 多人和生产部署
+
+- 本地单机可以使用 SQLite、本地上传目录和内嵌 Chroma；多 API 实例使用 PostgreSQL 和 Redis。
+- `migration` 服务先执行 Alembic 和默认数据初始化，成功后 API 副本才启动，避免多副本并发迁移。
+- Redis 负责 WebSocket 广播、生成租约/停止信号、调度器主节点、定时任务执行租约和发布队列。
+- 多主机部署应配置 S3/MinIO 与独立 Chroma；生成项目工作区仍需共享 RWX 卷或同一远程 Docker 数据卷。
+- 公网用户建议由 OIDC/OAuth2 身份代理注入用户与角色，并配置
+  `AGENTHUB_AUTH_MODE=proxy`。`viewer` 角色只读；机器客户端使用独立 Token 映射。
+- `GET /api/metrics/summary` 返回当前租户当日模型实际 Token 用量；
+  `AGENTHUB_LLM_DAILY_TOKEN_QUOTA` 可设置每日限额。
+
+生成任务的租约、停止信号和状态已跨实例共享，API 故障后过期任务会标记为 `interrupted`，用户可重试。
+当前尚未提供 Token 级断点续跑，进程崩溃前未完成的模型输出不会自动接续。
 
 ## 构建与发布流水线
 

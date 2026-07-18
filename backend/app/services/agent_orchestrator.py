@@ -985,7 +985,8 @@ def build_group_chat_graph(conversation_id: str, text: str, trace: Any, stop_eve
                 conversation_id, agent, effective_prompt, stop_event,
                 context=state.get("pm_response", ""),
             )
-            step.finish(status="success", tokens=len(res) // 3)
+            usage = llm_client.current_client().get_last_usage()
+            step.finish(status="success", tokens=int(usage.get("total_tokens", 0)))
             metrics.record_agent_result(agent.agent_id, 75, step.duration_ms, step.tokens_used)
             return {response_key: res, feedback_key: ""}
         return run_node
@@ -1003,7 +1004,8 @@ def build_group_chat_graph(conversation_id: str, text: str, trace: Any, stop_eve
         assigned, pm_res = await stream_agent_reply(
             conversation_id, pm, effective_prompt, stop_event
         )
-        step.finish(status="success", tokens=len(pm_res) // 3)
+        usage = llm_client.current_client().get_last_usage()
+        step.finish(status="success", tokens=int(usage.get("total_tokens", 0)))
         metrics.record_agent_result(pm.agent_id, 80, step.duration_ms, step.tokens_used)
         return {
             "pm_response": pm_res,

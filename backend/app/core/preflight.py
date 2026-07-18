@@ -11,7 +11,7 @@ from sqlalchemy import inspect, text
 
 from app.core._engine import engine
 from app.core.config import settings
-from app.core.file_storage import UPLOAD_DIR
+from app.core.file_storage import UPLOAD_DIR, FileStorageManager
 from app.core.redis import redis_manager
 from app.core.workspace import WORKSPACE_ROOT
 from app.services.deployment_queue import WORKER_HEARTBEAT_KEY
@@ -125,6 +125,29 @@ def _configuration_checks(profile: PreflightProfile) -> list[PreflightCheck]:
         "已配置" if api_secret_ok else "AGENTHUB_API_SECRET 未配置或少于 32 字符",
         required=production,
     ))
+    if settings.auth_mode == "proxy":
+        proxy_ok = len(settings.trusted_proxy_secret) >= 32
+        checks.append(PreflightCheck(
+            "identity_provider",
+            "统一身份认证",
+            "pass" if proxy_ok else ("fail" if production else "warn"),
+            "已启用受信任身份代理" if proxy_ok else "TRUSTED_PROXY_SECRET 未配置或过短",
+            required=production,
+        ))
+    else:
+        checks.append(PreflightCheck(
+            "identity_provider",
+            "统一身份认证",
+            "warn",
+            "使用共享密钥演示模式；外部多人使用建议设置 AGENTHUB_AUTH_MODE=proxy",
+        ))
+    checks.append(PreflightCheck(
+        "api_client_tokens",
+        "API 客户端独立凭证",
+        "pass" if settings.api_client_tokens_json else "warn",
+        "已配置客户端独立 Token" if settings.api_client_tokens_json
+        else "未配置时 Bearer 客户端仍共用 API Secret",
+    ))
     encryption_ok = bool(os.environ.get("AGENTHUB_ENCRYPT_KEY", ""))
     checks.append(PreflightCheck(
         "encryption_key", "配置加密密钥",
@@ -144,6 +167,26 @@ def _configuration_checks(profile: PreflightProfile) -> list[PreflightCheck]:
         "netlify", "Web 公网发布", "pass" if netlify_ok else "warn",
         "Netlify 凭证已配置" if netlify_ok else "未配置 Netlify，将只生成 Web ZIP",
     ))
+    storage_ok, storage_detail = FileStorageManager.healthcheck()
+    if settings.storage_backend == "local" and production:
+        storage_status = "warn"
+        storage_detail += "；多主机部署建议改用 S3/MinIO"
+    else:
+        storage_status = "pass" if storage_ok else ("fail" if production else "warn")
+    checks.append(PreflightCheck(
+        "object_storage",
+        "共享文件存储",
+        storage_status,
+        storage_detail,
+        required=production and settings.storage_backend == "s3",
+    ))
+    checks.append(PreflightCheck(
+        "vector_storage",
+        "共享向量库",
+        "pass" if settings.chroma_host else "warn",
+        f"Chroma 服务：{settings.chroma_host}:{settings.chroma_port}"
+        if settings.chroma_host else "使用本地 Chroma；多主机部署请配置 AGENTHUB_CHROMA_HOST",
+    ))
     return checks
 
 
@@ -160,7 +203,7 @@ async def run_preflight(profile: PreflightProfile = "core") -> dict:
     ])
     checks.extend(await _redis_checks(deployment_required))
     checks.append(await _docker_check())
-    checks.extend(_configuration_checks(profile))
+    checks.extend(await asyncio.to_thread(_configuration_checks, profile))
     required_failures = [check for check in checks if check.required and check.status == "fail"]
     return {
         "profile": profile,

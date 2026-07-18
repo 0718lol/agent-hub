@@ -27,8 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend
-          pip install -r requirements-test.txt
-          pip install pytest-asyncio
+          pip install -r requirements-test.lock
       - name: Run tests
         run: cd backend && python -m pytest tests/ -v --tb=short
 
@@ -43,7 +42,7 @@ jobs:
       - name: Build runtime sandbox image
         run: docker build -f backend/Dockerfile.sandbox -t agenthub-runtime-sandbox:local backend
       - name: Install test dependencies
-        run: pip install -r backend/requirements-test.txt
+        run: pip install -r backend/requirements-test.lock
       - name: Run real container smoke tests
         env:
           AGENTHUB_DOCKER_INTEGRATION: "1"
@@ -90,6 +89,19 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: agenthub_e2e
+          POSTGRES_USER: agenthub
+          POSTGRES_PASSWORD: agenthub-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agenthub -d agenthub_e2e"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -101,8 +113,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend
-          pip install -r requirements-test.txt
-          pip install pytest-asyncio
+          pip install -r requirements-test.lock
           cd ../frontend
           npm ci --legacy-peer-deps
       - name: Install Chromium
@@ -111,8 +122,11 @@ jobs:
         env:
           REAL_BACKEND: "1"
           AGENTHUB_REDIS_URL: redis://127.0.0.1:6379/0
+          AGENTHUB_AUTO_MIGRATE: "false"
+          DATABASE_URL: postgresql+psycopg://agenthub:agenthub-test@127.0.0.1:5432/agenthub_e2e
         run: |
           cd backend
+          python -m app.scripts.migrate
           python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/agenthub-e2e-backend.log 2>&1 &
           for attempt in $(seq 1 30); do
             curl --fail --silent http://127.0.0.1:8000/api/health && break
