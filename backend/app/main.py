@@ -326,6 +326,10 @@ from app.services.deployment_queue import (
     DeploymentQueueUnavailable,
     deployment_queue,
 )
+from app.services.project_workspace import (
+    ProjectSnapshotError,
+    create_project_snapshot,
+)
 
 
 class DeployRequest(BaseModel):
@@ -391,9 +395,16 @@ async def deploy_project(conversation_id: str, request: Request, options: Deploy
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         deployment_options = await asyncio.to_thread(_deployment_options, user_id, options)
+        snapshot_id = await create_project_snapshot(scoped_id)
         job = await deployment_queue.enqueue(
-            scoped_id, user_id, target, options=deployment_options
+            scoped_id,
+            user_id,
+            target,
+            snapshot_id=snapshot_id,
+            options=deployment_options,
         )
+    except (FileNotFoundError, ProjectSnapshotError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except DeploymentQueueUnavailable as exc:
@@ -480,6 +491,7 @@ async def retry_deployment(job_id: str, request: Request):
             user_id,
             source.target,
             source_job_id=source.id,
+            snapshot_id=source.snapshot_id,
             options=source.options,
         )
     except DeploymentAlreadyQueued as exc:

@@ -1,6 +1,7 @@
 """Tests for static-site deployment preparation and provider responses."""
 
 import asyncio
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from app.services.deployment import (
     DeploymentError,
     NetlifyDeploymentProvider,
     _build_apk,
+    _export_project_snapshot,
     _preview_miniprogram,
     _run_docker_command,
     _sign_apk,
@@ -17,6 +19,32 @@ from app.services.deployment import (
     detect_project_type,
     run_deployment_pipeline,
 )
+
+
+@pytest.mark.asyncio
+async def test_snapshot_export_is_immutable_and_preserves_executable_files(tmp_path: Path):
+    source = tmp_path / "source"
+    destination = tmp_path / "export"
+    source.mkdir()
+    destination.mkdir()
+    script = source / "gradlew"
+    script.write_text("#!/bin/sh\necho original\n", encoding="utf-8")
+    script.chmod(0o755)
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "AgentHub Test"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.email", "test@agenthub.local"], cwd=source, check=True)
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "snapshot"], cwd=source, check=True)
+    snapshot_id = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=source, text=True
+    ).strip()
+    script.write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+
+    await _export_project_snapshot(source, snapshot_id, destination)
+
+    exported = destination / "gradlew"
+    assert exported.read_text(encoding="utf-8") == "#!/bin/sh\necho original\n"
+    assert exported.stat().st_mode & 0o111
 
 
 def test_static_archive_excludes_node_modules(tmp_path: Path):

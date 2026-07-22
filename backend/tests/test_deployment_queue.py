@@ -56,9 +56,18 @@ class FakeRedis:
     async def mget(self, keys):
         return [self.values.get(key) for key in keys]
 
-    async def eval(self, _script, _count, key, expected):
-        if self.values.get(key) == expected:
-            self.values.pop(key, None)
+    async def eval(self, script, count, *args):
+        keys = args[:count]
+        values = args[count:]
+        if "expire" in script:
+            if (
+                self.values.get(keys[0]) == values[0]
+                and self.values.get(keys[1]) == values[2]
+            ):
+                return 1
+            return 0
+        if self.values.get(keys[0]) == values[0]:
+            self.values.pop(keys[0], None)
             return 1
         return 0
 
@@ -85,6 +94,34 @@ async def test_enqueue_persists_status_and_stream_message(queue):
     assert job.status == "queued"
     assert await instance.get(job.id) == job
     assert redis.entries[0][0] == instance.stream
+
+
+@pytest.mark.asyncio
+async def test_execution_lease_prevents_duplicate_workers(queue, monkeypatch):
+    first, redis = queue
+    second = DeploymentQueue()
+
+    async def available():
+        return redis
+
+    monkeypatch.setattr(second, "ensure_available", available)
+    job = await first.enqueue(
+        "tenant__u__conv__c",
+        "u",
+        "web",
+        snapshot_id="a" * 40,
+    )
+
+    assert job.snapshot_id == "a" * 40
+    assert await first.claim_execution(job) is True
+    assert await second.claim_execution(job) is False
+    assert await first.heartbeat_execution(job) is True
+    assert await second.heartbeat_execution(job) is False
+
+    await second.release_execution(job)
+    assert await second.claim_execution(job) is False
+    await first.release_execution(job)
+    assert await second.claim_execution(job) is True
 
 
 @pytest.mark.asyncio

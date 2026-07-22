@@ -8,10 +8,12 @@ import os
 import re
 import shutil
 import tempfile
+import tarfile
 import uuid
 import zipfile
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Awaitable, Callable
 
 import httpx
@@ -767,6 +769,94 @@ async def _preview_miniprogram(
         return await asyncio.to_thread(_save_artifact, qrcode_path.read_bytes(), user_id, "jpg")
 
 
+def _extract_snapshot_archive(archive_path: Path, destination: Path) -> None:
+    file_count = 0
+    total_bytes = 0
+    with tarfile.open(archive_path, mode="r:") as bundle:
+        for member in bundle.getmembers():
+            relative = PurePosixPath(member.name)
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or not relative.parts
+            ):
+                raise DeploymentError("项目快照包含不安全路径")
+            target = destination.joinpath(*relative.parts)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            if not member.isfile():
+                raise DeploymentError("项目快照包含不支持的链接或设备文件")
+            file_count += 1
+            total_bytes += member.size
+            if file_count > MAX_DEPLOY_FILES or total_bytes > MAX_DEPLOY_BYTES:
+                raise DeploymentError("项目快照超过发布文件数量或大小限制")
+            source = bundle.extractfile(member)
+            if source is None:
+                raise DeploymentError("无法读取项目快照文件")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read())
+            target.chmod(member.mode & 0o777)
+    if file_count == 0:
+        raise DeploymentError("项目快照为空")
+
+
+async def _export_project_snapshot(
+    source: Path,
+    snapshot_id: str,
+    destination: Path,
+) -> None:
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", snapshot_id):
+        raise DeploymentError("Invalid deployment snapshot")
+    archive_path = destination.parent / "snapshot.tar"
+    process = await asyncio.create_subprocess_exec(
+        "git",
+        "archive",
+        "--format=tar",
+        f"--output={archive_path}",
+        snapshot_id,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=source,
+    )
+    try:
+        _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
+    except asyncio.TimeoutError as exc:
+        await _stop_process(process)
+        raise DeploymentError("导出项目快照超时") from exc
+    if process.returncode != 0:
+        detail = stderr.decode("utf-8", errors="replace").strip()
+        raise DeploymentError(f"无法读取发布快照：{detail[:300]}")
+    if (
+        not archive_path.is_file()
+        or archive_path.stat().st_size > MAX_DEPLOY_BYTES + 2 * 1024 * 1024
+    ):
+        raise DeploymentError("项目快照超过发布大小限制")
+    await asyncio.to_thread(_extract_snapshot_archive, archive_path, destination)
+    archive_path.unlink(missing_ok=True)
+
+
+@asynccontextmanager
+async def _deployment_workspace(conversation_id: str, snapshot_id: str):
+    source = get_workspace_path(conversation_id)
+    if not snapshot_id:
+        yield source
+        return
+    shared_root = Path("/agenthub_export")
+    temporary_parent = None
+    if source.is_relative_to(shared_root):
+        temporary_parent = shared_root / ".deployment-builds"
+        temporary_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="agenthub-deployment-",
+        dir=temporary_parent,
+    ) as temp:
+        workspace = Path(temp) / "workspace"
+        workspace.mkdir()
+        await _export_project_snapshot(source, snapshot_id, workspace)
+        yield workspace
+
+
 async def run_deployment_pipeline(
     conversation_id: str,
     *,
@@ -776,14 +866,48 @@ async def run_deployment_pipeline(
     site_id: str,
     progress: ProgressCallback,
     deployment_id: str = "",
+    snapshot_id: str = "",
     options: dict | None = None,
     cancelled: CancellationCallback | None = None,
 ) -> DeploymentResult:
     """Detect, build, package, and optionally publish one generated project."""
+    async with _deployment_workspace(conversation_id, snapshot_id) as workspace:
+        if snapshot_id:
+            await progress(
+                "generate",
+                f"已装载不可变项目快照 {snapshot_id[:12]}。",
+                16,
+            )
+        return await _run_deployment_from_workspace(
+            workspace,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            target=target,
+            token=token,
+            site_id=site_id,
+            progress=progress,
+            deployment_id=deployment_id,
+            options=options,
+            cancelled=cancelled,
+        )
+
+
+async def _run_deployment_from_workspace(
+    workspace: Path,
+    *,
+    conversation_id: str,
+    user_id: str,
+    target: str,
+    token: str,
+    site_id: str,
+    progress: ProgressCallback,
+    deployment_id: str = "",
+    options: dict | None = None,
+    cancelled: CancellationCallback | None = None,
+) -> DeploymentResult:
     if target not in DEPLOY_TARGETS:
         raise DeploymentError(f"Unsupported deployment target: {target}")
     await _raise_if_cancelled(cancelled)
-    workspace = get_workspace_path(conversation_id)
     options = options or {}
     detected = await asyncio.to_thread(detect_project_type, workspace)
     await _raise_if_cancelled(cancelled)

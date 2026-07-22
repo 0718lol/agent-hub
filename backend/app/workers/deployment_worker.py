@@ -1,6 +1,7 @@
 """Persistent deployment worker. Run with: python -m app.workers.deployment_worker"""
 
 import asyncio
+import contextlib
 import json
 import logging
 import signal
@@ -18,10 +19,18 @@ from app.services.deployment import (
     DeploymentResult,
     run_deployment_pipeline,
 )
-from app.services.deployment_queue import DeploymentJob, DeploymentQueueUnavailable, deployment_queue
+from app.services.deployment_queue import (
+    DeploymentJob,
+    DeploymentQueueUnavailable,
+    deployment_queue,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("deployment_worker")
+
+
+class DeploymentExecutionLeaseLost(DeploymentCancelled):
+    """The worker no longer owns this deployment's external side effects."""
 
 
 async def _broadcast(job: DeploymentJob, status: str, log: str, **extra) -> None:
@@ -166,8 +175,44 @@ async def _cleanup_cancelled_result(job: DeploymentJob, result: DeploymentResult
             FileStorageManager.delete(file_id)
 
 
+async def _execution_heartbeat(
+    job: DeploymentJob,
+    stop_event: asyncio.Event,
+    lease_lost: asyncio.Event,
+) -> None:
+    while not stop_event.is_set():
+        try:
+            renewed = await deployment_queue.heartbeat_execution(job)
+        except DeploymentQueueUnavailable:
+            renewed = False
+        if not renewed:
+            logger.error("Deployment execution lease was lost: %s", job.id)
+            lease_lost.set()
+            return
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(),
+                timeout=max(5, settings.deployment_lease_ttl // 3),
+            )
+        except asyncio.TimeoutError:
+            pass
+
+
 async def process_job(message_id: str, job: DeploymentJob) -> None:
+    if not await deployment_queue.claim_execution(job):
+        return
+    heartbeat_stop = asyncio.Event()
+    lease_lost = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        _execution_heartbeat(job, heartbeat_stop, lease_lost),
+        name=f"deployment_job_heartbeat_{job.id}",
+    )
+
     async def cancelled() -> bool:
+        if lease_lost.is_set():
+            raise DeploymentExecutionLeaseLost(
+                "发布任务执行租约已失效，当前 Worker 已停止构建"
+            )
         try:
             return await deployment_queue.is_cancel_requested(job.id)
         except DeploymentQueueUnavailable:
@@ -184,6 +229,12 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
 
     terminal = False
     try:
+        saved_job = await deployment_queue.get(job.id)
+        if saved_job is not None:
+            job = saved_job
+        if job.status in {"success", "failed", "cancelled"}:
+            terminal = True
+            return
         if await cancelled():
             raise DeploymentCancelled("任务在排队期间被用户取消")
         await deployment_queue.update_progress(
@@ -211,13 +262,23 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
                 site_id=settings.netlify_site_id,
                 progress=progress,
                 deployment_id=job.id,
+                snapshot_id=job.snapshot_id,
                 options=job.options,
                 cancelled=cancelled,
             )
-        if await cancelled():
-            await _cleanup_cancelled_result(job, result)
-            raise DeploymentCancelled("构建已被用户取消")
+        async def ensure_result_is_owned() -> None:
+            try:
+                was_cancelled = await cancelled()
+            except DeploymentExecutionLeaseLost:
+                await _cleanup_cancelled_result(job, result)
+                raise
+            if was_cancelled:
+                await _cleanup_cancelled_result(job, result)
+                raise DeploymentCancelled("构建已被用户取消")
+
+        await ensure_result_is_owned()
         await _register_runtime(job, result)
+        await ensure_result_is_owned()
         if job.action == "cleanup":
             log = "过期资源清理完成"
         elif job.action == "offline":
@@ -251,6 +312,8 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
             published=result.published,
         )
         terminal = True
+    except DeploymentExecutionLeaseLost as exc:
+        logger.warning("%s: %s", exc, job.id)
     except DeploymentCancelled as exc:
         await deployment_queue.update_progress(
             job,
@@ -290,6 +353,12 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
             await _broadcast(job, "failed", "Worker 连续失败，已停止重试")
             terminal = True
     finally:
+        heartbeat_stop.set()
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
+        with contextlib.suppress(DeploymentQueueUnavailable):
+            await deployment_queue.release_execution(job)
         if terminal:
             try:
                 await deployment_queue.acknowledge(message_id)

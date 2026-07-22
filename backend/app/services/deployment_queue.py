@@ -29,6 +29,7 @@ class DeploymentJob:
     target: str
     action: str = "deploy"
     source_job_id: str = ""
+    snapshot_id: str = ""
     options: dict | None = None
     status: str = "queued"
     attempts: int = 0
@@ -79,6 +80,10 @@ class DeploymentQueue:
         return f"agenthub:deployment:cancel:{job_id}"
 
     @staticmethod
+    def _execution_key(job_id: str) -> str:
+        return f"agenthub:deployment:execution:{job_id}"
+
+    @staticmethod
     def _user_index(user_id: str) -> str:
         return f"agenthub:deployments:user:{user_id}"
 
@@ -124,6 +129,7 @@ class DeploymentQueue:
         *,
         action: str = "deploy",
         source_job_id: str = "",
+        snapshot_id: str = "",
         options: dict | None = None,
     ) -> DeploymentJob:
         client = await self.ensure_available()
@@ -136,6 +142,7 @@ class DeploymentQueue:
             target=target,
             action=action,
             source_job_id=source_job_id,
+            snapshot_id=snapshot_id,
             options=options,
             log="任务已进入持久化队列",
             log_entries=[{
@@ -299,8 +306,9 @@ class DeploymentQueue:
         message_id, fields = entries[0]
         return message_id, DeploymentJob(**json.loads(fields["payload"]))
 
-    async def reclaim_stale(self, min_idle_ms: int = 15 * 60_000):
+    async def reclaim_stale(self, min_idle_ms: int | None = None):
         client = await self.ensure_available()
+        min_idle_ms = min_idle_ms or settings.deployment_reclaim_idle_ms
         response = await self._call(
             "回收超时任务",
             client.xautoclaim(
@@ -312,6 +320,60 @@ class DeploymentQueue:
             return None
         message_id, fields = entries[0]
         return message_id, DeploymentJob(**json.loads(fields["payload"]))
+
+    async def claim_execution(self, job: DeploymentJob) -> bool:
+        client = await self.ensure_available()
+        return bool(await self._call(
+            "获取执行租约",
+            client.set(
+                self._execution_key(job.id),
+                self.consumer,
+                nx=True,
+                ex=max(30, settings.deployment_lease_ttl),
+            ),
+        ))
+
+    async def heartbeat_execution(self, job: DeploymentJob) -> bool:
+        client = await self.ensure_available()
+        script = """
+        if redis.call('get', KEYS[1]) ~= ARGV[1] then
+            return 0
+        end
+        if redis.call('get', KEYS[2]) ~= ARGV[3] then
+            return 0
+        end
+        redis.call('expire', KEYS[1], ARGV[2])
+        redis.call('expire', KEYS[2], ARGV[4])
+        return 1
+        """
+        return bool(await self._call(
+            "续期执行租约",
+            client.eval(
+                script,
+                2,
+                self._execution_key(job.id),
+                self._lock_key(job.conversation_id),
+                self.consumer,
+                max(30, settings.deployment_lease_ttl),
+                job.id,
+                2 * 60 * 60,
+            ),
+        ))
+
+    async def release_execution(self, job: DeploymentJob) -> None:
+        client = await self.ensure_available()
+        script = """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('del', KEYS[1])
+        end
+        return 0
+        """
+        await self._call(
+            "释放执行租约",
+            client.eval(
+                script, 1, self._execution_key(job.id), self.consumer
+            ),
+        )
 
     async def acknowledge(self, message_id: str) -> None:
         client = await self.ensure_available()

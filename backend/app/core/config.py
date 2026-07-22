@@ -99,6 +99,8 @@ class Settings(BaseSettings):
     # Persistent deployment workers and generated API runtimes
     deployment_queue: str = "agenthub:deployments"
     deployment_status_ttl: int = 30 * 24 * 60 * 60
+    deployment_lease_ttl: int = 90
+    deployment_reclaim_idle_ms: int = 2 * 60_000
     public_base_url: str = ""
     runtime_network: str = "agenthub_runtime"
     api_runtime_memory: str = "512m"

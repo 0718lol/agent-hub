@@ -1,5 +1,6 @@
 """Tests for deployment cancellation admission and worker finalization."""
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,6 +13,87 @@ from app.workers import deployment_worker
 
 def _request() -> Request:
     return Request({"type": "http", "method": "POST", "path": "/", "headers": []})
+
+
+@pytest.mark.asyncio
+async def test_worker_does_not_execute_job_owned_by_another_worker(monkeypatch):
+    job = DeploymentJob(
+        id="a" * 32,
+        conversation_id="tenant__api-client__conv__demo",
+        user_id="api-client",
+        target="web",
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "claim_execution",
+        AsyncMock(return_value=False),
+    )
+    pipeline = AsyncMock()
+    monkeypatch.setattr(deployment_worker, "run_deployment_pipeline", pipeline)
+
+    await deployment_worker.process_job("1-0", job)
+
+    pipeline.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_worker_leaves_message_pending_after_execution_lease_loss(monkeypatch):
+    job = DeploymentJob(
+        id="b" * 32,
+        conversation_id="tenant__api-client__conv__demo",
+        user_id="api-client",
+        target="web",
+        snapshot_id="c" * 40,
+    )
+    lease_checked = asyncio.Event()
+
+    async def lose_lease(_job):
+        lease_checked.set()
+        return False
+
+    async def run_pipeline(*_args, cancelled, **_kwargs):
+        await lease_checked.wait()
+        await cancelled()
+
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "claim_execution",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "heartbeat_execution",
+        lose_lease,
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "release_execution",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "get",
+        AsyncMock(return_value=job),
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "is_cancel_requested",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "update_progress",
+        AsyncMock(return_value=job),
+    )
+    acknowledge = AsyncMock()
+    monkeypatch.setattr(deployment_worker.deployment_queue, "acknowledge", acknowledge)
+    monkeypatch.setattr(deployment_worker, "_broadcast", AsyncMock())
+    monkeypatch.setattr(deployment_worker, "run_deployment_pipeline", run_pipeline)
+
+    await deployment_worker.process_job("2-0", job)
+
+    acknowledge.assert_not_awaited()
+    deployment_worker.deployment_queue.release_execution.assert_awaited_once_with(job)
 
 
 @pytest.mark.asyncio
@@ -74,6 +156,10 @@ async def test_worker_finalizes_job_cancelled_while_queued(monkeypatch):
         return target
 
     update_progress.side_effect = persist_progress
+    monkeypatch.setattr(deployment_worker.deployment_queue, "claim_execution", AsyncMock(return_value=True))
+    monkeypatch.setattr(deployment_worker.deployment_queue, "heartbeat_execution", AsyncMock(return_value=True))
+    monkeypatch.setattr(deployment_worker.deployment_queue, "release_execution", AsyncMock())
+    monkeypatch.setattr(deployment_worker.deployment_queue, "get", AsyncMock(return_value=job))
     monkeypatch.setattr(deployment_worker.deployment_queue, "is_cancel_requested", AsyncMock(return_value=True))
     monkeypatch.setattr(deployment_worker.deployment_queue, "update_progress", update_progress)
     monkeypatch.setattr(deployment_worker.deployment_queue, "acknowledge", AsyncMock())

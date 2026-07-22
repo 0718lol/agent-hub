@@ -28,6 +28,11 @@ MAX_FILE_READ_BYTES = 1_000_000
 MAX_STRUCTURED_FILES = 200
 MAX_GENERATED_FILE_BYTES = 2_000_000
 
+
+class ProjectSnapshotError(RuntimeError):
+    """The current workspace could not be converted into a deployment revision."""
+
+
 _workspace_locks: dict[str, asyncio.Lock] = {}
 
 _FENCE_PATTERN = re.compile(r"```([^\r\n`]*)\r?\n(.*?)```", re.DOTALL)
@@ -492,6 +497,20 @@ async def project_summary(workspace: Path) -> dict:
         "files": list_project_files(workspace),
         "snapshots": await git_log(str(workspace)),
     }
+
+
+async def create_project_snapshot(conversation_id: str) -> str:
+    """Commit the current project state and return an immutable deployment revision."""
+    workspace = resolve_workspace(conversation_id, create=False)
+    if workspace is None or not workspace.is_dir():
+        raise FileNotFoundError("No generated project was found for this conversation")
+    async with _workspace_lock(workspace):
+        snapshot_id = await git_checkpoint(
+            str(workspace), "Create immutable deployment snapshot"
+        )
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", snapshot_id):
+            raise ProjectSnapshotError("Unable to create a project snapshot")
+        return snapshot_id
 
 
 async def restore_project_snapshot(workspace: Path, snapshot_id: str) -> bool:
