@@ -200,7 +200,7 @@ class GenerationQueue:
             )
         )
 
-    async def read(self, block_ms: int = 5_000):
+    async def read(self, block_ms: int = 500):
         client = await self.ensure_available()
         messages = await self._call(
             "领取任务",

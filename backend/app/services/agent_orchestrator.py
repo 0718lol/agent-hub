@@ -688,7 +688,13 @@ async def stream_agent_reply(
 
     # ---- Format validation layer (skip for external agents) ----
     validation_text = raw_text.strip() or full_text
-    if not stopped and not _is_external and validation_text and validation_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）"):
+    if (
+        not stopped
+        and not _is_external
+        and llm_client.is_configured()
+        and validation_text
+        and validation_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）")
+    ):
         is_valid, reason = validate_agent_output(validation_text, agent.agent_id)
         if not is_valid:
             logger.warning(f"Agent {agent.agent_id} format check failed: {reason}")

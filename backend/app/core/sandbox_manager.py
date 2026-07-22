@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
@@ -269,6 +270,14 @@ class DockerSandbox(BaseSandbox):
             archive_path.unlink(missing_ok=True)
             raise
 
+    @staticmethod
+    def _append_archive_file(archive_path: Path, name: str, content: bytes) -> None:
+        info = tarfile.TarInfo(name)
+        info.size = len(content)
+        info.mode = 0o600
+        with tarfile.open(archive_path, "a") as archive:
+            archive.addfile(info, io.BytesIO(content))
+
     async def check_availability(self) -> bool:
         """Check Docker at a bounded frequency to avoid one probe per command."""
         now = time.monotonic()
@@ -358,9 +367,30 @@ class DockerSandbox(BaseSandbox):
         bootstrap_parts: list[str] = []
         if workspace is not None:
             archive_path = await asyncio.to_thread(self._create_workspace_archive, workspace)
+            lang_key = language.lower().strip()
+            runner_config = {
+                "python": (".py", ["python", "-u"]),
+                "py": (".py", ["python", "-u"]),
+                "javascript": (".js", ["node"]),
+                "js": (".js", ["node"]),
+                "typescript": (".ts", ["tsx"]),
+                "ts": (".ts", ["tsx"]),
+                "shell": (".sh", ["sh"]),
+                "bash": (".sh", ["sh"]),
+                "sh": (".sh", ["sh"]),
+            }
+            suffix, file_runner = runner_config[lang_key]
+            runner_name = f".agenthub-run-{secrets.token_hex(8)}{suffix}"
+            await asyncio.to_thread(
+                self._append_archive_file,
+                archive_path,
+                runner_name,
+                code.encode("utf-8"),
+            )
+            runner = [*file_runner, f"/tmp/workspace/{runner_name}"]  # nosec B108
             bootstrap_parts.extend([
                 "mkdir -p /tmp/workspace",
-                "tar -xf /tmp/project.tar -C /tmp/workspace",
+                "tar -xf - -C /tmp/workspace",
                 *runtime_bootstrap,
                 "cd /tmp/workspace",
             ])
@@ -369,7 +399,7 @@ class DockerSandbox(BaseSandbox):
             runner = ["sh", "-lc", " && ".join(bootstrap_parts)]
 
         options = [
-            "create", "-i", "--name", container_name,
+            "run", "--rm", "-i", "--name", container_name,
             "--network", network,
             "--memory", settings.runtime_sandbox_memory,
             "--cpus", settings.runtime_sandbox_cpus,
@@ -389,27 +419,21 @@ class DockerSandbox(BaseSandbox):
         options.extend([image, *runner])
 
         try:
-            returncode, _stdout, stderr = await self._run_cli(options)
-            if returncode != 0:
-                return self._result(language, "error", b"", stderr, returncode, started_at)
             created = True
-
-            if archive_path is not None:
-                returncode, _stdout, stderr = await self._run_cli([
-                    "cp", str(archive_path), f"{container_name}:/tmp/project.tar",
-                ])
-                if returncode != 0:
-                    return self._result(language, "error", b"", stderr, returncode, started_at)
-
             proc = await asyncio.create_subprocess_exec(
-                "docker", "start", "-a", "-i", container_name,
+                "docker", *options,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.PIPE,
             )
             try:
+                stdin_payload = (
+                    await asyncio.to_thread(archive_path.read_bytes)
+                    if archive_path is not None
+                    else code.encode("utf-8")
+                )
                 stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(input=code.encode("utf-8")),
+                    proc.communicate(input=stdin_payload),
                     timeout=timeout,
                 )
             except TimeoutError:

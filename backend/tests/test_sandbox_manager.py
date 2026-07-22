@@ -1,6 +1,8 @@
 """Sandbox dispatch regression tests."""
 
 import asyncio
+import io
+import tarfile
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
@@ -46,7 +48,11 @@ class _CleanupProcess:
 class _CompletedDockerProcess:
     returncode = 0
 
+    def __init__(self):
+        self.input = None
+
     async def communicate(self, input=None):
+        self.input = input
         return b"ok\n", b""
 
 
@@ -56,7 +62,7 @@ async def test_docker_timeout_forcibly_removes_named_container():
 
     async def create_process(*args, **kwargs):
         calls.append(args)
-        if args[:3] == ("docker", "start", "-a"):
+        if args[:3] == ("docker", "run", "--rm"):
             return _HungDockerProcess()
         return _CompletedDockerProcess()
 
@@ -64,18 +70,21 @@ async def test_docker_timeout_forcibly_removes_named_container():
         result = await DockerSandbox().execute("while True: pass", "python", timeout=0.01)
 
     assert result["status"] == "timeout"
-    assert calls[0][:3] == ("docker", "create", "-i")
-    assert calls[1][:3] == ("docker", "start", "-a")
-    assert calls[2][:3] == ("docker", "rm", "-f")
+    assert calls[0][:3] == ("docker", "run", "--rm")
+    assert calls[1][:3] == ("docker", "rm", "-f")
 
 
 @pytest.mark.asyncio
-async def test_docker_workspace_is_read_only_and_copied_before_execution(tmp_path):
+async def test_docker_workspace_streams_archive_into_read_only_container(tmp_path):
     calls = []
+    processes = []
+    (tmp_path / "package.json").write_text('{"name":"sandbox-test"}', encoding="utf-8")
 
     async def create_process(*args, **kwargs):
         calls.append(args)
-        return _CompletedDockerProcess()
+        process = _CompletedDockerProcess()
+        processes.append(process)
+        return process
 
     with patch("app.core.sandbox_manager.asyncio.create_subprocess_exec", side_effect=create_process):
         result = await DockerSandbox().execute(
@@ -87,16 +96,20 @@ async def test_docker_workspace_is_read_only_and_copied_before_execution(tmp_pat
 
     assert result["status"] == "success"
     command = calls[0]
+    assert command[:3] == ("docker", "run", "--rm")
     assert "--network" in command
     assert command[command.index("--network") + 1] == "none"
     assert "agenthub-runtime-sandbox:local" in command
     bootstrap = command[command.index("-lc") + 1]
-    assert "tar -xf /tmp/project.tar -C /tmp/workspace" in bootstrap
+    assert "tar -xf - -C /tmp/workspace" in bootstrap
     assert "cd /tmp/workspace" in bootstrap
-    assert calls[1][1] == "cp"
-    assert calls[1][-1].endswith(":/tmp/project.tar")
-    assert calls[2][:3] == ("docker", "start", "-a")
-    assert calls[3][:3] == ("docker", "rm", "-f")
+    assert processes[0].input is not None
+    with tarfile.open(fileobj=io.BytesIO(processes[0].input), mode="r:") as archive:
+        names = archive.getnames()
+        assert "package.json" in names
+        runner_name = next(name for name in names if name.startswith(".agenthub-run-"))
+        assert archive.extractfile(runner_name).read() == b"pytest -q"
+    assert calls[1][:3] == ("docker", "rm", "-f")
 
 
 @pytest.mark.asyncio

@@ -154,6 +154,36 @@ def _filter_messages(messages, *, msg_type=None, stream=None, sender=None):
 
 
 @pytest.mark.asyncio
+async def test_unconfigured_llm_keeps_deterministic_pm_reply(
+    mock_ws_manager, orchestration_mocks, monkeypatch
+):
+    """Demo mode replies must not be rewritten by LLM output validation."""
+    monkeypatch.setattr(
+        "app.core.llm_client.llm_client.is_configured", lambda self=None: False
+    )
+
+    from app.agents.pm import PMAgent
+    from app.services.agent_orchestrator import stream_agent_reply
+
+    assigned, reply = await stream_agent_reply(
+        "test_conv_pm_demo_reply",
+        PMAgent(),
+        "谢谢你的帮助",
+    )
+
+    expected = "不客气！有新的需求随时告诉我，我会帮你拆解和协调资源。"
+    assert assigned == []
+    assert reply == expected
+    final_messages = _filter_messages(
+        mock_ws_manager.messages,
+        msg_type="message",
+        stream=False,
+        sender="agent_pm",
+    )
+    assert final_messages[-1]["content"]["text"] == expected
+
+
+@pytest.mark.asyncio
 async def test_pm_assigns_agents(mock_ws_manager, orchestration_mocks, monkeypatch):
     """PM message should trigger Agent assignment, producing [assign:xxx] tags."""
 
