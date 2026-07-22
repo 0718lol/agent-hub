@@ -99,6 +99,7 @@ async def test_docker_workspace_streams_archive_into_read_only_container(tmp_pat
     assert command[:3] == ("docker", "run", "--rm")
     assert "--network" in command
     assert command[command.index("--network") + 1] == "none"
+    assert command[command.index("--workdir") + 1] == "/tmp"
     assert "agenthub-runtime-sandbox:local" in command
     bootstrap = command[command.index("-lc") + 1]
     assert "tar --extract --file=- --directory=/tmp/workspace" in bootstrap

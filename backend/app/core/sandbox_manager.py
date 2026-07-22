@@ -409,6 +409,7 @@ class DockerSandbox(BaseSandbox):
             "--security-opt", "no-new-privileges:true",
             "--read-only",
             "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108
+            "--workdir", "/tmp",  # nosec B108
             "--user", user,
             "-e", "PYTHONDONTWRITEBYTECODE=1",
             "-e", "HOME=/tmp",
