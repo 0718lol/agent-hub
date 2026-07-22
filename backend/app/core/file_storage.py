@@ -9,7 +9,6 @@ from app.core.config import settings
 from app.core.upload_security import safe_upload_extension
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 class FileStorageManager:
@@ -57,6 +56,7 @@ class FileStorageManager:
         name = cls._safe_name(stored_name)
         path = os.path.join(UPLOAD_DIR, name)
         if cls._uses_s3() and not os.path.exists(path) and cls.exists(name):
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
             descriptor, temporary = tempfile.mkstemp(prefix=".download-", dir=UPLOAD_DIR)
             os.close(descriptor)
             try:
@@ -127,10 +127,12 @@ class FileStorageManager:
 
     @classmethod
     def list_names(cls, prefix: str = "") -> list[str]:
-        names = {
-            name for name in os.listdir(UPLOAD_DIR)
-            if not name.startswith(".") and os.path.isfile(os.path.join(UPLOAD_DIR, name))
-        }
+        names = set()
+        if os.path.isdir(UPLOAD_DIR):
+            names = {
+                name for name in os.listdir(UPLOAD_DIR)
+                if not name.startswith(".") and os.path.isfile(os.path.join(UPLOAD_DIR, name))
+            }
         if cls._uses_s3():
             object_prefix = cls._object_key(prefix) if prefix else settings.s3_prefix.strip("/")
             if object_prefix and not object_prefix.endswith("/") and not prefix:

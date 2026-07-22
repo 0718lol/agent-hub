@@ -25,7 +25,6 @@ Business logic is delegated to focused router modules and services:
 """
 import asyncio
 import json
-import os
 import re
 from contextlib import asynccontextmanager
 
@@ -151,12 +150,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AgentHub API", lifespan=lifespan)
 settings.validate_production_security()
-
-# ---- File upload directory ----
-# Files are served by routers/uploads.py rather than StaticFiles so they can
-# receive the same authentication and response-hardening as the rest of API.
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ---- CORS ----
 setup_logging()

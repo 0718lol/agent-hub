@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import signal
+import sys
 
 from app.core.concurrency import generation_admission
 from app.core.config import settings
@@ -184,21 +185,47 @@ async def _heartbeat_loop(stop_event: asyncio.Event) -> None:
         await asyncio.sleep(5)
 
 
-async def run_worker(stop_event: asyncio.Event | None = None) -> None:
+def _load_saved_adapters() -> None:
     from app.routers.adapters import load_saved_adapters
 
     load_saved_adapters()
+
+
+async def run_worker(stop_event: asyncio.Event | None = None) -> None:
+    _load_saved_adapters()
     stop_event = stop_event or asyncio.Event()
     logger.info("Generation worker %s starting", generation_queue.consumer)
     heartbeat_task = asyncio.create_task(_heartbeat_loop(stop_event))
+    active_jobs: set[asyncio.Task] = set()
+    concurrency = max(1, min(settings.generation_worker_concurrency, 32))
+
+    def job_finished(task: asyncio.Task) -> None:
+        active_jobs.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "Generation job task failed outside normal retry handling",
+                exc_info=task.exception(),
+            )
+
     try:
         while not stop_event.is_set():
             try:
+                if len(active_jobs) >= concurrency:
+                    await asyncio.wait(
+                        active_jobs,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    continue
                 item = await generation_queue.reclaim_stale()
                 if item is None:
                     item = await generation_queue.read()
                 if item:
-                    await process_job(*item)
+                    task = asyncio.create_task(
+                        process_job(*item),
+                        name=f"generation_job_{item[1].id}",
+                    )
+                    active_jobs.add(task)
+                    task.add_done_callback(job_finished)
             except GenerationQueueUnavailable as exc:
                 logger.warning("%s; retrying", exc)
                 await asyncio.sleep(3)
@@ -208,12 +235,23 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
                 logger.exception("Generation worker loop failed; retrying")
                 await asyncio.sleep(3)
     finally:
+        for task in active_jobs:
+            task.cancel()
+        await asyncio.gather(*active_jobs, return_exceptions=True)
         heartbeat_task.cancel()
         await asyncio.gather(heartbeat_task, return_exceptions=True)
         await redis_manager.close()
 
 
+async def healthcheck() -> None:
+    if not await generation_queue.worker_available():
+        raise RuntimeError("generation worker heartbeat is missing")
+
+
 def main() -> None:
+    if "--healthcheck" in sys.argv:
+        asyncio.run(healthcheck())
+        return
     stop_event = asyncio.Event()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

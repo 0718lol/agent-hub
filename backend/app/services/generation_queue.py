@@ -190,6 +190,16 @@ class GenerationQueue:
             client.set(WORKER_HEARTBEAT_KEY, self.consumer, ex=15),
         )
 
+    async def worker_available(self) -> bool:
+        """Check liveness without refreshing or otherwise forging the heartbeat."""
+        client = await self.ensure_available()
+        return bool(
+            await self._call(
+                "读取 Worker 心跳",
+                client.get(WORKER_HEARTBEAT_KEY),
+            )
+        )
+
     async def read(self, block_ms: int = 5_000):
         client = await self.ensure_available()
         messages = await self._call(

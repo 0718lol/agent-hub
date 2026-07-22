@@ -121,6 +121,7 @@ class Settings(BaseSettings):
     generation_max_attempts: int = 1
     generation_lease_ttl: int = 90
     generation_max_per_user: int = 2
+    generation_worker_concurrency: int = 4
     llm_daily_token_quota: int = 0
 
     def validate_production_security(self) -> None:

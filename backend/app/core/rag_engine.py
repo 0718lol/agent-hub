@@ -16,7 +16,6 @@ logger = logging.getLogger("rag_engine")
 
 # chromadb 数据持久化目录
 CHROMA_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'chroma_db')
-os.makedirs(CHROMA_DIR, exist_ok=True)
 
 # 分块参数
 CHUNK_SIZE = 500       # 每块最大字符数

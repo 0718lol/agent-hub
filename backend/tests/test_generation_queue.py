@@ -104,6 +104,18 @@ async def test_enqueue_requires_live_worker(queue):
 
 
 @pytest.mark.asyncio
+async def test_worker_available_does_not_refresh_heartbeat(queue):
+    instance, redis = queue
+
+    assert await instance.worker_available()
+    assert redis.values[WORKER_HEARTBEAT_KEY] == "worker-1"
+
+    redis.values.pop(WORKER_HEARTBEAT_KEY)
+    assert not await instance.worker_available()
+    assert WORKER_HEARTBEAT_KEY not in redis.values
+
+
+@pytest.mark.asyncio
 async def test_cancel_and_finalize_release_conversation_lock(queue):
     instance, redis = queue
     job = await instance.enqueue("tenant__u__conv__c", "u", "prompt")
