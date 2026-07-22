@@ -516,8 +516,6 @@ async def cancel_deployment(job_id: str, request: Request):
         raise HTTPException(status_code=409, detail="该任务已经结束，无法取消")
     try:
         await deployment_queue.request_cancel(job)
-        if job.status == "queued":
-            await deployment_queue.release_lock(job)
     except DeploymentQueueUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "cancellation_requested", "job_id": job.id}

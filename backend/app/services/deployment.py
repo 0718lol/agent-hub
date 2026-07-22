@@ -7,8 +7,8 @@ import json
 import os
 import re
 import shutil
-import tempfile
 import tarfile
+import tempfile
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
@@ -322,7 +322,7 @@ async def _build_apk(
             "--pids-limit", "256",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
-            "--tmpfs", "/tmp:rw,nosuid,size=512m",
+            "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108
             "--mount", mount,
             "-w", build_dir,
             settings.builder_image,
@@ -446,7 +446,7 @@ async def _build_web_project(
             "--pids-limit", str(settings.deployment_build_pids),
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
-            "--tmpfs", "/tmp:rw,nosuid,size=1024m",
+            "--tmpfs", "/tmp:rw,nosuid,size=1024m",  # nosec B108
             "--mount", mount,
             "-w", "/workspace",
             "-e", "HOME=/tmp",
@@ -549,7 +549,7 @@ async def _deploy_api_container(
                 "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges:true",
                 "--read-only",
-                "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+                "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",  # nosec B108
                 "--user", "65532:65532",
                 "-e", "PYTHONDONTWRITEBYTECODE=1",
                 image_name,

@@ -59,6 +59,27 @@ class FakeRedis:
     async def eval(self, script, count, *args):
         keys = args[:count]
         values = args[count:]
+        if "xadd" in script:
+            if not self.values.get(keys[0]):
+                return -1
+            if keys[1] in self.values:
+                return 0
+            self.values[keys[1]] = values[0]
+            self.values[keys[2]] = values[1]
+            message_id = f"{len(self.entries) + 1}-0"
+            self.entries.append((keys[3], message_id, {"payload": values[1]}))
+            self.zsets.setdefault(keys[4], {})[values[0]] = float(values[4])
+            self.zsets.setdefault(keys[5], {})[values[0]] = float(values[4])
+            return 1
+        if "local project_owner" in script:
+            project_owner = self.values.get(keys[1])
+            if project_owner and project_owner != values[1]:
+                return 0
+            self.values.setdefault(keys[1], values[1])
+            if keys[0] in self.values:
+                return 0
+            self.values[keys[0]] = values[0]
+            return 1
         if "expire" in script:
             if (
                 self.values.get(keys[0]) == values[0]
@@ -197,6 +218,39 @@ async def test_progress_is_persisted_as_bounded_structured_log(queue):
 
 
 @pytest.mark.asyncio
+async def test_completion_persists_status_and_result_atomically(queue):
+    instance, _redis = queue
+    job = await instance.enqueue("tenant__u__conv__c", "u", "web")
+
+    await instance.complete(
+        job,
+        message="发布成功",
+        url="/uploads/result.zip",
+        result_type="download",
+        provider="artifact",
+        published=False,
+    )
+    saved = await instance.get(job.id)
+
+    assert saved.status == "success"
+    assert saved.stage == "complete"
+    assert saved.progress == 100
+    assert saved.url == "/uploads/result.zip"
+    assert saved.provider == "artifact"
+    assert saved.log_entries[-1]["message"] == "发布成功"
+
+
+@pytest.mark.asyncio
+async def test_execution_claim_restores_expired_project_lock(queue):
+    instance, redis = queue
+    job = await instance.enqueue("tenant__u__conv__c", "u", "web")
+    redis.values.pop(instance._lock_key(job.conversation_id))
+
+    assert await instance.claim_execution(job) is True
+    assert redis.values[instance._lock_key(job.conversation_id)] == job.id
+
+
+@pytest.mark.asyncio
 async def test_cancel_request_is_visible_until_worker_clears_it(queue):
     instance, _redis = queue
     job = await instance.enqueue("tenant__u__conv__c", "u", "api")
@@ -216,8 +270,8 @@ async def test_command_failure_is_reported_as_queue_unavailable(monkeypatch):
     from app.core.redis import redis_manager
 
     class BrokenRedis:
-        async def get(self, key):
-            del key
+        async def eval(self, *args):
+            del args
             raise ConnectionError("redis disconnected")
 
     instance = DeploymentQueue()
@@ -228,7 +282,7 @@ async def test_command_failure_is_reported_as_queue_unavailable(monkeypatch):
     monkeypatch.setattr(instance, "ensure_available", available)
     monkeypatch.setattr(redis_manager, "mark_unavailable", MagicMock())
 
-    with pytest.raises(DeploymentQueueUnavailable, match="Worker 心跳"):
+    with pytest.raises(DeploymentQueueUnavailable, match="原子写入任务"):
         await instance.enqueue("tenant__u__conv__c", "u", "web")
 
     redis_manager.mark_unavailable.assert_called_once()

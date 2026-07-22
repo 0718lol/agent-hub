@@ -133,8 +133,6 @@ class DeploymentQueue:
         options: dict | None = None,
     ) -> DeploymentJob:
         client = await self.ensure_available()
-        if not await self._call("读取 Worker 心跳", client.get(WORKER_HEARTBEAT_KEY)):
-            raise DeploymentQueueUnavailable("构建 Worker 未运行，请启动 deployment-worker 服务")
         job = DeploymentJob(
             id=uuid.uuid4().hex,
             conversation_id=conversation_id,
@@ -153,51 +151,42 @@ class DeploymentQueue:
                 "progress": 5,
             }],
         )
-        locked = await self._call(
-            "获取项目锁",
-            client.set(
+        payload = json.dumps(asdict(job), ensure_ascii=False)
+        script = """
+        if not redis.call('get', KEYS[1]) then
+            return -1
+        end
+        if not redis.call('set', KEYS[2], ARGV[1], 'NX', 'EX', ARGV[4]) then
+            return 0
+        end
+        redis.call('set', KEYS[3], ARGV[2], 'EX', ARGV[3])
+        redis.call('xadd', KEYS[4], 'MAXLEN', '~', 10000, '*', 'payload', ARGV[2])
+        redis.call('zadd', KEYS[5], ARGV[5], ARGV[1])
+        redis.call('zadd', KEYS[6], ARGV[5], ARGV[1])
+        return 1
+        """
+        result = await self._call(
+            "原子写入任务",
+            client.eval(
+                script,
+                6,
+                WORKER_HEARTBEAT_KEY,
                 self._lock_key(conversation_id),
+                self._status_key(job.id),
+                self.stream,
+                self._user_index(user_id),
+                self._global_index(),
                 job.id,
-                nx=True,
-                ex=2 * 60 * 60,
+                payload,
+                settings.deployment_status_ttl,
+                2 * 60 * 60,
+                datetime.fromisoformat(job.created_at).timestamp(),
             ),
         )
-        if not locked:
+        if result == -1:
+            raise DeploymentQueueUnavailable("构建 Worker 未运行，请启动 deployment-worker 服务")
+        if result == 0:
             raise DeploymentAlreadyQueued("该项目已有构建任务正在排队或运行")
-        payload = json.dumps(asdict(job), ensure_ascii=False)
-        try:
-            await self._call(
-                "保存任务状态",
-                client.set(
-                    self._status_key(job.id),
-                    payload,
-                    ex=settings.deployment_status_ttl,
-                ),
-            )
-            await self._call(
-                "写入任务",
-                client.xadd(
-                    self.stream,
-                    {"payload": payload},
-                    maxlen=10_000,
-                    approximate=True,
-                ),
-            )
-            score = datetime.fromisoformat(job.created_at).timestamp()
-            await self._call(
-                "更新用户索引",
-                client.zadd(self._user_index(user_id), {job.id: score}),
-            )
-            await self._call(
-                "更新全局索引",
-                client.zadd(self._global_index(), {job.id: score}),
-            )
-        except DeploymentQueueUnavailable:
-            try:
-                await client.delete(self._lock_key(conversation_id))
-            except Exception:
-                pass
-            raise
         return job
 
     async def list_for_user(self, user_id: str, limit: int = 50) -> list[DeploymentJob]:
@@ -292,6 +281,36 @@ class DeploymentQueue:
             log_entries=entries,
         )
 
+    async def complete(
+        self,
+        job: DeploymentJob,
+        *,
+        message: str,
+        url: str,
+        result_type: str,
+        provider: str,
+        published: bool,
+    ) -> DeploymentJob:
+        entry = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "stage": "complete",
+            "level": "info",
+            "message": str(message)[:4_000],
+            "progress": 100,
+        }
+        return await self.update(
+            job,
+            status="success",
+            stage="complete",
+            progress=100,
+            log=entry["message"],
+            log_entries=[*(job.log_entries or []), entry][-300:],
+            url=url,
+            result_type=result_type,
+            provider=provider,
+            published=published,
+        )
+
     async def read(self, block_ms: int = 5_000):
         client = await self.ensure_available()
         messages = await self._call(
@@ -323,13 +342,30 @@ class DeploymentQueue:
 
     async def claim_execution(self, job: DeploymentJob) -> bool:
         client = await self.ensure_available()
+        script = """
+        local project_owner = redis.call('get', KEYS[2])
+        if project_owner and project_owner ~= ARGV[2] then
+            return 0
+        end
+        if not project_owner then
+            redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[4])
+        end
+        if redis.call('set', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[3]) then
+            return 1
+        end
+        return 0
+        """
         return bool(await self._call(
             "获取执行租约",
-            client.set(
+            client.eval(
+                script,
+                2,
                 self._execution_key(job.id),
+                self._lock_key(job.conversation_id),
                 self.consumer,
-                nx=True,
-                ex=max(30, settings.deployment_lease_ttl),
+                job.id,
+                max(30, settings.deployment_lease_ttl),
+                2 * 60 * 60,
             ),
         ))
 

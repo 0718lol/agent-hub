@@ -91,10 +91,10 @@ async def test_docker_workspace_is_read_only_and_copied_before_execution(tmp_pat
     assert command[command.index("--network") + 1] == "none"
     assert "agenthub-runtime-sandbox:local" in command
     bootstrap = command[command.index("-lc") + 1]
-    assert "tar -xf /workspace/project.tar -C /tmp/workspace" in bootstrap
+    assert "tar -xf /tmp/project.tar -C /tmp/workspace" in bootstrap
     assert "cd /tmp/workspace" in bootstrap
     assert calls[1][1] == "cp"
-    assert calls[1][-1].endswith(":/workspace/project.tar")
+    assert calls[1][-1].endswith(":/tmp/project.tar")
     assert calls[2][:3] == ("docker", "start", "-a")
     assert calls[3][:3] == ("docker", "rm", "-f")
 

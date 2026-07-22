@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test'
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 
 test.skip(!process.env.REAL_BACKEND, 'Set REAL_BACKEND=1 to exercise the real FastAPI and Redis services')
 
@@ -18,6 +20,23 @@ test('真实后端支持会话、上传与部署可用性反馈', async ({ page 
   const rows = await conversations.json()
   expect(rows.length).toBeGreaterThan(0)
 
+  const session = (await page.context().cookies()).find((cookie) => cookie.name === 'agenthub_session')
+  expect(session).toBeTruthy()
+  const userId = session.value.split('.')[1]
+  const conversationId = 'conv_pm'
+  const workspace = path.resolve(
+    process.cwd(),
+    '..',
+    'agenthub_export',
+    `tenant__${userId}__conv__${conversationId}`,
+  )
+  await mkdir(workspace, { recursive: true })
+  await writeFile(
+    path.join(workspace, 'index.html'),
+    '<!doctype html><html><body><h1>AgentHub E2E</h1></body></html>',
+    'utf8',
+  )
+
   const upload = await page.request.post(apiUrl('/api/upload'), {
     multipart: {
       file: {
@@ -34,21 +53,21 @@ test('真实后端支持会话、上传与部署可用性反馈', async ({ page 
   expect(download.status()).toBe(200)
   expect(await download.text()).toBe('real backend upload')
 
-  const deploy = await page.request.post(apiUrl(`/api/deploy/${rows[0].id}`), {
+  const deploy = await page.request.post(apiUrl(`/api/deploy/${conversationId}`), {
     data: { target: 'web' },
   })
-  if (deploy.status() === 503) {
-    expect((await deploy.json()).detail).toContain('构建 Worker')
-    return
-  }
   expect(deploy.status()).toBe(200)
   const queued = await deploy.json()
 
-  const status = await page.request.get(apiUrl(`/api/deployments/${queued.job_id}`))
-  expect(status.status()).toBe(200)
-  expect((await status.json()).status).toBe('queued')
+  await expect.poll(async () => {
+    const status = await page.request.get(apiUrl(`/api/deployments/${queued.job_id}`))
+    if (!status.ok()) return `http-${status.status()}`
+    return (await status.json()).status
+  }, { timeout: 30_000 }).toBe('success')
 
-  const cancel = await page.request.post(apiUrl(`/api/deployments/${queued.job_id}/cancel`))
-  expect(cancel.status()).toBe(200)
-  expect((await cancel.json()).status).toBe('cancellation_requested')
+  const status = await page.request.get(apiUrl(`/api/deployments/${queued.job_id}`))
+  const completed = await status.json()
+  expect(completed.url).toMatch(/^\/uploads\//)
+  const artifact = await page.request.get(apiUrl(completed.url))
+  expect(artifact.status()).toBe(200)
 })

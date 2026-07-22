@@ -287,31 +287,28 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
             log = "历史版本已恢复"
         else:
             log = "发布成功" if result.result_type in {"site", "miniprogram"} else "构建产物已就绪"
-        await deployment_queue.update_progress(
+        await deployment_queue.complete(
             job,
-            stage="complete",
-            progress=100,
             message=log,
-            status="success",
-        )
-        await deployment_queue.update(
-            job,
             url=result.url,
             result_type=result.result_type,
             provider=result.provider,
-            published=result.published,
-        )
-        await _broadcast(
-            job,
-            "success",
-            f"{log}：{result.url}",
-            url=result.url,
-            target=result.target,
-            provider=result.provider,
-            result_type=result.result_type,
             published=result.published,
         )
         terminal = True
+        try:
+            await _broadcast(
+                job,
+                "success",
+                f"{log}：{result.url}",
+                url=result.url,
+                target=result.target,
+                provider=result.provider,
+                result_type=result.result_type,
+                published=result.published,
+            )
+        except Exception:
+            logger.exception("Failed to broadcast completed deployment %s", job.id)
     except DeploymentExecutionLeaseLost as exc:
         logger.warning("%s: %s", exc, job.id)
     except DeploymentCancelled as exc:

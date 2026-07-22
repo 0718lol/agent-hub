@@ -192,7 +192,7 @@ class PreviewRuntimeManager:
                 "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges:true",
                 "--read-only",
-                "--tmpfs", "/tmp:rw,nosuid,size=1024m",
+                "--tmpfs", "/tmp:rw,nosuid,size=1024m",  # nosec B108
                 "--user", "65532:65532",
                 "-e", "HOME=/tmp",
                 "-e", "npm_config_cache=/tmp/.npm",

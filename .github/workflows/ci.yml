@@ -122,10 +122,12 @@ jobs:
           REAL_BACKEND: "1"
           AGENTHUB_REDIS_URL: redis://127.0.0.1:6379/0
           AGENTHUB_AUTO_MIGRATE: "false"
+          AGENTHUB_ALLOW_HOST_DOCKER_SOCKET: "true"
           DATABASE_URL: postgresql+psycopg://agenthub:agenthub-test@127.0.0.1:5432/agenthub_e2e
         run: |
           cd backend
           python -m app.scripts.migrate
+          python -m app.workers.deployment_worker > /tmp/agenthub-e2e-worker.log 2>&1 &
           python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/agenthub-e2e-backend.log 2>&1 &
           for attempt in $(seq 1 30); do
             curl --fail --silent http://127.0.0.1:8000/api/health && break
@@ -143,6 +145,7 @@ jobs:
             frontend/playwright-report/
             frontend/test-results/
             /tmp/agenthub-e2e-backend.log
+            /tmp/agenthub-e2e-worker.log
           if-no-files-found: ignore
           retention-days: 7
 

@@ -360,7 +360,7 @@ class DockerSandbox(BaseSandbox):
             archive_path = await asyncio.to_thread(self._create_workspace_archive, workspace)
             bootstrap_parts.extend([
                 "mkdir -p /tmp/workspace",
-                "tar -xf /workspace/project.tar -C /tmp/workspace",
+                "tar -xf /tmp/project.tar -C /tmp/workspace",
                 *runtime_bootstrap,
                 "cd /tmp/workspace",
             ])
@@ -377,7 +377,7 @@ class DockerSandbox(BaseSandbox):
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
             "--read-only",
-            "--tmpfs", "/tmp:rw,nosuid,size=512m",
+            "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108
             "--user", user,
             "-e", "PYTHONDONTWRITEBYTECODE=1",
             "-e", "HOME=/tmp",
@@ -396,7 +396,7 @@ class DockerSandbox(BaseSandbox):
 
             if archive_path is not None:
                 returncode, _stdout, stderr = await self._run_cli([
-                    "cp", str(archive_path), f"{container_name}:/workspace/project.tar",
+                    "cp", str(archive_path), f"{container_name}:/tmp/project.tar",
                 ])
                 if returncode != 0:
                     return self._result(language, "error", b"", stderr, returncode, started_at)

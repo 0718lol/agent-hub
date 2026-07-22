@@ -97,7 +97,7 @@ async def test_worker_leaves_message_pending_after_execution_lease_loss(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_cancel_queued_job_sets_signal_and_releases_lock(monkeypatch):
+async def test_cancel_queued_job_keeps_lock_until_worker_finalizes(monkeypatch):
     job = DeploymentJob(
         id="c" * 32,
         conversation_id="tenant__api-client__conv__demo",
@@ -115,7 +115,7 @@ async def test_cancel_queued_job_sets_signal_and_releases_lock(monkeypatch):
 
     assert response == {"status": "cancellation_requested", "job_id": job.id}
     request_cancel.assert_awaited_once_with(job)
-    release_lock.assert_awaited_once_with(job)
+    release_lock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
