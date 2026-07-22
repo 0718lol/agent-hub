@@ -101,7 +101,8 @@ async def test_docker_workspace_streams_archive_into_read_only_container(tmp_pat
     assert command[command.index("--network") + 1] == "none"
     assert "agenthub-runtime-sandbox:local" in command
     bootstrap = command[command.index("-lc") + 1]
-    assert "tar -xf - -C /tmp/workspace" in bootstrap
+    assert "tar --extract --file=- --directory=/tmp/workspace" in bootstrap
+    assert "--no-same-owner --no-same-permissions" in bootstrap
     assert "cd /tmp/workspace" in bootstrap
     assert processes[0].input is not None
     with tarfile.open(fileobj=io.BytesIO(processes[0].input), mode="r:") as archive:

@@ -390,7 +390,8 @@ class DockerSandbox(BaseSandbox):
             runner = [*file_runner, f"/tmp/workspace/{runner_name}"]  # nosec B108
             bootstrap_parts.extend([
                 "mkdir -p /tmp/workspace",
-                "tar -xf - -C /tmp/workspace",
+                "tar --extract --file=- --directory=/tmp/workspace "
+                "--no-same-owner --no-same-permissions",
                 *runtime_bootstrap,
                 "cd /tmp/workspace",
             ])
