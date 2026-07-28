@@ -67,7 +67,8 @@ test('真实后端支持会话、上传与部署可用性反馈', async ({ page 
 
   const status = await page.request.get(apiUrl(`/api/deployments/${queued.job_id}`))
   const completed = await status.json()
-  expect(completed.url).toMatch(/^\/uploads\//)
+  expect(completed.url).toMatch(/^\/published-artifacts\/[a-f0-9]{32}$/)
   const artifact = await page.request.get(apiUrl(completed.url))
   expect(artifact.status()).toBe(200)
+  expect(artifact.headers()['content-disposition']).toContain('attachment')
 })
