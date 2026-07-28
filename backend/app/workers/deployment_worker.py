@@ -69,6 +69,28 @@ async def _register_runtime(job: DeploymentJob, result: DeploymentResult) -> Non
             await deployment_queue.update(previous, lifecycle="superseded")
 
 
+async def _register_artifact(job: DeploymentJob, result: DeploymentResult) -> str:
+    """Return a capability URL for a tenant-owned build artifact."""
+    if not result.url.startswith("/uploads/"):
+        return result.url
+    file_id = Path(result.url).name
+    if not file_id.startswith(f"tenantfile__{job.user_id}__"):
+        raise DeploymentError("构建产物不属于当前用户，已拒绝发布")
+    if not FileStorageManager.exists(file_id):
+        raise DeploymentError("构建产物不存在，无法创建分享链接")
+    mapping = json.dumps({
+        "file_id": file_id,
+        "conversation_id": job.conversation_id,
+        "user_id": job.user_id,
+    })
+    await redis_manager.get_client().set(
+        f"agenthub:published-artifact:{job.id}",
+        mapping,
+        ex=settings.deployment_status_ttl,
+    )
+    return f"/published-artifacts/{job.id}"
+
+
 async def _run_lifecycle_action(job: DeploymentJob) -> DeploymentResult:
     from app.services.deployment import _container_exists, _run_docker_command
     source = await deployment_queue.get(job.source_job_id)
@@ -132,10 +154,16 @@ async def _remove_deployment(job: DeploymentJob) -> None:
             )
         except DeploymentError:
             pass
-    if job.url.startswith("/uploads/"):
+    artifact_key = f"agenthub:published-artifact:{job.id}"
+    artifact_raw = await client.get(artifact_key)
+    file_id = ""
+    if artifact_raw:
+        file_id = json.loads(artifact_raw).get("file_id", "")
+        await client.delete(artifact_key)
+    elif job.url.startswith("/uploads/"):
         file_id = Path(job.url).name
-        if file_id.startswith(f"tenantfile__{job.user_id}__"):
-            FileStorageManager.delete(file_id)
+    if file_id.startswith(f"tenantfile__{job.user_id}__"):
+        FileStorageManager.delete(file_id)
     await deployment_queue.remove_history(job)
 
 
@@ -278,6 +306,7 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
 
         await ensure_result_is_owned()
         await _register_runtime(job, result)
+        public_url = await _register_artifact(job, result)
         await ensure_result_is_owned()
         if job.action == "cleanup":
             log = "过期资源清理完成"
@@ -290,7 +319,7 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
         await deployment_queue.complete(
             job,
             message=log,
-            url=result.url,
+            url=public_url,
             result_type=result.result_type,
             provider=result.provider,
             published=result.published,
@@ -300,8 +329,8 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
             await _broadcast(
                 job,
                 "success",
-                f"{log}：{result.url}",
-                url=result.url,
+                f"{log}：{public_url}",
+                url=public_url,
                 target=result.target,
                 provider=result.provider,
                 result_type=result.result_type,

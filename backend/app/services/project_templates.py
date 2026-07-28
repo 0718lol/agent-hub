@@ -1,9 +1,12 @@
 """Official project skeletons for deterministic project initialization."""
 
+import re
 from dataclasses import dataclass
 
+from app.core.workspace import resolve_workspace
 from app.services.project_workspace import (
     GeneratedProjectFile,
+    list_project_files,
     materialize_project_files,
 )
 
@@ -337,6 +340,61 @@ PROJECT_TEMPLATES = {
     item.id: item
     for item in (WEB_TEMPLATE, API_TEMPLATE, MINIPROGRAM_TEMPLATE, APK_TEMPLATE)
 }
+
+_TEMPLATE_REQUEST_PATTERNS = (
+    (
+        "apk-kotlin",
+        re.compile(
+            r"(?:\bapk\b|\bandroid\b|安卓|原生\s*(?:app|应用))",
+            re.IGNORECASE,
+        ),
+    ),
+    ("miniprogram-basic", re.compile(r"(?:微信)?小程序|mini\s*program", re.IGNORECASE)),
+    (
+        "api-fastapi",
+        re.compile(
+            r"(?:\brest(?:ful)?\s*api\b|\bapi\s*(?:service|server|服务)\b|后端服务|接口服务)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "web-static",
+        re.compile(
+            r"(?:\bweb\s*(?:app|tool|site|应用|工具)\b|网站|网页工具|前端工具|"
+            r"(?:生成|创建|新建|做|开发|制作).{0,8}(?:网页|页面))",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def infer_project_template_id(text: str) -> str | None:
+    """Infer only explicit project-target requests; ambiguous prompts stay untouched."""
+    for template_id, pattern in _TEMPLATE_REQUEST_PATTERNS:
+        if pattern.search(text or ""):
+            return template_id
+    return None
+
+
+async def initialize_project_template_for_request(
+    conversation_id: str,
+    text: str,
+) -> dict | None:
+    """Initialize a matching skeleton only when the conversation has no project files."""
+    template_id = infer_project_template_id(text)
+    if template_id is None:
+        return None
+    workspace = resolve_workspace(
+        conversation_id,
+        create=False,
+        migrate_legacy=False,
+    )
+    if workspace is not None and workspace.is_dir() and list_project_files(workspace):
+        return None
+    try:
+        return await initialize_project_template(conversation_id, template_id)
+    except FileExistsError:
+        return None
 
 
 def list_project_templates() -> list[dict]:

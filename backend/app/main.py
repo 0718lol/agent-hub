@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from starlette.background import BackgroundTask
@@ -170,7 +170,11 @@ async def api_security_middleware(request: Request, call_next):
     path = request.url.path
     if path in ("/", "/docs", "/openapi.json", "/redoc", "/api/health") or path.startswith("/api/auth/") or path.startswith("/api/webhook/callback/"):
         return await call_next(request)
-    if not (path.startswith("/api") or path.startswith("/uploads")):
+    if not (
+        path.startswith("/api")
+        or path.startswith("/uploads")
+        or path == "/upload"
+    ):
         return await call_next(request)
     auth_required = bool(settings.api_secret or settings.api_client_tokens_json) or settings.auth_mode == "proxy"
     if auth_required:
@@ -564,6 +568,59 @@ async def cleanup_deployments(request: Request):
 
 _RUNTIME_URL = re.compile(r"^http://agenthub-api-[a-f0-9]{16}:\d{2,5}$")
 _HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"}
+
+
+@app.get("/published-artifacts/{artifact_id}")
+async def download_published_artifact(artifact_id: str):
+    """Download a build artifact through an unguessable, expiring capability URL."""
+    if not re.fullmatch(r"[a-f0-9]{32}", artifact_id):
+        raise HTTPException(status_code=404, detail="Published artifact not found")
+    from app.core.file_storage import FileStorageManager
+    from app.core.redis import redis_manager
+
+    if not await redis_manager.check_connection():
+        raise HTTPException(status_code=503, detail="Published artifact registry is unavailable")
+    try:
+        raw = await redis_manager.get_client().get(
+            f"agenthub:published-artifact:{artifact_id}"
+        )
+    except Exception as exc:
+        redis_manager.mark_unavailable(exc, "published artifact lookup")
+        raise HTTPException(
+            status_code=503, detail="Published artifact registry is unavailable"
+        ) from exc
+    if not raw:
+        raise HTTPException(status_code=404, detail="Published artifact not found")
+    try:
+        file_id = json.loads(raw).get("file_id", "")
+    except (TypeError, json.JSONDecodeError):
+        file_id = ""
+    if not re.fullmatch(
+        r"tenantfile__[a-zA-Z0-9_-]+__build_[a-f0-9]{32}\.[a-zA-Z0-9]+",
+        file_id,
+    ):
+        raise HTTPException(status_code=404, detail="Published artifact not found")
+    try:
+        exists = await asyncio.to_thread(FileStorageManager.exists, file_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Published artifact not found")
+        path = await asyncio.to_thread(FileStorageManager.get_absolute_path, file_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Could not resolve published artifact %s: %s", artifact_id, exc)
+        raise HTTPException(
+            status_code=503, detail="Published artifact storage is unavailable"
+        ) from exc
+    return FileResponse(
+        path,
+        filename=file_id.split("__", 2)[-1],
+        media_type="application/octet-stream",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @app.api_route(

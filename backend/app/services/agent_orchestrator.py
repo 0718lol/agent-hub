@@ -42,6 +42,7 @@ from app.core.quality_retry import evaluate_and_retry
 from app.core.tenancy import conversation_user_id
 from app.core.websocket import manager
 from app.services.agent_registry import agent_registry
+from app.services.project_templates import initialize_project_template_for_request
 from app.services.project_workspace import (
     GeneratedProjectFile,
     materialize_project_files,
@@ -52,6 +53,21 @@ logger = logging.getLogger("agent_orchestrator")
 
 # Shared state: stop events per conversation
 _stop_events: dict[str, asyncio.Event] = {}
+
+
+async def _bootstrap_project_for_request(conversation_id: str, text: str) -> None:
+    result = await initialize_project_template_for_request(conversation_id, text)
+    if result is None:
+        return
+    await manager.broadcast(conversation_id, {
+        "type": "project_update",
+        "conversation_id": conversation_id,
+        "agent_id": "system_template",
+        "files": result["files"],
+        "deleted": result["deleted"],
+        "snapshot_id": result["snapshot_id"],
+        "project_type": result["manifest"].get("project_type", "unknown"),
+    })
 
 def parse_create_agent_tag(buffer: str) -> tuple[dict | None, str]:
     """Parse a [create_agent:{json}] tag from the buffer.
@@ -152,7 +168,10 @@ QUESTION_PATTERNS = [
 # Expected format rules per agent type
 FORMAT_RULES = {
     "agent_frontend": {
-        "required_any": ["```html", "```jsx", "```vue", "```css", "<!DOCTYPE", "<html"],
+        "required_any": [
+            "```html", "```jsx", "```vue", "```css", "<!DOCTYPE", "<html",
+            "```kotlin", "```xml", "```wxml", "```wxss", "```json",
+        ],
         "min_length": 100,
     },
     "agent_backend": {
@@ -201,6 +220,8 @@ FORMAT_INSTRUCTIONS = {
         "- 页面/游戏 → ```html path=index.html 代码块，以 <!DOCTYPE html> 开头\n"
         "- React 组件 → ```jsx path=src/App.jsx 代码块\n"
         "- 样式 → ```css path=src/styles.css 代码块\n"
+        "- Android APK → ```kotlin/```xml，保留 Gradle 项目结构\n"
+        "- 微信小程序 → ```wxml/```wxss/```javascript/```json，保留小程序目录结构\n"
         "每个代码块都必须提供 path=项目内相对路径。\n"
         "不要问用户任何问题，直接实现。"
     ),
@@ -287,6 +308,14 @@ def validate_agent_output(text: str, agent_id: str) -> tuple[bool, str]:
     if not ok:
         return False, f"tag: {reason}"
     return True, "passed"
+
+
+def is_llm_error_response(text: str) -> bool:
+    """Return whether an LLM stream is explicitly unusable."""
+    return any(
+        marker in (text or "")
+        for marker in ("[LLM Error", "[LLM 调用出错", "[Agent 回复出错")
+    )
 
 
 # ============================================================
@@ -642,9 +671,10 @@ async def stream_agent_reply(
 
         # Final text
         full_text = buffer.strip()
+        stream_failed = is_llm_error_response(raw_text)
 
         # Bare HTML fallback
-        if full_text and "```" not in raw_text and re.search(
+        if not stream_failed and full_text and "```" not in raw_text and re.search(
             r'<!DOCTYPE\s+html|<html[\s>]|<body[\s>]', full_text, re.IGNORECASE
         ):
             html_match = re.search(
@@ -685,11 +715,13 @@ async def stream_agent_reply(
 
     if not raw_text:
         raw_text = full_text
+    stream_failed = is_llm_error_response(raw_text)
 
     # ---- Format validation layer (skip for external agents) ----
     validation_text = raw_text.strip() or full_text
     if (
         not stopped
+        and not stream_failed
         and not _is_external
         and llm_client.is_configured()
         and validation_text
@@ -732,7 +764,13 @@ async def stream_agent_reply(
                     })
 
     # ---- Browser auto-routing: if Agent output has fixable errors, use BrowserAgent ----
-    if not stopped and not _is_external and full_text and agent.agent_id != 'agent_browser':
+    if (
+        not stopped
+        and not stream_failed
+        and not _is_external
+        and full_text
+        and agent.agent_id != 'agent_browser'
+    ):
         should_browser, browser_reason = should_use_browser(full_text, agent.agent_id)
         if should_browser:
             logger.info(f'Agent {agent.agent_id} output has fixable error: {browser_reason}')
@@ -776,7 +814,12 @@ async def stream_agent_reply(
     artifact_sandbox_output = None
 
     # ---- Auto self-reflection & retry (skip for external agents) ----
-    if not stopped and agent.agent_id not in ("agent_builder", "agent_pm") and not _is_external:
+    if (
+        not stopped
+        and not stream_failed
+        and agent.agent_id not in ("agent_builder", "agent_pm")
+        and not _is_external
+    ):
         eval_result = await evaluate_and_retry(
             conversation_id=conversation_id,
             agent=agent,
@@ -799,7 +842,7 @@ async def stream_agent_reply(
             artifact_sandbox_output = sandbox_data.get("stderr") or sandbox_data.get("stdout")
 
     # Don't persist LLM error responses
-    is_llm_error = ("[LLM Error" in raw_text) or ("[LLM 调用出错" in raw_text) or ("[Agent 回复出错" in raw_text)
+    is_llm_error = is_llm_error_response(raw_text)
 
     # Materialize only the final, validated output into the deployable project.
     materialized_files = []
@@ -970,6 +1013,7 @@ async def run_target_agent_flow(conversation_id: str, agent, text: str):
     stop_event = asyncio.Event()
     _stop_events[conversation_id] = stop_event
     try:
+        await _bootstrap_project_for_request(conversation_id, text)
         await manager.broadcast(conversation_id, {
             "type": "generating",
             "conversation_id": conversation_id,
@@ -1280,6 +1324,7 @@ async def resume_graph_from_checkpoint(conversation_id: str, action: str):
     )
 
     try:
+        await _bootstrap_project_for_request(conversation_id, original_prompt)
         await manager.broadcast(conversation_id, {
             "type": "generating",
             "conversation_id": conversation_id,
@@ -1316,6 +1361,7 @@ async def run_user_message_flow(conversation_id: str, text: str, target_agent: s
     )
 
     try:
+        await _bootstrap_project_for_request(conversation_id, text)
         await manager.broadcast(conversation_id, {
             "type": "generating",
             "conversation_id": conversation_id,

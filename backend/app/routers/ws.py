@@ -160,6 +160,10 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
 
             logger.debug(f"conv={conversation_id} type={msg_type} sender={sender} target_agent={target_agent} text={text[:60]}")
 
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
             # Intercept user interaction response if there's a pending interactive judge wait
             is_active_hil = conversation_id in _pending_interactions
 

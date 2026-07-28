@@ -386,6 +386,7 @@ class ResilienceManager:
         backoffs = [1.5, 3.0, 6.0]
 
         for attempt in range(max_retries):
+            stream_started = False
             try:
                 try:
                     gen = stream_func(messages, system, enabled_tools)
@@ -403,7 +404,7 @@ class ResilienceManager:
                 except Exception as e:
                     raise e
 
-                await breaker.record_success()
+                stream_started = True
                 output_chunks.append(first_chunk)
                 yield first_chunk
 
@@ -411,6 +412,7 @@ class ResilienceManager:
                     output_chunks.append(chunk)
                     yield chunk
 
+                await breaker.record_success()
                 # Successful end of LLM stream span logging
                 if span:
                     generated_text = "".join(output_chunks)
@@ -423,6 +425,29 @@ class ResilienceManager:
 
             except Exception as e:
                 logger.error(f"LLM attempt {attempt + 1} failed for {provider}: {type(e).__name__}: {e}")
+
+                # Once bytes have reached the browser, restarting the request would
+                # concatenate two independent model answers and can corrupt code.
+                if stream_started:
+                    await breaker.record_failure()
+                    err_msg = (
+                        "\n[LLM 调用出错: 流式响应在输出过程中中断，"
+                        "为避免拼接出损坏代码，本轮结果已作废，请重新发送需求。]"
+                    )
+                    output_chunks.append(err_msg)
+                    yield err_msg
+                    if span:
+                        span.finish(
+                            output_data="".join(output_chunks),
+                            status="error",
+                            metadata={
+                                "error": type(e).__name__,
+                                "model": model,
+                                "provider": provider,
+                                "partial_stream": True,
+                            },
+                        )
+                    return
 
                 retriable = True
                 if isinstance(e, LLMAPIError) and e.status_code != 429 and e.status_code < 500:

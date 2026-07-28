@@ -19,7 +19,10 @@ class PMAgent(BaseAgent):
         "\n1. **方案概述**（1 句话）"
         "\n2. **任务拆解**（3-5 条）"
         "\n3. [assign:agent_frontend] [assign:agent_backend] 等分配标签"
-        "\n\n根据任务内容选择合适的 agent：前端页面→agent_frontend，后端接口→agent_backend，测试→agent_tester，部署→agent_devops，设计→agent_designer，代码审查→agent_reviewer。"
+        "\n\n根据任务内容选择合适的 agent：Web 页面→agent_frontend，API 服务→agent_backend，"
+        "Android APK 或微信小程序→只分配 agent_frontend（该 Agent 会进入原生工程模式），"
+        "测试→agent_tester，部署→agent_devops，设计→agent_designer，代码审查→agent_reviewer。"
+        "不要给 APK/小程序分配 agent_backend，不要给纯 API 服务分配 agent_frontend。"
         "\n\n【ask_user 工具】仅在影响技术方案走向的关键分歧时使用一次："
         "\n  [ask_user:简短问题?|选项A::一句话说明|*推荐项加星::说明|选项C::说明]"
         "\n  若用户消息以 [ask_user_reply] 开头，直接基于答案拆任务，不要重复提问。"
@@ -103,6 +106,25 @@ class PMAgent(BaseAgent):
 
     def _decompose_task(self, message: str) -> str:
         msg = message.lower()
+        if any(kw in msg for kw in ["apk", "android", "安卓", "小程序", "mini program"]):
+            target = "微信小程序" if "小程序" in msg or "mini program" in msg else "Android APK"
+            return (
+                f"已识别为 {target} 工程，系统会先建立对应的官方工程骨架。\n\n"
+                "**任务拆解：**\n"
+                "1. 检查当前原生工程文件和入口页面\n"
+                "2. 按用户需求修改原生界面与业务逻辑\n"
+                "3. 保持构建配置和发布流水线兼容\n\n"
+                "[assign:agent_frontend]"
+            )
+        if any(kw in msg for kw in ["api服务", "api 服务", "rest api", "后端服务", "接口服务"]):
+            return (
+                "已识别为 API 服务工程，系统会先建立可容器发布的 FastAPI 骨架。\n\n"
+                "**任务拆解：**\n"
+                "1. 定义数据模型和接口契约\n"
+                "2. 实现接口、校验和错误处理\n"
+                "3. 保持 Dockerfile 与依赖清单可构建\n\n"
+                "[assign:agent_backend]"
+            )
         if any(kw in msg for key_list in [["海报", "宣传", "设计", "广告", "画", "图", "promo"]] for kw in key_list):
             return (
                 "好的，收到巧乐兹海报的设计需求！我已经为你规划好了海报的设计工作：\n\n"

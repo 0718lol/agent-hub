@@ -12,7 +12,12 @@ from app.core import workspace as workspace_module
 from app.core.tenancy import scope_conversation_id
 from app.routers import projects as projects_router
 from app.services import project_workspace
-from app.services.project_templates import initialize_project_template, list_project_templates
+from app.services.project_templates import (
+    infer_project_template_id,
+    initialize_project_template,
+    initialize_project_template_for_request,
+    list_project_templates,
+)
 from app.services.project_workspace import (
     GeneratedProjectFile,
     materialize_project_files,
@@ -132,7 +137,81 @@ async def test_materialization_merges_concurrent_agent_files(tmp_path, monkeypat
     assert (workspace / "src" / "App.jsx").is_file()
     assert (workspace / "main.py").is_file()
     assert [item["path"] for item in manifest["files"]] == ["main.py", "src/App.jsx"]
-    assert snapshot_count["value"] == 2
+    assert snapshot_count["value"] == 4
+
+
+@pytest.mark.asyncio
+async def test_materialization_rolls_back_all_files_when_a_write_fails(
+    tmp_path, monkeypatch
+):
+    workspace_root = tmp_path / "agenthub_export"
+    monkeypatch.setattr(workspace_module, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace_module, "LEGACY_WORKSPACE_ROOT", tmp_path / "legacy")
+    monkeypatch.setattr(
+        project_workspace,
+        "git_checkpoint",
+        AsyncMock(return_value="baseline-snapshot"),
+    )
+    rollback = AsyncMock(return_value=True)
+    monkeypatch.setattr(project_workspace, "git_rollback_to", rollback)
+    real_write = project_workspace._atomic_write_text
+
+    def fail_second_file(path, content):
+        if path.name == "second.py":
+            raise OSError("disk full")
+        real_write(path, content)
+
+    monkeypatch.setattr(project_workspace, "_atomic_write_text", fail_second_file)
+
+    with pytest.raises(OSError, match="disk full"):
+        await materialize_project_files(
+            "conversation",
+            "agent_backend",
+            [
+                GeneratedProjectFile("first.py", "python", "print('first')"),
+                GeneratedProjectFile("second.py", "python", "print('second')"),
+            ],
+        )
+
+    rollback.assert_awaited_once_with(
+        str(workspace_root / "conversation"), "baseline-snapshot"
+    )
+
+
+def test_project_template_inference_requires_an_explicit_target():
+    assert infer_project_template_id("生成一个安卓 APK 记账工具") == "apk-kotlin"
+    assert infer_project_template_id("做一个微信小程序") == "miniprogram-basic"
+    assert infer_project_template_id("创建 REST API 服务") == "api-fastapi"
+    assert infer_project_template_id("生成一个 Web 工具") == "web-static"
+    assert infer_project_template_id("做一个登录页面") == "web-static"
+    assert infer_project_template_id("给当前页面接入 API") is None
+
+
+@pytest.mark.asyncio
+async def test_request_template_bootstrap_does_not_overwrite_existing_project(
+    tmp_path, monkeypatch
+):
+    workspace_root = tmp_path / "agenthub_export"
+    monkeypatch.setattr(workspace_module, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace_module, "LEGACY_WORKSPACE_ROOT", tmp_path / "legacy")
+    monkeypatch.setattr(
+        project_workspace,
+        "git_checkpoint",
+        AsyncMock(return_value="snapshot-template"),
+    )
+
+    initialized = await initialize_project_template_for_request(
+        "conversation", "生成一个安卓 APK 工具"
+    )
+    ignored = await initialize_project_template_for_request(
+        "conversation", "改成一个 Web 工具"
+    )
+
+    assert initialized is not None
+    assert initialized["manifest"]["project_type"] == "apk"
+    assert ignored is None
+    assert (workspace_root / "conversation" / "settings.gradle.kts").is_file()
+    assert not (workspace_root / "conversation" / "index.html").exists()
 
 
 @pytest.mark.asyncio

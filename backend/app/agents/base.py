@@ -211,7 +211,9 @@ class BaseAgent:
             trimmed = []
             for m in reversed(hist_messages):
                 if total_chars + len(m["content"]) > _MAX_HISTORY_CHARS:
-                    break
+                    # A generated code dump can exceed the entire budget. Skip
+                    # it so earlier user requirements remain available.
+                    continue
                 trimmed.insert(0, m)
                 total_chars += len(m["content"])
             messages.extend(trimmed)

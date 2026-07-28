@@ -2,6 +2,25 @@
 import pytest
 
 
+def test_history_skips_large_code_dump_but_keeps_earlier_requirement():
+    from app.agents.base import BaseAgent
+
+    agent = BaseAgent()
+    messages = agent._build_messages(
+        "把按钮改成绿色",
+        history=[
+            {"sender": "user", "content": {"text": "做一个带导出功能的记账工具"}},
+            {"sender": "agent_frontend", "content": {"text": "x" * 13_000}},
+            {"sender": "user", "content": {"text": "把按钮改成绿色"}},
+        ],
+    )
+
+    assert [item["content"] for item in messages] == [
+        "做一个带导出功能的记账工具",
+        "把按钮改成绿色",
+    ]
+
+
 class TestPMAgentReply:
     def test_assigns_frontend_on_ui_keywords(self):
         """PM should assign frontend agent for UI-related requests."""

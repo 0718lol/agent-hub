@@ -144,6 +144,23 @@ describe("WSClient (websocket.js)", () => {
     expect(sent.text).toBe("hello world")
   })
 
+  it("sends an application heartbeat while connected", async () => {
+    vi.useFakeTimers()
+    try {
+      wsClient.connect("conv_heartbeat")
+      await vi.advanceTimersByTimeAsync(0)
+      const ws = MockWebSocket.instances[0]
+      ws.sentMessages = []
+
+      await vi.advanceTimersByTimeAsync(wsClient.heartbeatInterval)
+
+      expect(JSON.parse(ws.sentMessages[0])).toEqual({ type: "ping" })
+    } finally {
+      wsClient.disconnect()
+      vi.useRealTimers()
+    }
+  })
+
   it("flushes pending messages after connect", async () => {
     wsClient.send({ type: "message", text: "queued" })
 

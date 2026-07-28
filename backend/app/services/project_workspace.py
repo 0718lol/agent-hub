@@ -370,7 +370,7 @@ async def materialize_project_files(
     *,
     require_empty: bool = False,
 ) -> dict:
-    """Atomically write generated files, update the manifest, and create one snapshot."""
+    """Write a generated-file batch and roll the whole workspace back on failure."""
     workspace = resolve_workspace(conversation_id)
     if workspace is None:
         raise ValueError("Invalid conversation ID")
@@ -378,6 +378,13 @@ async def materialize_project_files(
     async with _workspace_lock(workspace):
         if require_empty and list_project_files(workspace):
             raise FileExistsError("Project workspace is not empty")
+        baseline_snapshot = await git_checkpoint(
+            str(workspace), "Checkpoint workspace before generated file batch"
+        )
+        if not baseline_snapshot:
+            raise ProjectSnapshotError(
+                "Unable to create a rollback point before updating project files"
+            )
         manifest = _load_manifest(workspace)
         manifest_files = {
             item["path"]: item
@@ -387,58 +394,71 @@ async def materialize_project_files(
         written = []
         deleted = []
         timestamp = datetime.now(UTC).isoformat()
-        for generated_file in files:
-            target = _target_path(workspace, generated_file.path)
-            if target is None:
-                continue
-            if generated_file.operation == "delete":
-                existed = target.is_file()
-                if existed:
-                    target.unlink()
-                removed_manifest = manifest_files.pop(generated_file.path, None)
-                if existed or removed_manifest is not None:
-                    deleted.append(generated_file.path)
-                continue
-            _atomic_write_text(target, generated_file.code)
-            encoded = generated_file.code.encode("utf-8")
-            entry = {
-                "path": generated_file.path,
-                "language": generated_file.language,
-                "agent_id": agent_id,
-                "size": len(encoded),
-                "sha256": hashlib.sha256(encoded).hexdigest(),
-                "updated_at": timestamp,
-            }
-            manifest_files[generated_file.path] = entry
-            written.append(entry)
+        try:
+            for generated_file in files:
+                target = _target_path(workspace, generated_file.path)
+                if target is None:
+                    continue
+                if generated_file.operation == "delete":
+                    existed = target.is_file()
+                    if existed:
+                        target.unlink()
+                    removed_manifest = manifest_files.pop(generated_file.path, None)
+                    if existed or removed_manifest is not None:
+                        deleted.append(generated_file.path)
+                    continue
+                _atomic_write_text(target, generated_file.code)
+                encoded = generated_file.code.encode("utf-8")
+                entry = {
+                    "path": generated_file.path,
+                    "language": generated_file.language,
+                    "agent_id": agent_id,
+                    "size": len(encoded),
+                    "sha256": hashlib.sha256(encoded).hexdigest(),
+                    "updated_at": timestamp,
+                }
+                manifest_files[generated_file.path] = entry
+                written.append(entry)
 
-        if not written and not deleted:
+            if not written and not deleted:
+                return {
+                    "files": [],
+                    "deleted": [],
+                    "snapshot_id": baseline_snapshot,
+                    "manifest": manifest,
+                }
+
+            paths = set(manifest_files)
+            manifest = {
+                "schema_version": 1,
+                "conversation_id": conversation_id,
+                "project_type": _detect_project_type(paths),
+                "updated_at": timestamp,
+                "files": sorted(manifest_files.values(), key=lambda item: item["path"]),
+            }
+            _atomic_write_text(
+                workspace / MANIFEST_PATH,
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+            )
+            snapshot_id = await git_checkpoint(
+                str(workspace),
+                f"Apply {len(written)} write(s) and {len(deleted)} deletion(s) with {agent_id}",
+            )
+            if not snapshot_id:
+                raise ProjectSnapshotError("Unable to snapshot generated project changes")
             return {
-                "files": [],
-                "deleted": [],
-                "snapshot_id": "",
+                "files": written,
+                "deleted": deleted,
+                "snapshot_id": snapshot_id,
                 "manifest": manifest,
             }
-
-        paths = set(manifest_files)
-        manifest = {
-            "schema_version": 1,
-            "conversation_id": conversation_id,
-            "project_type": _detect_project_type(paths),
-            "updated_at": timestamp,
-            "files": sorted(manifest_files.values(), key=lambda item: item["path"]),
-        }
-        _atomic_write_text(workspace / MANIFEST_PATH, json.dumps(manifest, ensure_ascii=False, indent=2))
-        snapshot_id = await git_checkpoint(
-            str(workspace),
-            f"Apply {len(written)} write(s) and {len(deleted)} deletion(s) with {agent_id}",
-        )
-        return {
-            "files": written,
-            "deleted": deleted,
-            "snapshot_id": snapshot_id,
-            "manifest": manifest,
-        }
+        except Exception:
+            rolled_back = await git_rollback_to(str(workspace), baseline_snapshot)
+            if not rolled_back:
+                raise ProjectSnapshotError(
+                    "Project update failed and the previous workspace could not be restored"
+                )
+            raise
 
 
 def list_project_files(workspace: Path) -> list[dict]:

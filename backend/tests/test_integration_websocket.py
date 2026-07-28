@@ -190,6 +190,23 @@ async def test_connect_localhost_no_secret_allowed(ws_app):
 
 
 @pytest.mark.asyncio
+async def test_ping_receives_pong_without_starting_generation(ws_app):
+    async with ASGIWebSocketTransport(app=ws_app) as transport:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            headers={"x-api-secret": "test-secret"},
+        ) as client:
+            async with aconnect_ws(
+                "ws://testserver/ws/conv_ping", client
+            ) as ws:
+                await ws.send_text(json.dumps({"type": "ping"}))
+                response = await _receive_json(ws)
+
+                assert response == {"type": "pong"}
+
+
+@pytest.mark.asyncio
 async def test_message_broadcast(ws_app):
     """Sending a normal user message should produce a broadcast with type=message."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:

@@ -189,3 +189,53 @@ async def test_proxy_viewer_cannot_mutate_api_resources(monkeypatch):
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Viewer role is read-only"
+
+
+@pytest.mark.asyncio
+async def test_legacy_root_upload_requires_authentication(monkeypatch):
+    from app.core.config import settings
+    from app.main import app
+
+    monkeypatch.setattr(settings, "auth_mode", "secret")
+    monkeypatch.setattr(settings, "api_secret", "s" * 32)
+    monkeypatch.setattr(settings, "api_client_tokens_json", "")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/upload")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_published_artifact_link_resolves_without_exposing_tenant_path(
+    tmp_path, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    from app.core.file_storage import FileStorageManager
+    from app.core.redis import redis_manager
+    from app.main import download_published_artifact
+
+    artifact_id = "a" * 32
+    file_id = f"tenantfile__user-1__build_{'b' * 32}.apk"
+    artifact = tmp_path / file_id
+    artifact.write_bytes(b"apk")
+    redis = type(
+        "Redis",
+        (),
+        {"get": AsyncMock(return_value=f'{{"file_id":"{file_id}"}}')},
+    )()
+    monkeypatch.setattr(redis_manager, "check_connection", AsyncMock(return_value=True))
+    monkeypatch.setattr(redis_manager, "get_client", lambda: redis)
+    monkeypatch.setattr(FileStorageManager, "exists", lambda name: name == file_id)
+    monkeypatch.setattr(
+        FileStorageManager,
+        "get_absolute_path",
+        lambda name: str(artifact) if name == file_id else "",
+    )
+
+    response = await download_published_artifact(artifact_id)
+
+    assert response.path == str(artifact)
+    assert response.headers["cache-control"] == "private, no-store"
+    assert "tenantfile__" not in response.headers["content-disposition"]

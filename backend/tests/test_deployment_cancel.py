@@ -7,6 +7,7 @@ import pytest
 from starlette.requests import Request
 
 from app.main import cancel_deployment
+from app.services.deployment import DeploymentResult
 from app.services.deployment_queue import DeploymentJob, deployment_queue
 from app.workers import deployment_worker
 
@@ -178,3 +179,35 @@ async def test_worker_finalizes_job_cancelled_while_queued(monkeypatch):
     deployment_worker.deployment_queue.acknowledge.assert_awaited_once_with("1-0")
     deployment_worker.deployment_queue.release_lock.assert_awaited_once_with(job)
     deployment_worker.deployment_queue.clear_cancel.assert_awaited_once_with(job.id)
+
+
+@pytest.mark.asyncio
+async def test_worker_registers_an_expiring_public_artifact_link(monkeypatch):
+    job = DeploymentJob(
+        id="f" * 32,
+        conversation_id="tenant__user-1__conv__demo",
+        user_id="user-1",
+        target="apk",
+    )
+    file_id = f"tenantfile__user-1__build_{'a' * 32}.apk"
+    redis = type("Redis", (), {"set": AsyncMock()})()
+    monkeypatch.setattr(
+        deployment_worker.redis_manager, "get_client", lambda: redis
+    )
+    monkeypatch.setattr(
+        deployment_worker.FileStorageManager, "exists", lambda name: name == file_id
+    )
+
+    url = await deployment_worker._register_artifact(
+        job,
+        DeploymentResult(
+            url=f"/uploads/{file_id}",
+            provider="gradle",
+            target="apk",
+            result_type="download",
+        ),
+    )
+
+    assert url == f"/published-artifacts/{job.id}"
+    redis.set.assert_awaited_once()
+    assert redis.set.await_args.kwargs["ex"] > 0

@@ -20,6 +20,8 @@ class BackendAgent(BaseAgent):
         "\n2. 代码必须是完整可运行的（import + 定义 + 路由）"
         "\n3. 不要问用户任何问题，直接实现"
         "\n4. 如果信息不足，用最合理的默认值补全（如 SQLite + FastAPI）"
+        "\n5. 新建 API 服务时必须同时保证 requirements.txt 和 Dockerfile 存在；"
+        "修改已有服务前先读取当前 main.py、依赖清单和 Dockerfile。"
         "\n\n输出格式："
         "\n[thinking]分析需求...[/thinking]"
         "\n2-3 句话摘要"

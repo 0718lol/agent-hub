@@ -54,27 +54,34 @@ async def git_is_dirty(sandbox_dir: str) -> bool:
 
 async def git_checkpoint(sandbox_dir: str, message: str) -> str:
     """Stage all changes and commit. Returns the commit hash or empty string on failure."""
-    await git_init(sandbox_dir)
+    if not await git_init(sandbox_dir):
+        return ""
 
     # Check if dirty first
-    dirty = await git_is_dirty(sandbox_dir)
+    status_code, status_output, _ = await run_git_cmd(
+        sandbox_dir, "status", "--porcelain"
+    )
+    if status_code != 0:
+        return ""
+    dirty = bool(status_output)
     if not dirty:
         # If clean, fetch current HEAD hash
-        _, out, _ = await run_git_cmd(sandbox_dir, "rev-parse", "HEAD")
-        return out
+        code, out, _ = await run_git_cmd(sandbox_dir, "rev-parse", "HEAD")
+        return out if code == 0 else ""
 
     # Stage and commit
-    await run_git_cmd(sandbox_dir, "add", ".")
+    add_code, _, _ = await run_git_cmd(sandbox_dir, "add", ".")
+    if add_code != 0:
+        return ""
     code, _, err = await run_git_cmd(sandbox_dir, "commit", "-m", message)
     if code != 0:
         print(f"[GitSandbox] Commit failed: {err}")
-        # Fetch current HEAD as fallback
-        _, out, _ = await run_git_cmd(sandbox_dir, "rev-parse", "HEAD")
-        return out
+        await run_git_cmd(sandbox_dir, "reset", "HEAD")
+        return ""
 
     # Fetch latest hash
-    _, out, _ = await run_git_cmd(sandbox_dir, "rev-parse", "HEAD")
-    return out
+    hash_code, out, _ = await run_git_cmd(sandbox_dir, "rev-parse", "HEAD")
+    return out if hash_code == 0 else ""
 
 async def git_rollback(sandbox_dir: str) -> bool:
     """Hard-rollback all modifications since the last commit (discard dirty work)."""
