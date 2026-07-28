@@ -1,9 +1,17 @@
 ﻿import asyncio
 import contextlib
+import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
 
-from app.core.database import get_due_cron_tasks, update_cron_task_run_time, update_cron_task_status
+from app.core.config import settings
+from app.core.database import (
+    claim_cron_task,
+    get_cron_tasks,
+    get_due_cron_tasks,
+    update_cron_task_run_time,
+)
+from app.core.redis_lease import RedisLease
 
 logger = logging.getLogger("daemon_scheduler")
 
@@ -28,9 +36,10 @@ def _run_task_process_entry(task: dict, retry_counts_dict: dict):
     scheduler._retry_counts = retry_counts_dict
 
     try:
-        asyncio.run(scheduler._run_task(task))
+        asyncio.run(scheduler._run_task(task, claimed=True))
     except Exception as e:
         logger.error(f"Isolated worker process crashed for task {task.get('id')}: {e}")
+        raise
 
 
 class DaemonScheduler:
@@ -44,6 +53,8 @@ class DaemonScheduler:
         self._task = None
         self._manager = None
         self._retry_counts = {}  # 存储任务重试次数: {task_id: current_retry_count}
+        self._leader_lease = None
+        self._leader_recovered = False
 
     def start(self):
         if not self._running:
@@ -66,46 +77,167 @@ class DaemonScheduler:
                 self._task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._task
+            now_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+            for process, task_id in getattr(self, "_child_processes", []):
+                if process.is_alive():
+                    process.terminate()
+                    await asyncio.to_thread(process.join, 5)
+                await asyncio.to_thread(
+                    update_cron_task_run_time,
+                    task_id,
+                    now_str,
+                    now_str,
+                    "active",
+                )
+            self._child_processes = []
             if self._manager:
                 try:
                     self._manager.shutdown()
                 except Exception as e:
                     logger.warning(f"Failed to shutdown multiprocessing Manager: {e}")
+            if self._leader_lease:
+                await self._leader_lease.release()
+                self._leader_lease = None
+            self._leader_recovered = False
             logger.info("Always-on Offline Daemon Scheduler stopped.")
+
+    async def _ensure_leader(self) -> bool:
+        """Elect one scheduler across API replicas."""
+        if self._leader_lease and self._leader_lease.acquired:
+            if await self._leader_lease.renew():
+                return True
+            self._leader_recovered = False
+
+        lease = RedisLease("agenthub:scheduler:leader", settings.scheduler_leader_ttl)
+        if await lease.acquire():
+            self._leader_lease = lease
+            self._leader_recovered = False
+            logger.info("This process acquired the distributed scheduler leader lease.")
+            return True
+
+        from app.core.redis import redis_manager
+
+        if not await redis_manager.check_connection() and settings.debug:
+            # Local development commonly runs one API process without Redis.
+            return True
+        return False
+
+    async def _recover_after_leadership(self, now_str: str) -> None:
+        if self._leader_recovered:
+            return
+        from app.core.crud.cron import recover_running_cron_tasks
+        from app.core.redis import redis_manager
+
+        protected = set()
+        running_tasks = await asyncio.to_thread(get_cron_tasks)
+        if await redis_manager.check_connection():
+            client = redis_manager.get_client()
+            for task in running_tasks:
+                if (
+                    task["status"] == "running"
+                    and await client.exists(self._execution_key(task["id"]))
+                ):
+                    protected.add(task["id"])
+        recovered = await asyncio.to_thread(recover_running_cron_tasks, now_str, protected)
+        if recovered:
+            logger.warning("Recovered %s cron task(s) left by the prior leader.", recovered)
+        self._leader_recovered = True
+
+    @staticmethod
+    def _retry_key(task_id: str) -> str:
+        digest = hashlib.sha256(task_id.encode("utf-8")).hexdigest()
+        return f"agenthub:scheduler:retry:{digest}"
+
+    @staticmethod
+    def _execution_key(task_id: str) -> str:
+        digest = hashlib.sha256(task_id.encode("utf-8")).hexdigest()
+        return f"agenthub:scheduler:execution:{digest}"
+
+    async def _get_retry_count(self, task_id: str) -> int:
+        from app.core.redis import redis_manager
+
+        if await redis_manager.check_connection():
+            try:
+                value = await redis_manager.get_client().get(self._retry_key(task_id))
+                return int(value or 0)
+            except Exception as exc:
+                redis_manager.mark_unavailable(exc, "scheduler retry read")
+        return int(self._retry_counts.get(task_id, 0))
+
+    async def _set_retry_count(self, task_id: str, count: int) -> None:
+        from app.core.redis import redis_manager
+
+        if await redis_manager.check_connection():
+            try:
+                client = redis_manager.get_client()
+                if count > 0:
+                    await client.set(self._retry_key(task_id), count, ex=24 * 60 * 60)
+                else:
+                    await client.delete(self._retry_key(task_id))
+                return
+            except Exception as exc:
+                redis_manager.mark_unavailable(exc, "scheduler retry write")
+        self._retry_counts[task_id] = count
 
     async def _loop(self):
         loop = asyncio.get_running_loop()
         while self._running:
             try:
+                if not await self._ensure_leader():
+                    await asyncio.sleep(5)
+                    continue
                 now_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+                await self._recover_after_leadership(now_str)
                 due_tasks = await loop.run_in_executor(None, get_due_cron_tasks, now_str)
 
                 for task in due_tasks:
-                    # Guard against double firing by setting running status before process spawn
-                    await loop.run_in_executor(None, update_cron_task_status, task["id"], "running")
+                    claimed = await loop.run_in_executor(None, claim_cron_task, task["id"])
+                    if not claimed:
+                        continue
 
                     if self._manager is None:
                         # Fallback: run in-thread when multiprocessing Manager failed
-                        asyncio.create_task(self._run_task(task))
+                        asyncio.create_task(self._run_task(task, claimed=True))
                     else:
                         import multiprocessing
                         p = multiprocessing.Process(
                             target=_run_task_process_entry,
                             args=(task, self._retry_counts)
                         )
-                        p.start()
+                        try:
+                            p.start()
+                        except Exception:
+                            await loop.run_in_executor(
+                                None,
+                                update_cron_task_run_time,
+                                task["id"],
+                                now_str,
+                                now_str,
+                                "active",
+                            )
+                            raise
                         # Track child process for reaping to prevent zombie processes
                         if not hasattr(self, "_child_processes"):
                             self._child_processes = []
-                        self._child_processes.append(p)
+                        self._child_processes.append((p, task["id"]))
 
                 # Reap any finished child processes to prevent zombie accumulation
                 if hasattr(self, '_child_processes'):
                     still_running = []
-                    for p in self._child_processes:
+                    for p, task_id in self._child_processes:
                         p.join(timeout=0)  # Non-blocking check
                         if p.is_alive():
-                            still_running.append(p)
+                            still_running.append((p, task_id))
+                        elif p.exitcode not in {0, None}:
+                            failed_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+                            await loop.run_in_executor(
+                                None,
+                                update_cron_task_run_time,
+                                task_id,
+                                failed_at,
+                                failed_at,
+                                "active",
+                            )
                     self._child_processes = still_running
 
             except Exception as e:
@@ -113,7 +245,7 @@ class DaemonScheduler:
 
             await asyncio.sleep(5)
 
-    async def _run_task(self, task: dict):
+    async def _run_task(self, task: dict, claimed: bool = False):
         task_id = task["id"]
         conversation_id = task["conversation_id"]
         agent_id = task["agent_id"]
@@ -126,22 +258,79 @@ class DaemonScheduler:
         MAX_RETRIES = 3                   # 失败自愈最大重试次数
         BASE_BACKOFF_SECONDS = 15         # 基础指数退避秒数
 
-        await asyncio.to_thread(update_cron_task_status, task_id, "running")
-        logger.info(f"Triggering background autonomous agent {agent_id} for cron job {task_id} (Attempt {self._retry_counts.get(task_id, 0) + 1})...")
+        if not claimed and not await asyncio.to_thread(claim_cron_task, task_id, True):
+            logger.info("Cron task %s is already running; duplicate trigger ignored.", task_id)
+            return
+        execution_lease = RedisLease(self._execution_key(task_id), 180)
+        from app.core.redis import redis_manager
+
+        redis_available = await redis_manager.check_connection()
+        if redis_available and not await execution_lease.acquire():
+            if await redis_manager.check_connection():
+                logger.info("Cron task %s already owns a distributed execution lease.", task_id)
+            else:
+                logger.warning(
+                    "Cron task %s lost Redis after it was claimed; returning it to the queue.",
+                    task_id,
+                )
+                now_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+                await asyncio.to_thread(
+                    update_cron_task_run_time,
+                    task_id,
+                    now_str,
+                    now_str,
+                    "active",
+                )
+            return
+        if not redis_available and not settings.debug:
+            logger.warning(
+                "Cron task %s cannot start without distributed coordination.", task_id
+            )
+            now_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+            await asyncio.to_thread(
+                update_cron_task_run_time,
+                task_id,
+                now_str,
+                now_str,
+                "active",
+            )
+            return
+        retry_count = await self._get_retry_count(task_id)
+        logger.info(f"Triggering background autonomous agent {agent_id} for cron job {task_id} (Attempt {retry_count + 1})...")
 
         execution_success = False
         error_msg = ""
+        llm_context = None
+        quality_context = None
+        tool_context = None
 
         try:
             from app.core.database import get_messages, save_message
+            from app.core.llm_client import llm_client
+            from app.core.quality_gate import quality_gate
+            from app.core.tenancy import conversation_user_id
+            from app.core.tenant_settings import (
+                get_tenant_disabled_tools,
+                get_tenant_llm_client,
+                get_tenant_quality_gate,
+            )
 
             # Lazy import to avoid circular dependency
             from app.services.agent_orchestrator import stream_agent_reply as _stream_agent_reply
             from app.services.agent_registry import agent_registry
+            from app.tools.registry import reset_tool_tenant, set_tool_tenant
 
-            agent = await agent_registry.get_agent(agent_id)
+            user_id = conversation_user_id(conversation_id) or "legacy"
+            tenant_client = await asyncio.to_thread(get_tenant_llm_client, user_id)
+            tenant_gate = await asyncio.to_thread(get_tenant_quality_gate, user_id)
+            await asyncio.to_thread(get_tenant_disabled_tools, user_id)
+            llm_context = llm_client.set_current(tenant_client)
+            quality_context = quality_gate.set_current(tenant_gate)
+            tool_context = set_tool_tenant(user_id)
+
+            agent = await agent_registry.get_agent(agent_id, user_id)
             if not agent:
-                raise ValueError(f"Agent '{agent_id}' is not loaded in current server agents dictionary.")
+                raise ValueError(f"Agent '{agent_id}' is unavailable for tenant '{user_id}'.")
 
             # 【特性：跨运行周期记忆延续】
             # 在执行任务前，查找当前会话最新的历史消息，如果存在上一轮的回复，作为上下文继承喂给 Agent
@@ -200,6 +389,13 @@ class DaemonScheduler:
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error running background cron job {task_id}: {e}")
+        finally:
+            if tool_context is not None:
+                reset_tool_tenant(tool_context)
+            if quality_context is not None:
+                quality_gate.reset_current(quality_context)
+            if llm_context is not None:
+                llm_client.reset_current(llm_context)
 
         # 【特性：自愈型指数退避重试调度机】
         now = datetime.now(UTC)
@@ -207,13 +403,13 @@ class DaemonScheduler:
 
         if execution_success:
             # 执行成功：清除重试计数，进入下一个正常长周期
-            self._retry_counts[task_id] = 0
+            await self._set_retry_count(task_id, 0)
             next_run_str = (now + timedelta(seconds=interval)).strftime("%Y-%m-%d %H:%M:%S")
             await asyncio.to_thread(update_cron_task_run_time, task_id, last_run_str, next_run_str, "active")
         else:
             # 执行失败：递增重试次数
-            current_retry = self._retry_counts.get(task_id, 0) + 1
-            self._retry_counts[task_id] = current_retry
+            current_retry = await self._get_retry_count(task_id) + 1
+            await self._set_retry_count(task_id, current_retry)
 
             from app.core.database import save_message
 
@@ -238,9 +434,10 @@ class DaemonScheduler:
                     streaming=False
                 )
                 await asyncio.to_thread(update_cron_task_run_time, task_id, last_run_str, next_run_str, "active")
+
             else:
                 # 重试次数超限，彻底宣告失败，只能等待下一个大周期的长轮询
-                self._retry_counts[task_id] = 0
+                await self._set_retry_count(task_id, 0)
                 next_run_str = (now + timedelta(seconds=interval)).strftime("%Y-%m-%d %H:%M:%S")
 
                 logger.error(f"Cron task {task_id} failed 3 times. Skipping current cycle.")
@@ -261,6 +458,8 @@ class DaemonScheduler:
                     streaming=False
                 )
                 await asyncio.to_thread(update_cron_task_run_time, task_id, last_run_str, next_run_str, "active")
+
+        await execution_lease.release()
 
 
 daemon_scheduler = DaemonScheduler()

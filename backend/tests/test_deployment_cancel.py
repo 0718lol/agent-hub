@@ -1,11 +1,13 @@
 """Tests for deployment cancellation admission and worker finalization."""
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
 from starlette.requests import Request
 
 from app.main import cancel_deployment
+from app.services.deployment import DeploymentResult
 from app.services.deployment_queue import DeploymentJob, deployment_queue
 from app.workers import deployment_worker
 
@@ -15,7 +17,88 @@ def _request() -> Request:
 
 
 @pytest.mark.asyncio
-async def test_cancel_queued_job_sets_signal_and_releases_lock(monkeypatch):
+async def test_worker_does_not_execute_job_owned_by_another_worker(monkeypatch):
+    job = DeploymentJob(
+        id="a" * 32,
+        conversation_id="tenant__api-client__conv__demo",
+        user_id="api-client",
+        target="web",
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "claim_execution",
+        AsyncMock(return_value=False),
+    )
+    pipeline = AsyncMock()
+    monkeypatch.setattr(deployment_worker, "run_deployment_pipeline", pipeline)
+
+    await deployment_worker.process_job("1-0", job)
+
+    pipeline.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_worker_leaves_message_pending_after_execution_lease_loss(monkeypatch):
+    job = DeploymentJob(
+        id="b" * 32,
+        conversation_id="tenant__api-client__conv__demo",
+        user_id="api-client",
+        target="web",
+        snapshot_id="c" * 40,
+    )
+    lease_checked = asyncio.Event()
+
+    async def lose_lease(_job):
+        lease_checked.set()
+        return False
+
+    async def run_pipeline(*_args, cancelled, **_kwargs):
+        await lease_checked.wait()
+        await cancelled()
+
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "claim_execution",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "heartbeat_execution",
+        lose_lease,
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "release_execution",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "get",
+        AsyncMock(return_value=job),
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "is_cancel_requested",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        deployment_worker.deployment_queue,
+        "update_progress",
+        AsyncMock(return_value=job),
+    )
+    acknowledge = AsyncMock()
+    monkeypatch.setattr(deployment_worker.deployment_queue, "acknowledge", acknowledge)
+    monkeypatch.setattr(deployment_worker, "_broadcast", AsyncMock())
+    monkeypatch.setattr(deployment_worker, "run_deployment_pipeline", run_pipeline)
+
+    await deployment_worker.process_job("2-0", job)
+
+    acknowledge.assert_not_awaited()
+    deployment_worker.deployment_queue.release_execution.assert_awaited_once_with(job)
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_job_keeps_lock_until_worker_finalizes(monkeypatch):
     job = DeploymentJob(
         id="c" * 32,
         conversation_id="tenant__api-client__conv__demo",
@@ -33,7 +116,7 @@ async def test_cancel_queued_job_sets_signal_and_releases_lock(monkeypatch):
 
     assert response == {"status": "cancellation_requested", "job_id": job.id}
     request_cancel.assert_awaited_once_with(job)
-    release_lock.assert_awaited_once_with(job)
+    release_lock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -74,6 +157,10 @@ async def test_worker_finalizes_job_cancelled_while_queued(monkeypatch):
         return target
 
     update_progress.side_effect = persist_progress
+    monkeypatch.setattr(deployment_worker.deployment_queue, "claim_execution", AsyncMock(return_value=True))
+    monkeypatch.setattr(deployment_worker.deployment_queue, "heartbeat_execution", AsyncMock(return_value=True))
+    monkeypatch.setattr(deployment_worker.deployment_queue, "release_execution", AsyncMock())
+    monkeypatch.setattr(deployment_worker.deployment_queue, "get", AsyncMock(return_value=job))
     monkeypatch.setattr(deployment_worker.deployment_queue, "is_cancel_requested", AsyncMock(return_value=True))
     monkeypatch.setattr(deployment_worker.deployment_queue, "update_progress", update_progress)
     monkeypatch.setattr(deployment_worker.deployment_queue, "acknowledge", AsyncMock())
@@ -92,3 +179,35 @@ async def test_worker_finalizes_job_cancelled_while_queued(monkeypatch):
     deployment_worker.deployment_queue.acknowledge.assert_awaited_once_with("1-0")
     deployment_worker.deployment_queue.release_lock.assert_awaited_once_with(job)
     deployment_worker.deployment_queue.clear_cancel.assert_awaited_once_with(job.id)
+
+
+@pytest.mark.asyncio
+async def test_worker_registers_an_expiring_public_artifact_link(monkeypatch):
+    job = DeploymentJob(
+        id="f" * 32,
+        conversation_id="tenant__user-1__conv__demo",
+        user_id="user-1",
+        target="apk",
+    )
+    file_id = f"tenantfile__user-1__build_{'a' * 32}.apk"
+    redis = type("Redis", (), {"set": AsyncMock()})()
+    monkeypatch.setattr(
+        deployment_worker.redis_manager, "get_client", lambda: redis
+    )
+    monkeypatch.setattr(
+        deployment_worker.FileStorageManager, "exists", lambda name: name == file_id
+    )
+
+    url = await deployment_worker._register_artifact(
+        job,
+        DeploymentResult(
+            url=f"/uploads/{file_id}",
+            provider="gradle",
+            target="apk",
+            result_type="download",
+        ),
+    )
+
+    assert url == f"/published-artifacts/{job.id}"
+    redis.set.assert_awaited_once()
+    assert redis.set.await_args.kwargs["ex"] > 0

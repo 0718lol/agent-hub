@@ -39,13 +39,35 @@ except Exception:
     _skill_lib = None
 from app.core.quality_gate import quality_gate
 from app.core.quality_retry import evaluate_and_retry
+from app.core.tenancy import conversation_user_id
 from app.core.websocket import manager
 from app.services.agent_registry import agent_registry
+from app.services.project_templates import initialize_project_template_for_request
+from app.services.project_workspace import (
+    GeneratedProjectFile,
+    materialize_project_files,
+    parse_generated_files,
+)
 
 logger = logging.getLogger("agent_orchestrator")
 
 # Shared state: stop events per conversation
 _stop_events: dict[str, asyncio.Event] = {}
+
+
+async def _bootstrap_project_for_request(conversation_id: str, text: str) -> None:
+    result = await initialize_project_template_for_request(conversation_id, text)
+    if result is None:
+        return
+    await manager.broadcast(conversation_id, {
+        "type": "project_update",
+        "conversation_id": conversation_id,
+        "agent_id": "system_template",
+        "files": result["files"],
+        "deleted": result["deleted"],
+        "snapshot_id": result["snapshot_id"],
+        "project_type": result["manifest"].get("project_type", "unknown"),
+    })
 
 def parse_create_agent_tag(buffer: str) -> tuple[dict | None, str]:
     """Parse a [create_agent:{json}] tag from the buffer.
@@ -113,16 +135,18 @@ def parse_create_agent_tag(buffer: str) -> tuple[dict | None, str]:
     return None, buffer
 
 
-def get_agents() -> dict:
-    """Return the current agent registry dict (direct reference, not a copy)."""
-    return agent_registry._agents
+def get_agents(conversation_id: str | None = None) -> dict:
+    """Return built-in agents plus custom agents owned by this conversation tenant."""
+    user_id = conversation_user_id(conversation_id) if conversation_id else None
+    return agent_registry.get_agent_dict(user_id)
 # ============================================================
 # Custom Agent helpers
 # ============================================================
 
-async def _remove_custom_agent(agent_id: str):
+async def _remove_custom_agent(agent_id: str, conversation_id: str):
     """Delete a custom agent via the concurrency-safe agent registry."""
-    await agent_registry.unregister_custom_agent(agent_id)
+    user_id = conversation_user_id(conversation_id) or "legacy"
+    await agent_registry.unregister_custom_agent(agent_id, user_id)
 
 
 # ============================================================
@@ -144,7 +168,10 @@ QUESTION_PATTERNS = [
 # Expected format rules per agent type
 FORMAT_RULES = {
     "agent_frontend": {
-        "required_any": ["```html", "```jsx", "```vue", "```css", "<!DOCTYPE", "<html"],
+        "required_any": [
+            "```html", "```jsx", "```vue", "```css", "<!DOCTYPE", "<html",
+            "```kotlin", "```xml", "```wxml", "```wxss", "```json",
+        ],
         "min_length": 100,
     },
     "agent_backend": {
@@ -176,20 +203,34 @@ VALID_AGENT_IDS = {
     "agent_devops", "agent_designer", "agent_builder",
 }
 
+FILE_OPERATION_PROTOCOL = """
+【工程文件操作协议】
+普通新增或更新可继续使用带 path= 的 Markdown 代码块。
+需要删除文件或精确执行一组文件变更时，输出：
+<agenthub-files>
+{"files":[{"path":"src/app.js","operation":"write","language":"javascript","content":"完整内容"},{"path":"src/old.js","operation":"delete"}]}
+</agenthub-files>
+使用该协议时，所有本轮文件变更都必须放进同一个 JSON files 数组，路径只能是项目内相对路径。
+"""
+
 # Format instructions for retry prompts
 FORMAT_INSTRUCTIONS = {
     "agent_frontend": (
         "你必须输出完整可运行的代码。根据任务选择合适格式：\n"
-        "- 页面/游戏 → ```html 代码块，以 <!DOCTYPE html> 开头\n"
-        "- React 组件 → ```jsx 代码块\n"
-        "- 样式 → ```css 代码块\n"
+        "- 页面/游戏 → ```html path=index.html 代码块，以 <!DOCTYPE html> 开头\n"
+        "- React 组件 → ```jsx path=src/App.jsx 代码块\n"
+        "- 样式 → ```css path=src/styles.css 代码块\n"
+        "- Android APK → ```kotlin/```xml，保留 Gradle 项目结构\n"
+        "- 微信小程序 → ```wxml/```wxss/```javascript/```json，保留小程序目录结构\n"
+        "每个代码块都必须提供 path=项目内相对路径。\n"
         "不要问用户任何问题，直接实现。"
     ),
     "agent_backend": (
         "你必须输出完整可运行的代码。根据任务选择合适格式：\n"
-        "- API/接口 → ```python 代码块（FastAPI）\n"
-        "- 数据库 → ```sql 代码块\n"
-        "- 配置 → ```yaml 代码块\n"
+        "- API/接口 → ```python path=main.py 代码块（FastAPI）\n"
+        "- 数据库 → ```sql path=schema.sql 代码块\n"
+        "- 配置 → ```yaml path=config.yml 代码块\n"
+        "每个代码块都必须提供 path=项目内相对路径。\n"
         "不要问用户任何问题，直接实现。"
     ),
     "agent_pm": (
@@ -199,11 +240,12 @@ FORMAT_INSTRUCTIONS = {
     ),
     "agent_tester": (
         "你必须输出测试代码。\n"
-        "用 ```python 代码块包裹，包含 def test_ 开头的测试函数。"
+        "用 ```python path=tests/test_generated.py 代码块包裹，包含 def test_ 开头的测试函数。"
     ),
     "agent_devops": (
         "你必须输出部署配置。\n"
-        "用 ```bash 或 ```yaml 或 ```dockerfile 代码块包裹。"
+        "用 ```bash path=scripts/setup.sh、```yaml path=docker-compose.yml 或 "
+        "```dockerfile path=Dockerfile 代码块包裹。"
     ),
 }
 
@@ -266,6 +308,14 @@ def validate_agent_output(text: str, agent_id: str) -> tuple[bool, str]:
     if not ok:
         return False, f"tag: {reason}"
     return True, "passed"
+
+
+def is_llm_error_response(text: str) -> bool:
+    """Return whether an LLM stream is explicitly unusable."""
+    return any(
+        marker in (text or "")
+        for marker in ("[LLM Error", "[LLM 调用出错", "[Agent 回复出错")
+    )
 
 
 # ============================================================
@@ -381,6 +431,23 @@ async def stream_agent_reply(
     if context:
         effective_text = f"PM 的任务拆解：\n{context}\n\n用户原始需求：{user_text}"
 
+    user_id = conversation_user_id(conversation_id)
+    if user_id:
+        try:
+            from app.core.rag_engine import rag_engine
+            knowledge_context = await asyncio.to_thread(
+                rag_engine.build_tenant_context_prompt, user_id, user_text
+            )
+            if knowledge_context:
+                effective_text = f"{effective_text}\n\n{knowledge_context}"
+        except Exception as exc:
+            logger.debug("Tenant knowledge injection skipped: %s", exc)
+
+    if agent.agent_id in {
+        "agent_frontend", "agent_backend", "agent_tester", "agent_devops",
+    }:
+        effective_text = f"{effective_text}\n\n{FILE_OPERATION_PROTOCOL}"
+
     history = await async_get_messages_cached(conversation_id, limit=20)
 
     await manager.broadcast(conversation_id, {
@@ -480,7 +547,9 @@ async def stream_agent_reply(
                     if ca_match:
                         try:
                             agent_config = json.loads(ca_match.group(1))
-                            await agent_registry.register_custom_agent(agent_config)
+                            await agent_registry.register_custom_agent(
+                                agent_config, conversation_user_id(conversation_id) or "legacy"
+                            )
                             await manager.broadcast(conversation_id, {
                                 "type": "agent_created",
                                 "conversation_id": conversation_id,
@@ -525,7 +594,9 @@ async def stream_agent_reply(
                         if json_end != -1 and json_end < len(buffer) and buffer[json_end] == ']':
                             try:
                                 agent_config = json.loads(buffer[json_start:json_end])
-                                await agent_registry.register_custom_agent(agent_config)
+                                await agent_registry.register_custom_agent(
+                                    agent_config, conversation_user_id(conversation_id) or "legacy"
+                                )
                                 await manager.broadcast(conversation_id, {
                                     "type": "agent_created",
                                     "conversation_id": conversation_id,
@@ -543,7 +614,7 @@ async def stream_agent_reply(
                     if not da_match:
                         break
                     del_id = da_match.group(1)
-                    await _remove_custom_agent(del_id)
+                    await _remove_custom_agent(del_id, conversation_id)
                     await manager.broadcast(conversation_id, {
                         "type": "agent_deleted",
                         "conversation_id": conversation_id,
@@ -551,25 +622,22 @@ async def stream_agent_reply(
                     })
                     buffer = buffer[:da_match.start()] + buffer[da_match.end():]
 
-                # Extract and broadcast code blocks
+                # Extract and broadcast code blocks while streaming. Persistence
+                # happens after validation and self-reflection select the final output.
                 while True:
-                    code_match = re.search(r'```(\w*)\s*\n?(.*?)```', buffer, re.DOTALL)
+                    code_match = re.search(r'```([^\r\n`]*)\r?\n(.*?)```', buffer, re.DOTALL)
                     if not code_match:
                         break
-                    lang = code_match.group(1) or "html"
-                    code = code_match.group(2).strip()
-
-                    await asyncio.to_thread(save_artifact, conversation_id, agent.agent_id, lang, code)
-
-                    # Auto-debug: run Python code in sandbox, fix errors automatically
-                    if lang == "python" and agent.agent_id in ("agent_frontend", "agent_backend", "agent_tester"):
-                        try:
-                            _debug = await _auto_debug_code(code, effective_text, llm_client, max_retries=2)
-                            if _debug.get("fixed"):
-                                code = _debug["code"]
-                                logger.info(f"Auto-debug fixed code for {agent.agent_id}")
-                        except Exception as _de:
-                            logger.debug(f"Auto-debug skipped: {_de}")
+                    parsed_preview = parse_generated_files(code_match.group(0), agent.agent_id)
+                    if parsed_preview:
+                        preview_file = parsed_preview[0]
+                        lang = preview_file.language
+                        code = preview_file.code
+                        path = preview_file.path
+                    else:
+                        lang = "text"
+                        code = code_match.group(2).strip()
+                        path = ""
 
                     await manager.broadcast(conversation_id, {
                         "type": "code",
@@ -577,6 +645,7 @@ async def stream_agent_reply(
                         "agent_id": agent.agent_id,
                         "language": lang,
                         "code": code,
+                        "path": path,
                     })
                     if lang.lower() in ("html", "htm", ""):
                         await manager.broadcast(conversation_id, {
@@ -602,9 +671,10 @@ async def stream_agent_reply(
 
         # Final text
         full_text = buffer.strip()
+        stream_failed = is_llm_error_response(raw_text)
 
         # Bare HTML fallback
-        if full_text and "```" not in raw_text and re.search(
+        if not stream_failed and full_text and "```" not in raw_text and re.search(
             r'<!DOCTYPE\s+html|<html[\s>]|<body[\s>]', full_text, re.IGNORECASE
         ):
             html_match = re.search(
@@ -645,10 +715,19 @@ async def stream_agent_reply(
 
     if not raw_text:
         raw_text = full_text
+    stream_failed = is_llm_error_response(raw_text)
 
     # ---- Format validation layer (skip for external agents) ----
-    if not stopped and not _is_external and full_text and full_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）"):
-        is_valid, reason = validate_agent_output(full_text, agent.agent_id)
+    validation_text = raw_text.strip() or full_text
+    if (
+        not stopped
+        and not stream_failed
+        and not _is_external
+        and llm_client.is_configured()
+        and validation_text
+        and validation_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）")
+    ):
+        is_valid, reason = validate_agent_output(validation_text, agent.agent_id)
         if not is_valid:
             logger.warning(f"Agent {agent.agent_id} format check failed: {reason}")
             await manager.broadcast(conversation_id, {
@@ -685,7 +764,13 @@ async def stream_agent_reply(
                     })
 
     # ---- Browser auto-routing: if Agent output has fixable errors, use BrowserAgent ----
-    if not stopped and not _is_external and full_text and agent.agent_id != 'agent_browser':
+    if (
+        not stopped
+        and not stream_failed
+        and not _is_external
+        and full_text
+        and agent.agent_id != 'agent_browser'
+    ):
         should_browser, browser_reason = should_use_browser(full_text, agent.agent_id)
         if should_browser:
             logger.info(f'Agent {agent.agent_id} output has fixable error: {browser_reason}')
@@ -697,7 +782,7 @@ async def stream_agent_reply(
                 'stream': True,
             })
             # Get BrowserAgent
-            browser_agent = get_agents().get('agent_browser')
+            browser_agent = get_agents(conversation_id).get('agent_browser')
             if browser_agent:
                 # BrowserAgent looks up documentation
                 doc_task = '查阅文档解决以下错误: ' + browser_reason + '. 用户需求: ' + effective_text
@@ -724,8 +809,17 @@ async def stream_agent_reply(
                         full_text = retry_text.strip()
                         raw_text = retry_text
 
+    artifact_score = None
+    artifact_sandbox_status = "skipped"
+    artifact_sandbox_output = None
+
     # ---- Auto self-reflection & retry (skip for external agents) ----
-    if not stopped and agent.agent_id not in ("agent_builder", "agent_pm") and not _is_external:
+    if (
+        not stopped
+        and not stream_failed
+        and agent.agent_id not in ("agent_builder", "agent_pm")
+        and not _is_external
+    ):
         eval_result = await evaluate_and_retry(
             conversation_id=conversation_id,
             agent=agent,
@@ -740,28 +834,126 @@ async def stream_agent_reply(
             raw_text = eval_result["final_output"]
             full_text = eval_result["final_output"].strip()
 
-        try:
-            report_data = eval_result.get("report") or {}
-            sandbox_data = report_data.get("sandbox_run") or {}
-            sandbox_status = "skipped"
-            sandbox_output = None
-            if sandbox_data:
-                sandbox_status = "success" if sandbox_data.get("status") == "success" else "failed"
-                sandbox_output = sandbox_data.get("stderr") or sandbox_data.get("stdout")
+        report_data = eval_result.get("report") or {}
+        sandbox_data = report_data.get("sandbox_run") or {}
+        artifact_score = eval_result.get("total_score", 100)
+        if sandbox_data:
+            artifact_sandbox_status = "success" if sandbox_data.get("status") == "success" else "failed"
+            artifact_sandbox_output = sandbox_data.get("stderr") or sandbox_data.get("stdout")
 
+    # Don't persist LLM error responses
+    is_llm_error = is_llm_error_response(raw_text)
+
+    # Materialize only the final, validated output into the deployable project.
+    materialized_files = []
+    if not stopped and not is_llm_error and raw_text:
+        try:
+            generated_files = parse_generated_files(raw_text, agent.agent_id)
+            prepared_files = []
+            for generated_file in generated_files:
+                code = generated_file.code
+                if (
+                    generated_file.operation == "write"
+                    and generated_file.language == "python"
+                    and agent.agent_id in (
+                        "agent_frontend", "agent_backend", "agent_tester",
+                    )
+                ):
+                    try:
+                        debug_result = await _auto_debug_code(
+                            code, effective_text, llm_client, max_retries=2,
+                        )
+                        if debug_result.get("fixed"):
+                            code = debug_result["code"]
+                            logger.info("Auto-debug fixed %s for %s", generated_file.path, agent.agent_id)
+                    except Exception as debug_error:
+                        logger.debug("Auto-debug skipped: %s", debug_error)
+                prepared_files.append(GeneratedProjectFile(
+                    path=generated_file.path,
+                    language=generated_file.language,
+                    code=code,
+                    operation=generated_file.operation,
+                ))
+
+            if prepared_files:
+                project_result = await materialize_project_files(
+                    conversation_id, agent.agent_id, prepared_files,
+                )
+                materialized_files = project_result["files"]
+                for generated_file in prepared_files:
+                    if generated_file.operation == "delete":
+                        await manager.broadcast(conversation_id, {
+                            "type": "project_file_deleted",
+                            "conversation_id": conversation_id,
+                            "agent_id": agent.agent_id,
+                            "path": generated_file.path,
+                        })
+                        continue
+                    await asyncio.to_thread(
+                        save_artifact,
+                        conversation_id,
+                        agent.agent_id,
+                        generated_file.language,
+                        generated_file.code,
+                        generated_file.path,
+                    )
+                    await manager.broadcast(conversation_id, {
+                        "type": "code",
+                        "conversation_id": conversation_id,
+                        "agent_id": agent.agent_id,
+                        "language": generated_file.language,
+                        "code": generated_file.code,
+                        "path": generated_file.path,
+                        "final": True,
+                    })
+
+                html_file = next(
+                    (
+                        item
+                        for item in prepared_files
+                        if item.operation == "write" and item.language == "html"
+                    ),
+                    None,
+                )
+                if html_file:
+                    await manager.broadcast(conversation_id, {
+                        "type": "preview",
+                        "conversation_id": conversation_id,
+                        "agent_id": agent.agent_id,
+                        "html": html_file.code,
+                        "path": html_file.path,
+                    })
+                await manager.broadcast(conversation_id, {
+                    "type": "project_update",
+                    "conversation_id": conversation_id,
+                    "agent_id": agent.agent_id,
+                    "files": materialized_files,
+                    "deleted": project_result["deleted"],
+                    "snapshot_id": project_result["snapshot_id"],
+                    "project_type": project_result["manifest"].get("project_type", "unknown"),
+                })
+        except Exception as project_error:
+            logger.exception("Failed to materialize generated project")
+            await manager.broadcast(conversation_id, {
+                "type": "project_error",
+                "conversation_id": conversation_id,
+                "agent_id": agent.agent_id,
+                "error": str(project_error)[:300],
+            })
+
+    if materialized_files and artifact_score is not None:
+        try:
             await asyncio.to_thread(
                 update_latest_artifact_quality,
                 conversation_id,
                 agent.agent_id,
-                eval_result.get("total_score", 100),
-                sandbox_status,
-                sandbox_output,
+                artifact_score,
+                artifact_sandbox_status,
+                artifact_sandbox_output,
             )
-        except Exception as e_art:
-            logger.error(f"Error updating artifact quality metrics: {e_art}")
+        except Exception as artifact_error:
+            logger.error("Error updating artifact quality metrics: %s", artifact_error)
 
-    # Don't persist LLM error responses
-    is_llm_error = ("[LLM Error" in raw_text) or ("[LLM 调用出错" in raw_text) or ("[Agent 回复出错" in raw_text)
     # Extract and store successful code as reusable skill
     if _skill_lib and not is_llm_error and raw_text:
         try:
@@ -817,10 +1009,11 @@ async def stream_agent_reply(
 async def run_target_agent_flow(conversation_id: str, agent, text: str):
     """Background generation flow when user targets a specific agent."""
     logger.info(f"run_target_agent_flow: conv={conversation_id}, agent={agent.agent_id}")
-    AGENTS = get_agents()
+    AGENTS = get_agents(conversation_id)
     stop_event = asyncio.Event()
     _stop_events[conversation_id] = stop_event
     try:
+        await _bootstrap_project_for_request(conversation_id, text)
         await manager.broadcast(conversation_id, {
             "type": "generating",
             "conversation_id": conversation_id,
@@ -856,7 +1049,7 @@ async def run_target_agent_flow(conversation_id: str, agent, text: str):
 def build_group_chat_graph(conversation_id: str, text: str, trace: Any, stop_event: asyncio.Event) -> Any:
     """Build a StateGraph for multi-agent group chat orchestration."""
     from app.core.state_graph import StateGraph
-    AGENTS = get_agents()
+    AGENTS = get_agents(conversation_id)
 
     graph = StateGraph()
 
@@ -875,7 +1068,8 @@ def build_group_chat_graph(conversation_id: str, text: str, trace: Any, stop_eve
                 conversation_id, agent, effective_prompt, stop_event,
                 context=state.get("pm_response", ""),
             )
-            step.finish(status="success", tokens=len(res) // 3)
+            usage = llm_client.current_client().get_last_usage()
+            step.finish(status="success", tokens=int(usage.get("total_tokens", 0)))
             metrics.record_agent_result(agent.agent_id, 75, step.duration_ms, step.tokens_used)
             return {response_key: res, feedback_key: ""}
         return run_node
@@ -893,7 +1087,8 @@ def build_group_chat_graph(conversation_id: str, text: str, trace: Any, stop_eve
         assigned, pm_res = await stream_agent_reply(
             conversation_id, pm, effective_prompt, stop_event
         )
-        step.finish(status="success", tokens=len(pm_res) // 3)
+        usage = llm_client.current_client().get_last_usage()
+        step.finish(status="success", tokens=int(usage.get("total_tokens", 0)))
         metrics.record_agent_result(pm.agent_id, 80, step.duration_ms, step.tokens_used)
         return {
             "pm_response": pm_res,
@@ -1129,6 +1324,7 @@ async def resume_graph_from_checkpoint(conversation_id: str, action: str):
     )
 
     try:
+        await _bootstrap_project_for_request(conversation_id, original_prompt)
         await manager.broadcast(conversation_id, {
             "type": "generating",
             "conversation_id": conversation_id,
@@ -1165,6 +1361,7 @@ async def run_user_message_flow(conversation_id: str, text: str, target_agent: s
     )
 
     try:
+        await _bootstrap_project_for_request(conversation_id, text)
         await manager.broadcast(conversation_id, {
             "type": "generating",
             "conversation_id": conversation_id,
@@ -1193,4 +1390,3 @@ async def run_user_message_flow(conversation_id: str, text: str, target_agent: s
             "conversation_id": conversation_id,
             "is_generating": False,
         })
-

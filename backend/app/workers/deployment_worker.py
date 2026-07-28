@@ -1,6 +1,7 @@
 """Persistent deployment worker. Run with: python -m app.workers.deployment_worker"""
 
 import asyncio
+import contextlib
 import json
 import logging
 import signal
@@ -18,10 +19,18 @@ from app.services.deployment import (
     DeploymentResult,
     run_deployment_pipeline,
 )
-from app.services.deployment_queue import DeploymentJob, DeploymentQueueUnavailable, deployment_queue
+from app.services.deployment_queue import (
+    DeploymentJob,
+    DeploymentQueueUnavailable,
+    deployment_queue,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("deployment_worker")
+
+
+class DeploymentExecutionLeaseLost(DeploymentCancelled):
+    """The worker no longer owns this deployment's external side effects."""
 
 
 async def _broadcast(job: DeploymentJob, status: str, log: str, **extra) -> None:
@@ -58,6 +67,28 @@ async def _register_runtime(job: DeploymentJob, result: DeploymentResult) -> Non
         previous = await deployment_queue.get(previous_job_id)
         if previous:
             await deployment_queue.update(previous, lifecycle="superseded")
+
+
+async def _register_artifact(job: DeploymentJob, result: DeploymentResult) -> str:
+    """Return a capability URL for a tenant-owned build artifact."""
+    if not result.url.startswith("/uploads/"):
+        return result.url
+    file_id = Path(result.url).name
+    if not file_id.startswith(f"tenantfile__{job.user_id}__"):
+        raise DeploymentError("构建产物不属于当前用户，已拒绝发布")
+    if not FileStorageManager.exists(file_id):
+        raise DeploymentError("构建产物不存在，无法创建分享链接")
+    mapping = json.dumps({
+        "file_id": file_id,
+        "conversation_id": job.conversation_id,
+        "user_id": job.user_id,
+    })
+    await redis_manager.get_client().set(
+        f"agenthub:published-artifact:{job.id}",
+        mapping,
+        ex=settings.deployment_status_ttl,
+    )
+    return f"/published-artifacts/{job.id}"
 
 
 async def _run_lifecycle_action(job: DeploymentJob) -> DeploymentResult:
@@ -123,10 +154,16 @@ async def _remove_deployment(job: DeploymentJob) -> None:
             )
         except DeploymentError:
             pass
-    if job.url.startswith("/uploads/"):
+    artifact_key = f"agenthub:published-artifact:{job.id}"
+    artifact_raw = await client.get(artifact_key)
+    file_id = ""
+    if artifact_raw:
+        file_id = json.loads(artifact_raw).get("file_id", "")
+        await client.delete(artifact_key)
+    elif job.url.startswith("/uploads/"):
         file_id = Path(job.url).name
-        if file_id.startswith(f"tenantfile__{job.user_id}__"):
-            FileStorageManager.delete(file_id)
+    if file_id.startswith(f"tenantfile__{job.user_id}__"):
+        FileStorageManager.delete(file_id)
     await deployment_queue.remove_history(job)
 
 
@@ -166,8 +203,44 @@ async def _cleanup_cancelled_result(job: DeploymentJob, result: DeploymentResult
             FileStorageManager.delete(file_id)
 
 
+async def _execution_heartbeat(
+    job: DeploymentJob,
+    stop_event: asyncio.Event,
+    lease_lost: asyncio.Event,
+) -> None:
+    while not stop_event.is_set():
+        try:
+            renewed = await deployment_queue.heartbeat_execution(job)
+        except DeploymentQueueUnavailable:
+            renewed = False
+        if not renewed:
+            logger.error("Deployment execution lease was lost: %s", job.id)
+            lease_lost.set()
+            return
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(),
+                timeout=max(5, settings.deployment_lease_ttl // 3),
+            )
+        except asyncio.TimeoutError:
+            pass
+
+
 async def process_job(message_id: str, job: DeploymentJob) -> None:
+    if not await deployment_queue.claim_execution(job):
+        return
+    heartbeat_stop = asyncio.Event()
+    lease_lost = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        _execution_heartbeat(job, heartbeat_stop, lease_lost),
+        name=f"deployment_job_heartbeat_{job.id}",
+    )
+
     async def cancelled() -> bool:
+        if lease_lost.is_set():
+            raise DeploymentExecutionLeaseLost(
+                "发布任务执行租约已失效，当前 Worker 已停止构建"
+            )
         try:
             return await deployment_queue.is_cancel_requested(job.id)
         except DeploymentQueueUnavailable:
@@ -184,6 +257,12 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
 
     terminal = False
     try:
+        saved_job = await deployment_queue.get(job.id)
+        if saved_job is not None:
+            job = saved_job
+        if job.status in {"success", "failed", "cancelled"}:
+            terminal = True
+            return
         if await cancelled():
             raise DeploymentCancelled("任务在排队期间被用户取消")
         await deployment_queue.update_progress(
@@ -211,13 +290,24 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
                 site_id=settings.netlify_site_id,
                 progress=progress,
                 deployment_id=job.id,
+                snapshot_id=job.snapshot_id,
                 options=job.options,
                 cancelled=cancelled,
             )
-        if await cancelled():
-            await _cleanup_cancelled_result(job, result)
-            raise DeploymentCancelled("构建已被用户取消")
+        async def ensure_result_is_owned() -> None:
+            try:
+                was_cancelled = await cancelled()
+            except DeploymentExecutionLeaseLost:
+                await _cleanup_cancelled_result(job, result)
+                raise
+            if was_cancelled:
+                await _cleanup_cancelled_result(job, result)
+                raise DeploymentCancelled("构建已被用户取消")
+
+        await ensure_result_is_owned()
         await _register_runtime(job, result)
+        public_url = await _register_artifact(job, result)
+        await ensure_result_is_owned()
         if job.action == "cleanup":
             log = "过期资源清理完成"
         elif job.action == "offline":
@@ -226,31 +316,30 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
             log = "历史版本已恢复"
         else:
             log = "发布成功" if result.result_type in {"site", "miniprogram"} else "构建产物已就绪"
-        await deployment_queue.update_progress(
+        await deployment_queue.complete(
             job,
-            stage="complete",
-            progress=100,
             message=log,
-            status="success",
-        )
-        await deployment_queue.update(
-            job,
-            url=result.url,
+            url=public_url,
             result_type=result.result_type,
             provider=result.provider,
-            published=result.published,
-        )
-        await _broadcast(
-            job,
-            "success",
-            f"{log}：{result.url}",
-            url=result.url,
-            target=result.target,
-            provider=result.provider,
-            result_type=result.result_type,
             published=result.published,
         )
         terminal = True
+        try:
+            await _broadcast(
+                job,
+                "success",
+                f"{log}：{public_url}",
+                url=public_url,
+                target=result.target,
+                provider=result.provider,
+                result_type=result.result_type,
+                published=result.published,
+            )
+        except Exception:
+            logger.exception("Failed to broadcast completed deployment %s", job.id)
+    except DeploymentExecutionLeaseLost as exc:
+        logger.warning("%s: %s", exc, job.id)
     except DeploymentCancelled as exc:
         await deployment_queue.update_progress(
             job,
@@ -290,6 +379,12 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
             await _broadcast(job, "failed", "Worker 连续失败，已停止重试")
             terminal = True
     finally:
+        heartbeat_stop.set()
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
+        with contextlib.suppress(DeploymentQueueUnavailable):
+            await deployment_queue.release_execution(job)
         if terminal:
             try:
                 await deployment_queue.acknowledge(message_id)

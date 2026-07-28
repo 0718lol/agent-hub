@@ -21,8 +21,8 @@ RUN mkdir -p ${ANDROID_HOME}/cmdline-tools /tmp/android-tools \
     && rm -rf /tmp/android-tools
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock .
+RUN pip install --no-cache-dir -r requirements.lock
 RUN npm install -g miniprogram-ci@2.1.31 && npm cache clean --force
 ENV NODE_PATH=/usr/local/lib/node_modules
 COPY . .

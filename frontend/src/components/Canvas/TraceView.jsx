@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { AlertCircle, RefreshCw } from 'lucide-react'
 
 /**
  * TraceView — Agent execution trace visualization (Gantt-chart style).
@@ -7,16 +8,24 @@ import React, { useState, useEffect } from 'react'
 export default function TraceView() {
   const [traces, setTraces] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [reloadToken, setReloadToken] = useState(0)
 
   useEffect(() => {
     // Initial fetch for existing traces
     const fetchTraces = async () => {
       try {
         const resp = await fetch('/api/metrics/traces?limit=10')
+        if (!resp.ok) throw new Error(`Trace 请求失败 (${resp.status})`)
         const data = await resp.json()
+        if (!Array.isArray(data)) throw new Error('Trace 数据格式无效')
         setTraces(data)
-      } catch {}
-      setLoading(false)
+        setLoadError('')
+      } catch (error) {
+        setLoadError(error.message || 'Trace 加载失败')
+      } finally {
+        setLoading(false)
+      }
     }
     fetchTraces()
 
@@ -32,6 +41,7 @@ export default function TraceView() {
             const next = [...prev, trace]
             return next.length > 50 ? next.slice(-50) : next
           })
+          setLoadError('')
         } catch {}
       }
       es.onerror = () => {
@@ -42,16 +52,40 @@ export default function TraceView() {
     return () => {
       if (es) es.close()
     }
-  }, [])
+  }, [reloadToken])
 
   if (loading) return <div style={{ padding: 24, color: 'var(--text-muted)' }}>加载 Trace...</div>
 
   if (!traces.length) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>🔍</div>
-        <div>还没有执行记录</div>
-        <div style={{ marginTop: 8, fontSize: 12 }}>与 Agent 对话后，执行链路将自动展示</div>
+        {loadError ? (
+          <>
+            <AlertCircle size={32} style={{ marginBottom: 12, color: '#f87171' }} />
+            <div style={{ color: '#fca5a5' }}>{loadError}</div>
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true)
+                setReloadToken(token => token + 1)
+              }}
+              style={{
+                marginTop: 12, height: 30, padding: '0 10px', borderRadius: 4,
+                border: '1px solid var(--border)', background: 'var(--bg-secondary)',
+                color: 'var(--text-primary)', cursor: 'pointer', display: 'inline-flex',
+                alignItems: 'center', gap: 6,
+              }}
+            >
+              <RefreshCw size={13} />
+              重新加载
+            </button>
+          </>
+        ) : (
+          <>
+            <div>还没有执行记录</div>
+            <div style={{ marginTop: 8, fontSize: 12 }}>与 Agent 对话后，执行链路将自动展示</div>
+          </>
+        )}
       </div>
     )
   }
@@ -59,6 +93,16 @@ export default function TraceView() {
   return (
     <div style={{ padding: 16, overflow: 'auto', height: '100%' }}>
       <h3 style={{ margin: '0 0 16px', fontSize: 15, color: 'var(--text-primary)' }}>🔍 执行 Trace</h3>
+      {loadError && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 7, marginBottom: 12, padding: '8px 10px',
+          borderRadius: 6, border: '1px solid rgba(239,68,68,0.28)',
+          background: 'rgba(239,68,68,0.08)', color: '#fca5a5', fontSize: 12,
+        }}>
+          <AlertCircle size={14} />
+          <span>{loadError}，当前展示最近一次成功加载的数据。</span>
+        </div>
+      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {traces.slice().reverse().map((trace) => (
           <TraceCard key={trace.task_id} trace={trace} />

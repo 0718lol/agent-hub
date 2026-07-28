@@ -33,6 +33,7 @@ class Message(SQLModel, table=True):
 class CustomAgent(SQLModel, table=True):
     __tablename__ = "custom_agents"
     id: str = Field(primary_key=True)
+    user_id: str = Field(default="legacy", index=True)
     name: str
     avatar: str = Field(default=chr(129302))
     role: str = Field(default="")
@@ -65,6 +66,16 @@ class UploadedFile(SQLModel, table=True):
     uploaded_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
+class TenantConfig(SQLModel, table=True):
+    __tablename__ = "tenant_configs"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="idx_tenant_config_key"),)
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    key: str
+    value: str
+    updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
 class CronTask(SQLModel, table=True):
     __tablename__ = "cron_tasks"
     id: str = Field(primary_key=True)
@@ -78,15 +89,26 @@ class CronTask(SQLModel, table=True):
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
+class KnowledgeBase(SQLModel, table=True):
+    __tablename__ = "knowledge_bases"
+    id: str = Field(primary_key=True)
+    user_id: str = Field(index=True)
+    name: str
+    description: str = Field(default="")
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
 class KnowledgeDoc(SQLModel, table=True):
     __tablename__ = "knowledge_docs"
     id: str = Field(primary_key=True)
+    user_id: str = Field(default="legacy", index=True)
     filename: str
     file_path: str = Field(default="")
     content_type: str = Field(default="")
     chunk_count: int = Field(default=0)
     char_count: int = Field(default=0)
     status: str = Field(default="ready")
+    knowledge_base_id: str | None = Field(default=None, index=True)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 

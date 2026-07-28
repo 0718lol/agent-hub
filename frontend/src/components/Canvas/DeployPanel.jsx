@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
-import { Boxes, Check, Download, ExternalLink, FileDown, Globe2, History, KeyRound, Power, Rocket, RotateCcw, RotateCw, Server, Smartphone, Square, Trash2, Upload } from 'lucide-react'
+import { Boxes, Check, Download, ExternalLink, FileDown, Globe2, History, KeyRound, Power, Rocket, RotateCcw, RotateCw, Server, Smartphone, Square, Trash2, Upload, X } from 'lucide-react'
 import { useCanvasStore } from '../../stores/canvasStore'
 import { useChatStore } from '../../stores/chatStore'
 
@@ -21,6 +21,7 @@ export default function DeployPanel() {
   const deployedTarget = useCanvasStore((s) => s.deployTarget)
   const deployJobId = useCanvasStore((s) => s.deployJobId)
   const deployStatus = useCanvasStore((s) => s.deployStatus)
+  const deployResultVisible = useCanvasStore((s) => s.deployResultVisible)
   const startDeploy = useCanvasStore((s) => s.startDeploy)
   const failDeploy = useCanvasStore((s) => s.failDeploy)
   const cancelDeploy = useCanvasStore((s) => s.cancelDeploy)
@@ -28,6 +29,7 @@ export default function DeployPanel() {
   const finishDeploy = useCanvasStore((s) => s.finishDeploy)
   const markDeployRunning = useCanvasStore((s) => s.markDeployRunning)
   const setDeployJobId = useCanvasStore((s) => s.setDeployJobId)
+  const dismissDeployResult = useCanvasStore((s) => s.dismissDeployResult)
 
   const activeId = useChatStore((s) => s.activeConversationId)
   const terminalEndRef = useRef(null)
@@ -39,6 +41,7 @@ export default function DeployPanel() {
   const [keyPassword, setKeyPassword] = useState('')
   const [miniAppid, setMiniAppid] = useState('')
   const [miniKey, setMiniKey] = useState({ id: '', name: '' })
+  const [miniAction, setMiniAction] = useState('preview')
   const [version, setVersion] = useState('1.0.0')
   const [history, setHistory] = useState([])
   const [historyMessage, setHistoryMessage] = useState('')
@@ -124,6 +127,7 @@ export default function DeployPanel() {
           key_password: keyPassword,
           mini_appid: miniAppid,
           mini_private_key_file_id: miniKey.id,
+          mini_action: miniAction,
           version,
           description: 'AgentHub 演示发布',
         }),
@@ -232,6 +236,7 @@ export default function DeployPanel() {
 
   const isDownload = deployResultType !== 'site'
   const isMiniUploaded = deployResultType === 'miniprogram'
+  const isMiniPreview = deployResultType === 'miniprogram-preview'
   const targetName = targets.find((item) => item.value === deployedTarget)?.label || deployedTarget
   const currentStage = activeJob?.stage || (deployStatus === 'success' ? 'complete' : isDeploying ? 'queued' : '')
   const currentStepIndex = PIPELINE_STEPS.findIndex((step) => step.key === currentStage)
@@ -315,6 +320,11 @@ export default function DeployPanel() {
 
       {target === 'miniprogram' && (
         <div style={{ padding: 12, borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div role="group" aria-label="小程序流水线模式" style={{ display: 'flex', gap: 4 }}>
+            {[['preview', '体验二维码'], ['upload', '上传版本']].map(([value, label]) => (
+              <button key={value} type="button" aria-pressed={miniAction === value} onClick={() => setMiniAction(value)} style={{ padding: '7px 10px', borderRadius: 6, border: miniAction === value ? '1px solid var(--accent)' : '1px solid var(--border)', background: miniAction === value ? 'var(--accent-bg)' : 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 12 }}>{label}</button>
+            ))}
+          </div>
           <input value={miniAppid} onChange={(e) => setMiniAppid(e.target.value)} placeholder="微信 AppID（可暂不填）" style={inputStyle} />
           <label style={{ padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}><Upload size={14} style={{ verticalAlign: 'middle', marginRight: 5 }} />{miniKey.name || '上传代码上传私钥'}<input type="file" accept=".key,.pem" hidden onChange={(e) => uploadCredential(e.target.files?.[0], setMiniKey)} /></label>
           <input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="版本号" style={{ ...inputStyle, width: 110 }} />
@@ -404,7 +414,7 @@ export default function DeployPanel() {
             CLOUD_TERMINAL@AGENTS_SERVER
           </span>
           {['failed', 'cancelled'].includes(deployStatus) && deployJobId && (
-            <a href={`/api/deployments/${deployJobId}/logs`} download title="下载任务日志" style={{ marginLeft: 'auto', color: deployStatus === 'failed' ? 'var(--red)' : 'var(--orange)', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, textDecoration: 'none' }}>
+            <a href={`/api/deployments/${deployJobId}/logs`} download aria-label="下载任务日志" title="下载任务日志" style={{ marginLeft: 'auto', color: deployStatus === 'failed' ? 'var(--red)' : 'var(--orange)', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, textDecoration: 'none' }}>
               <FileDown size={14} />任务日志
             </a>
           )}
@@ -459,8 +469,8 @@ export default function DeployPanel() {
         </div>
 
         {/* Success Modal / Card Overlay */}
-        {deployStatus === 'success' && deployedUrl && (
-          <div style={{
+        {deployStatus === 'success' && deployedUrl && deployResultVisible && (
+          <div role="dialog" aria-label="发布结果" style={{
             position: 'absolute',
             top: 0, left: 0, right: 0, bottom: 0,
             background: 'var(--bg-primary)',
@@ -472,6 +482,15 @@ export default function DeployPanel() {
             padding: 24,
             animation: 'fadeIn 0.4s ease-out'
           }}>
+            <button
+              type="button"
+              aria-label="关闭发布结果"
+              title="关闭发布结果"
+              onClick={dismissDeployResult}
+              style={{ position: 'absolute', top: 12, right: 12, width: 32, height: 32, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+            >
+              <X size={16} />
+            </button>
             <div style={{
               width: '100%',
               maxWidth: 420,
@@ -496,12 +515,14 @@ export default function DeployPanel() {
               </div>
               <div>
                 <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
-                  {isMiniUploaded ? '小程序代码上传成功' : isDownload ? `${targetName} 构建完成` : `${targetName} 发布成功`}
+                  {isMiniPreview ? '小程序体验二维码已生成' : isMiniUploaded ? '小程序代码上传成功' : isDownload ? `${targetName} 构建完成` : `${targetName} 发布成功`}
                 </h3>
                 <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                  {isMiniUploaded ? '代码已上传到微信平台，并保留了一份工程备份包。' : isDownload ? '构建产物已保存，可通过下方链接获取。' : '项目已发布到公网，可直接访问。'}
+                  {isMiniPreview ? '使用微信扫码即可在真机中打开本次体验版。' : isMiniUploaded ? '代码已上传到微信平台，并保留了一份工程备份包。' : isDownload ? '构建产物已保存，可通过下方链接获取。' : '项目已发布到公网，可直接访问。'}
                 </p>
               </div>
+
+              {isMiniPreview && <img src={deployedUrl} alt="微信小程序体验版二维码" style={{ width: 220, height: 220, objectFit: 'contain', background: '#fff', border: '1px solid var(--border)' }} />}
 
               {/* URL Display Box */}
               <div style={{
@@ -545,7 +566,7 @@ export default function DeployPanel() {
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   }}
                 >
-                  {isMiniUploaded ? <><Download size={15} />下载工程备份</> : isDownload ? <><Download size={15} />下载构建产物</> : <><ExternalLink size={15} />访问线上地址</>}
+                  {isMiniPreview ? <><ExternalLink size={15} />打开二维码</> : isMiniUploaded ? <><Download size={15} />下载工程备份</> : isDownload ? <><Download size={15} />下载构建产物</> : <><ExternalLink size={15} />访问线上地址</>}
                 </button>
                 <button
                   onClick={handleDeploy}
@@ -587,7 +608,7 @@ export default function DeployPanel() {
                 <button title="重试" onClick={() => retryHistory(job)} style={historyIconStyle}><RotateCw size={13} /></button>
                 {job.provider === 'docker-runtime' && <button title="回滚到此版本" onClick={() => runHistoryAction(job, 'rollback')} style={historyIconStyle}><RotateCcw size={13} /></button>}
                 {job.provider === 'docker-runtime' && job.lifecycle !== 'offline' && <button title="下线" onClick={() => runHistoryAction(job, 'offline')} style={historyIconStyle}><Power size={13} /></button>}
-                {['failed', 'cancelled'].includes(job.status) && <a title="下载任务日志" href={`/api/deployments/${job.id}/logs`} download style={historyIconStyle}><FileDown size={13} /></a>}
+                {['failed', 'cancelled'].includes(job.status) && <a aria-label="下载任务日志" title="下载任务日志" href={`/api/deployments/${job.id}/logs`} download style={historyIconStyle}><FileDown size={13} /></a>}
                 {job.url && <button title="打开产物或地址" onClick={() => window.open(job.url, '_blank', 'noopener,noreferrer')} style={historyIconStyle}><ExternalLink size={13} /></button>}
               </div>
             </div>

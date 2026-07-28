@@ -1,6 +1,7 @@
 """Tests for static-site deployment preparation and provider responses."""
 
 import asyncio
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,12 +11,40 @@ from app.services.deployment import (
     DeploymentError,
     NetlifyDeploymentProvider,
     _build_apk,
+    _export_project_snapshot,
+    _preview_miniprogram,
     _run_docker_command,
     _sign_apk,
     build_static_site_archive,
     detect_project_type,
     run_deployment_pipeline,
 )
+
+
+@pytest.mark.asyncio
+async def test_snapshot_export_is_immutable_and_preserves_executable_files(tmp_path: Path):
+    source = tmp_path / "source"
+    destination = tmp_path / "export"
+    source.mkdir()
+    destination.mkdir()
+    script = source / "gradlew"
+    script.write_text("#!/bin/sh\necho original\n", encoding="utf-8")
+    script.chmod(0o755)
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "AgentHub Test"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.email", "test@agenthub.local"], cwd=source, check=True)
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "snapshot"], cwd=source, check=True)
+    snapshot_id = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=source, text=True
+    ).strip()
+    script.write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+
+    await _export_project_snapshot(source, snapshot_id, destination)
+
+    exported = destination / "gradlew"
+    assert exported.read_text(encoding="utf-8") == "#!/bin/sh\necho original\n"
+    assert exported.stat().st_mode & 0o111
 
 
 def test_static_archive_excludes_node_modules(tmp_path: Path):
@@ -142,19 +171,37 @@ async def test_artifact_pipelines_return_downloads(
 
 
 @pytest.mark.asyncio
-async def test_apk_pipeline_reuses_existing_build(tmp_path: Path, monkeypatch):
+async def test_apk_pipeline_rebuilds_instead_of_reusing_stale_artifact(tmp_path: Path, monkeypatch):
     (tmp_path / "gradlew").write_text("#!/bin/sh", encoding="utf-8")
     (tmp_path / "build.gradle").write_text("plugins {}", encoding="utf-8")
     apk_path = tmp_path / "app" / "build" / "outputs" / "apk" / "release" / "app-release.apk"
     apk_path.parent.mkdir(parents=True)
-    apk_path.write_bytes(b"valid-apk-placeholder")
+    apk_path.write_bytes(b"stale-apk")
+    saved = {}
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            apk_path.parent.mkdir(parents=True, exist_ok=True)
+            apk_path.write_bytes(b"fresh-apk")
+            return b"success", b""
+
+    async def create_process(*_args, **_kwargs):
+        return Process()
 
     async def progress(*_args):
         return None
 
+    def save_apk(content, _user_id, _extension):
+        saved["content"] = content
+        return "/uploads/app.apk"
+
     monkeypatch.setattr("app.services.deployment.get_workspace_path", lambda _conversation_id: tmp_path)
+    monkeypatch.setattr("app.services.deployment.asyncio.create_subprocess_exec", create_process)
     monkeypatch.setattr(
-        "app.services.deployment._save_artifact", lambda _content, _user_id, _extension: "/uploads/app.apk"
+        "app.services.deployment._save_artifact",
+        save_apk,
     )
     result = await run_deployment_pipeline(
         "conversation", user_id="user", target="auto", token="", site_id="", progress=progress
@@ -163,6 +210,85 @@ async def test_apk_pipeline_reuses_existing_build(tmp_path: Path, monkeypatch):
     assert result.target == "apk"
     assert result.provider == "gradle"
     assert result.url == "/uploads/app.apk"
+    assert saved["content"] == b"fresh-apk"
+
+
+@pytest.mark.asyncio
+async def test_web_pipeline_builds_package_project_before_archiving(tmp_path: Path, monkeypatch):
+    (tmp_path / "index.html").write_text("<div id='root'></div>", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"build":"vite build"},"devDependencies":{"vite":"latest"}}',
+        encoding="utf-8",
+    )
+    commands = []
+    archived = {}
+
+    async def run_command(command, *_args):
+        commands.append(command)
+        dist = tmp_path / "dist"
+        dist.mkdir()
+        (dist / "index.html").write_text("<script src='/assets/app.js'></script>", encoding="utf-8")
+        (dist / "assets").mkdir()
+        (dist / "assets" / "app.js").write_text("console.log('built')", encoding="utf-8")
+        return "ok"
+
+    async def progress(*_args):
+        return None
+
+    def save(content, *_args):
+        archived["content"] = content
+        return "/uploads/site.zip"
+
+    monkeypatch.setattr("app.services.deployment.get_workspace_path", lambda _conversation_id: tmp_path)
+    monkeypatch.setattr("app.services.deployment._run_docker_command", run_command)
+    monkeypatch.setattr("app.services.deployment._save_artifact", save)
+
+    result = await run_deployment_pipeline(
+        "conversation", user_id="user", target="web", token="", site_id="", progress=progress
+    )
+
+    assert commands and commands[0][:2] == ["docker", "run"]
+    assert result.url == "/uploads/site.zip"
+    import zipfile
+    from io import BytesIO
+    with zipfile.ZipFile(BytesIO(archived["content"])) as bundle:
+        assert set(bundle.namelist()) == {"index.html", "assets/app.js"}
+
+
+@pytest.mark.asyncio
+async def test_miniprogram_preview_generates_qrcode_artifact(tmp_path: Path, monkeypatch):
+    key_path = tmp_path / "private.key"
+    key_path.write_text("secret", encoding="utf-8")
+    commands = []
+
+    async def run_command(command, *_args):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"jpeg-qrcode")
+        return "MINIPROGRAM_PREVIEW_SUCCESS"
+
+    async def progress(*_args):
+        return None
+
+    monkeypatch.setattr("app.services.deployment._owned_secret_path", lambda *_args: key_path)
+    monkeypatch.setattr("app.services.deployment._run_trusted_command", run_command)
+    monkeypatch.setattr(
+        "app.services.deployment._save_artifact",
+        lambda content, _user_id, extension: f"/uploads/preview.{extension}" if content else "",
+    )
+    url = await _preview_miniprogram(
+        tmp_path,
+        "user-A",
+        {
+            "mini_appid": "wx0123456789abcdef",
+            "mini_private_key_file_id": "tenantfile__user-A__key",
+            "version": "1.0.0",
+        },
+        progress,
+    )
+
+    assert url == "/uploads/preview.jpg"
+    assert commands[0][2] == "preview"
+    assert commands[0][-1].endswith("preview.jpg")
 
 
 @pytest.mark.asyncio
@@ -206,6 +332,10 @@ async def test_api_pipeline_builds_restricted_runtime(tmp_path: Path, monkeypatc
     )
 
     run = next(command for command in commands if command[:2] == ["docker", "run"])
+    build = next(command for command in commands if command[:2] == ["docker", "build"])
+    assert build[build.index("--network") + 1] in {"none", "default"}
+    assert "--memory" in build
+    assert "--cpu-quota" in build
     assert "--read-only" in run
     assert ["--cap-drop", "ALL"] == run[run.index("--cap-drop"):run.index("--cap-drop") + 2]
     assert ["--user", "65532:65532"] == run[run.index("--user"):run.index("--user") + 2]

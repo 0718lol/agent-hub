@@ -12,6 +12,7 @@ import ChatPanelContent from './ChatPanelContent'
 import TabBar from './TabBar'
 import TaskBoard from '../Canvas/TaskBoard'
 import { wsClient } from '../../utils/websocket'
+import { scheduleGenerationStatusCheck } from '../../utils/generationStatus'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import IconAvatar from '../IconAvatar'
 
@@ -125,8 +126,19 @@ export default function ChatPanel({ onToggleSidebar }) {
         return
       }
       if (data.type === 'preview') { useCanvasStore.getState().setPreviewHtml(data.html); return }
+      if (data.type === 'project_update') {
+        useCanvasStore.getState().notifyProjectChanged()
+        return
+      }
       if (data.type === 'generating') {
         setGenerating(activeId, data.is_generating)
+        if (data.is_generating) {
+          scheduleGenerationStatusCheck(
+            activeId,
+            generationTimeoutRef,
+            (active) => setGenerating(activeId, active),
+          )
+        }
         if (!data.is_generating && generationTimeoutRef.current) {
           clearTimeout(generationTimeoutRef.current)
           generationTimeoutRef.current = null
@@ -264,12 +276,12 @@ export default function ChatPanel({ onToggleSidebar }) {
       sender: 'user',
       content: { text, target_agent: targetAgent, mentioned_agents: mentionedAgents, attachments },
     })
-    // 启动超时清理（60 秒无响应则强制解锁生成状态）
-    if (generationTimeoutRef.current) clearTimeout(generationTimeoutRef.current)
-    generationTimeoutRef.current = setTimeout(() => {
-      setGenerating(activeId, false)
-      generationTimeoutRef.current = null
-    }, 60000)
+    setGenerating(activeId, true)
+    scheduleGenerationStatusCheck(
+      activeId,
+      generationTimeoutRef,
+      (active) => setGenerating(activeId, active),
+    )
   }
 
   const handleStop = () => {

@@ -24,16 +24,14 @@ Business logic is delegated to focused router modules and services:
 - routers/tools.py — Tool listing & testing
 """
 import asyncio
-import hmac
 import json
-import os
 import re
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from starlette.background import BackgroundTask
@@ -48,6 +46,9 @@ from app.routers import (
 )
 from app.routers import (
     agents as agents_router,
+)
+from app.routers import (
+    artifacts as artifacts_router,
 )
 from app.routers import (
     auth as auth_router,
@@ -71,6 +72,12 @@ from app.routers import (
     metrics as metrics_router,
 )
 from app.routers import (
+    previews as previews_router,
+)
+from app.routers import (
+    projects as projects_router,
+)
+from app.routers import (
     prompt as prompt_router,
 )
 from app.routers import (
@@ -84,6 +91,9 @@ from app.routers import (
 )
 from app.routers import (
     speech as speech_router,
+)
+from app.routers import (
+    system as system_router,
 )
 from app.routers import (
     tools as tools_router,
@@ -111,17 +121,15 @@ import app.tools  # noqa: F401
 # ---- App lifespan ----
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from datetime import UTC, datetime
-
-    from app.core.crud.cron import recover_running_cron_tasks
     from app.services.daemon_scheduler import daemon_scheduler
 
-    # A process crash can leave a task marked "running", which otherwise
-    # prevents the scheduler from ever picking it up again.
-    await asyncio.to_thread(
-        recover_running_cron_tasks,
-        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-    )
+    if settings.auto_migrate:
+        await asyncio.to_thread(init_db)
+    # Container deployments run migrations and seed defaults in the one-shot
+    # migration service before any API replica starts.
+
+    # Recovery is performed only after the scheduler owns the distributed
+    # leader lease. Running it in every API replica can duplicate active jobs.
     daemon_scheduler.start()
     yield
     try:
@@ -131,21 +139,17 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to stop daemon scheduler during shutdown: {e}")
     try:
         from app.core.terminal import stateful_terminal_manager
+        from app.services.preview_runtime import preview_runtime_manager
         from app.tools.browser_tools import browser_session_manager
         await browser_session_manager.close_all()
         await stateful_terminal_manager.close_all()
+        await preview_runtime_manager.stop_all()
     except Exception as e:
         logger.warning(f"Failed to close browser/terminal sessions during shutdown: {e}")
 
 
 app = FastAPI(title="AgentHub API", lifespan=lifespan)
 settings.validate_production_security()
-
-# ---- File upload directory ----
-# Files are served by routers/uploads.py rather than StaticFiles so they can
-# receive the same authentication and response-hardening as the rest of API.
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ---- CORS ----
 setup_logging()
@@ -166,27 +170,38 @@ async def api_security_middleware(request: Request, call_next):
     path = request.url.path
     if path in ("/", "/docs", "/openapi.json", "/redoc", "/api/health") or path.startswith("/api/auth/") or path.startswith("/api/webhook/callback/"):
         return await call_next(request)
-    if not (path.startswith("/api") or path.startswith("/uploads")):
+    if not (
+        path.startswith("/api")
+        or path.startswith("/uploads")
+        or path == "/upload"
+    ):
         return await call_next(request)
-    if settings.api_secret:
-        from app.core.auth import SESSION_COOKIE, verify_session_token
-        auth_header = request.headers.get("Authorization")
-        bearer_valid = bool(
-            auth_header
-            and auth_header.startswith("Bearer ")
-            and hmac.compare_digest(auth_header.split(" ", 1)[1], settings.api_secret)
+    auth_required = bool(settings.api_secret or settings.api_client_tokens_json) or settings.auth_mode == "proxy"
+    if auth_required:
+        from app.core.auth import (
+            SESSION_COOKIE,
+            bearer_client_identity,
+            get_session_identity,
+            trusted_proxy_identity,
+            trusted_proxy_role,
+            verify_session_token,
         )
-        if bearer_valid and not settings.debug:
-            from app.core.tenancy import has_valid_api_client_id
-
-            if not has_valid_api_client_id(request.headers):
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": "Production Bearer clients must provide X-AgentHub-Client-ID"},
-                )
-        session_valid = verify_session_token(request.cookies.get(SESSION_COOKIE), settings.api_secret)
-        if not bearer_valid and not session_valid:
+        proxy_identity = trusted_proxy_identity(request.headers)
+        bearer_identity = bearer_client_identity(request.headers)
+        session_valid = bool(settings.api_secret) and verify_session_token(
+            request.cookies.get(SESSION_COOKIE), settings.api_secret
+        )
+        session_identity = (
+            get_session_identity(request.cookies.get(SESSION_COOKIE), settings.api_secret)
+            if settings.api_secret
+            else None
+        )
+        if not proxy_identity and not bearer_identity and not session_valid:
             return JSONResponse(status_code=401, content={"detail": "Unauthorized: Sign in or provide a valid bearer token"})
+        request.state.auth_user_id = proxy_identity or bearer_identity or session_identity
+        request.state.auth_role = trusted_proxy_role(request.headers) if proxy_identity else "user"
+        if request.state.auth_role == "viewer" and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            return JSONResponse(status_code=403, content={"detail": "Viewer role is read-only"})
     # No secret means authentication is deliberately disabled. Docker/Nginx
     # proxy requests originate from the proxy container, not localhost.
     return await call_next(request)
@@ -200,6 +215,7 @@ AGENTS = get_agents()
 # ---- Mount all routers ----
 app.include_router(auth_router.router, prefix="/api")
 app.include_router(agents_router.router, prefix="/api")
+app.include_router(artifacts_router.router, prefix="/api")
 app.include_router(uploads_router.router, prefix="/api")
 app.include_router(uploads_router.router)
 app.include_router(settings_router.router, prefix="/api")
@@ -208,9 +224,12 @@ app.include_router(workflows_router.router, prefix="/api")
 app.include_router(mcp_router.router, prefix="/api")
 app.include_router(webhook_router.router, prefix="/api")
 app.include_router(conversations_router.router, prefix="/api")
+app.include_router(projects_router.router, prefix="/api")
+app.include_router(previews_router.router, prefix="/api")
 app.include_router(quality_router.router, prefix="/api")
 app.include_router(prompt_router.router, prefix="/api")
 app.include_router(speech_router.router, prefix="/api")
+app.include_router(system_router.router, prefix="/api")
 app.include_router(sandbox_router.router, prefix="/api")
 app.include_router(benchmark_router.router, prefix="/api")
 app.include_router(ws_router.router)
@@ -218,9 +237,6 @@ app.include_router(tools_router.router, prefix="/api")
 app.include_router(knowledge_router.router, prefix="/api")
 app.include_router(adapters_router.router, prefix="/api")
 app.include_router(metrics_router.router, prefix="/api")
-
-# ---- Initialize database ----
-init_db()
 
 # ---- Load LLM config at startup ----
 load_llm_config(llm_client, settings)
@@ -314,6 +330,10 @@ from app.services.deployment_queue import (
     DeploymentQueueUnavailable,
     deployment_queue,
 )
+from app.services.project_workspace import (
+    ProjectSnapshotError,
+    create_project_snapshot,
+)
 
 
 class DeployRequest(BaseModel):
@@ -325,6 +345,7 @@ class DeployRequest(BaseModel):
     key_password: str = ""
     mini_appid: str = ""
     mini_private_key_file_id: str = ""
+    mini_action: str = "upload"
     version: str = "1.0.0"
     description: str = "AgentHub 演示发布"
 
@@ -349,6 +370,8 @@ def _deployment_options(user_id: str, options: DeployRequest) -> dict:
             raise HTTPException(status_code=422, detail="用户签名需要别名和 keystore 密码")
     if options.mini_private_key_file_id and not _owned_upload(user_id, options.mini_private_key_file_id):
         raise HTTPException(status_code=422, detail="请选择当前用户上传的小程序私钥")
+    if options.mini_action not in {"upload", "preview"}:
+        raise HTTPException(status_code=422, detail="Unsupported Mini Program action")
     return {
         "signing_mode": options.signing_mode,
         "keystore_file_id": options.keystore_file_id,
@@ -357,6 +380,7 @@ def _deployment_options(user_id: str, options: DeployRequest) -> dict:
         "key_password": obfuscate_key(options.key_password or options.store_password),
         "mini_appid": options.mini_appid.strip(),
         "mini_private_key_file_id": options.mini_private_key_file_id,
+        "mini_action": options.mini_action,
         "version": options.version.strip() or "1.0.0",
         "description": options.description.strip()[:100],
     }
@@ -374,9 +398,17 @@ async def deploy_project(conversation_id: str, request: Request, options: Deploy
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
+        deployment_options = await asyncio.to_thread(_deployment_options, user_id, options)
+        snapshot_id = await create_project_snapshot(scoped_id)
         job = await deployment_queue.enqueue(
-            scoped_id, user_id, target, options=_deployment_options(user_id, options)
+            scoped_id,
+            user_id,
+            target,
+            snapshot_id=snapshot_id,
+            options=deployment_options,
         )
+    except (FileNotFoundError, ProjectSnapshotError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except DeploymentQueueUnavailable as exc:
@@ -450,7 +482,10 @@ async def deployment_history(request: Request, limit: int = 30):
 
 @app.post("/api/deployments/{job_id}/retry")
 async def retry_deployment(job_id: str, request: Request):
-    source = await deployment_queue.get(job_id)
+    try:
+        source = await deployment_queue.get(job_id)
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     user_id = request_user_id(request)
     if not source or source.user_id != user_id or source.action != "deploy":
         raise HTTPException(status_code=404, detail="Deployment not found")
@@ -460,10 +495,13 @@ async def retry_deployment(job_id: str, request: Request):
             user_id,
             source.target,
             source_job_id=source.id,
+            snapshot_id=source.snapshot_id,
             options=source.options,
         )
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "queued", "job_id": job.id}
 
 
@@ -482,8 +520,6 @@ async def cancel_deployment(job_id: str, request: Request):
         raise HTTPException(status_code=409, detail="该任务已经结束，无法取消")
     try:
         await deployment_queue.request_cancel(job)
-        if job.status == "queued":
-            await deployment_queue.release_lock(job)
     except DeploymentQueueUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "cancellation_requested", "job_id": job.id}
@@ -493,7 +529,10 @@ async def cancel_deployment(job_id: str, request: Request):
 async def deployment_action(job_id: str, action: str, request: Request):
     if action not in {"rollback", "offline"}:
         raise HTTPException(status_code=404, detail="Unsupported deployment action")
-    source = await deployment_queue.get(job_id)
+    try:
+        source = await deployment_queue.get(job_id)
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     user_id = request_user_id(request)
     if not source or source.user_id != user_id or source.provider != "docker-runtime":
         raise HTTPException(status_code=404, detail="API deployment not found")
@@ -507,6 +546,8 @@ async def deployment_action(job_id: str, action: str, request: Request):
         )
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "queued", "job_id": job.id}
 
 
@@ -520,11 +561,66 @@ async def cleanup_deployments(request: Request):
         )
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "queued", "job_id": job.id}
 
 
 _RUNTIME_URL = re.compile(r"^http://agenthub-api-[a-f0-9]{16}:\d{2,5}$")
 _HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"}
+
+
+@app.get("/published-artifacts/{artifact_id}")
+async def download_published_artifact(artifact_id: str):
+    """Download a build artifact through an unguessable, expiring capability URL."""
+    if not re.fullmatch(r"[a-f0-9]{32}", artifact_id):
+        raise HTTPException(status_code=404, detail="Published artifact not found")
+    from app.core.file_storage import FileStorageManager
+    from app.core.redis import redis_manager
+
+    if not await redis_manager.check_connection():
+        raise HTTPException(status_code=503, detail="Published artifact registry is unavailable")
+    try:
+        raw = await redis_manager.get_client().get(
+            f"agenthub:published-artifact:{artifact_id}"
+        )
+    except Exception as exc:
+        redis_manager.mark_unavailable(exc, "published artifact lookup")
+        raise HTTPException(
+            status_code=503, detail="Published artifact registry is unavailable"
+        ) from exc
+    if not raw:
+        raise HTTPException(status_code=404, detail="Published artifact not found")
+    try:
+        file_id = json.loads(raw).get("file_id", "")
+    except (TypeError, json.JSONDecodeError):
+        file_id = ""
+    if not re.fullmatch(
+        r"tenantfile__[a-zA-Z0-9_-]+__build_[a-f0-9]{32}\.[a-zA-Z0-9]+",
+        file_id,
+    ):
+        raise HTTPException(status_code=404, detail="Published artifact not found")
+    try:
+        exists = await asyncio.to_thread(FileStorageManager.exists, file_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Published artifact not found")
+        path = await asyncio.to_thread(FileStorageManager.get_absolute_path, file_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Could not resolve published artifact %s: %s", artifact_id, exc)
+        raise HTTPException(
+            status_code=503, detail="Published artifact storage is unavailable"
+        ) from exc
+    return FileResponse(
+        path,
+        filename=file_id.split("__", 2)[-1],
+        media_type="application/octet-stream",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @app.api_route(
@@ -538,7 +634,15 @@ async def proxy_published_api(deployment_id: str, path: str, request: Request):
     from app.core.redis import redis_manager
     if not await redis_manager.check_connection():
         raise HTTPException(status_code=503, detail="Published service registry is unavailable")
-    raw = await redis_manager.get_client().get(f"agenthub:published:{deployment_id}")
+    try:
+        raw = await redis_manager.get_client().get(
+            f"agenthub:published:{deployment_id}"
+        )
+    except Exception as exc:
+        redis_manager.mark_unavailable(exc, "published service lookup")
+        raise HTTPException(
+            status_code=503, detail="Published service registry is unavailable"
+        ) from exc
     if not raw:
         raise HTTPException(status_code=404, detail="Published service not found")
     runtime_url = json.loads(raw).get("runtime_url", "")

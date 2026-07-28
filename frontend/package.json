@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "lint": "eslint src --ext .js,.jsx --max-warnings 0",
+    "lint": "eslint . --ext .js,.jsx --max-warnings 0",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

@@ -20,8 +20,12 @@ export default function SecurityTab({
 
       <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>
         <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>浏览器安全会话</label>
-        
-        <div style={{ marginBottom: 16 }}>
+        {authStatus.auth_mode === 'proxy' ? (
+          <div style={{ fontSize: 13, color: authStatus.authenticated ? 'var(--green)' : 'var(--orange)' }}>
+            {authStatus.authenticated ? `统一身份认证已生效 · ${authStatus.role || 'user'}` : '等待统一身份认证'}
+          </div>
+        ) : <>
+          <div style={{ marginBottom: 16 }}>
           <label style={labelStyle}>访问密钥</label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
@@ -53,9 +57,9 @@ export default function SecurityTab({
           <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
             密钥只在本次登录请求中发送，不会保存在浏览器脚本存储中。登录后使用最长 8 小时的 HttpOnly 会话 Cookie，JavaScript 无法读取该凭证。
           </p>
-        </div>
+          </div>
 
-        <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10 }}>
           <button
             onClick={handleLogin}
             disabled={saving || (authStatus.auth_required && !securityToken)}
@@ -69,7 +73,8 @@ export default function SecurityTab({
           >
             退出会话
           </button>
-        </div>
+          </div>
+        </>}
       </div>
 
       <div style={{ padding: 16, borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>

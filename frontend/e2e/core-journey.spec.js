@@ -16,20 +16,23 @@ test('用户可以生成、修改、预览、发布并回滚工具软件', async
   await page.getByText('展开侧边栏', { exact: true }).locator('..').click()
   const sidePanel = page.locator('.slide-panel.open')
   await expect(sidePanel).toBeVisible()
+  await sidePanel.getByRole('button', { name: '代码' }).click()
+  await expect(sidePanel.getByRole('button', { name: 'index.html', exact: true })).toBeVisible()
+  await expect(sidePanel.getByRole('button', { name: 'app.js', exact: true })).toBeVisible()
   await sidePanel.getByRole('button', { name: '预览' }).click()
-  await expect(sidePanel.frameLocator('iframe[title="Preview"]').locator('h1')).toHaveText('团队待办')
+  await expect(sidePanel.frameLocator('iframe[title="项目预览"]').locator('h1')).toHaveText('团队待办')
 
   await input.fill('增加优先级筛选，并把添加按钮改成新增任务')
   await page.getByRole('button', { name: '发送消息' }).click()
   await expect(page.getByText('已经增加优先级筛选并更新预览。')).toBeVisible()
-  const preview = sidePanel.frameLocator('iframe[title="Preview"]')
+  const preview = sidePanel.frameLocator('iframe[title="项目预览"]')
   await expect(preview.locator('h1')).toHaveText('团队任务看板')
   await expect(preview.getByRole('button', { name: '新增任务' })).toBeVisible()
   await expect(preview.getByText('支持优先级筛选')).toBeVisible()
 
   await sidePanel.getByRole('button', { name: '部署' }).click()
   await expect(sidePanel.getByText('构建与发布流水线')).toBeVisible()
-  await expect(sidePanel.getByTitle('下载失败日志')).toHaveAttribute('href', '/api/deployments/job-failed/logs')
+  await expect(sidePanel.getByRole('link', { name: '下载任务日志' })).toHaveAttribute('href', '/api/deployments/job-failed/logs')
   await sidePanel.getByRole('group', { name: '发布目标' }).getByRole('button', { name: 'API', exact: true }).click()
   await sidePanel.getByRole('button', { name: '启动流水线' }).click()
 
@@ -37,6 +40,16 @@ test('用户可以生成、修改、预览、发布并回滚工具软件', async
   await expect(sidePanel.getByText('API 发布成功')).toBeVisible()
   await expect(sidePanel.getByText('/published/job-current/')).toBeVisible()
   await expect(sidePanel.getByRole('progressbar', { name: '部署进度' })).toHaveAttribute('aria-valuenow', '100')
+  await sidePanel.getByRole('button', { name: '关闭发布结果' }).click()
+
+  await sidePanel.getByRole('button', { name: '预览' }).click()
+  await expect(sidePanel.getByLabel('API 路径')).toBeVisible()
+  await sidePanel.getByLabel('API 路径').fill('health')
+  await sidePanel.getByRole('button', { name: '发送', exact: true }).click()
+  await expect(sidePanel.getByText(/HTTP 200/)).toBeVisible()
+  await expect(sidePanel.getByText(/generated-api/)).toBeVisible()
+
+  await sidePanel.getByRole('button', { name: '部署' }).click()
 
   await sidePanel.getByTitle('回滚到此版本').last().click()
   await expectApiRequest(backend, 'POST', '/api/deployments/job-previous/rollback')

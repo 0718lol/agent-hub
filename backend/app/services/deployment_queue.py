@@ -29,6 +29,7 @@ class DeploymentJob:
     target: str
     action: str = "deploy"
     source_job_id: str = ""
+    snapshot_id: str = ""
     options: dict | None = None
     status: str = "queued"
     attempts: int = 0
@@ -64,6 +65,7 @@ class DeploymentQueue:
     def __init__(self):
         self.stream = settings.deployment_queue
         self.consumer = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
+        self._group_ready = False
 
     @staticmethod
     def _status_key(job_id: str) -> str:
@@ -78,6 +80,10 @@ class DeploymentQueue:
         return f"agenthub:deployment:cancel:{job_id}"
 
     @staticmethod
+    def _execution_key(job_id: str) -> str:
+        return f"agenthub:deployment:execution:{job_id}"
+
+    @staticmethod
     def _user_index(user_id: str) -> str:
         return f"agenthub:deployments:user:{user_id}"
 
@@ -85,15 +91,34 @@ class DeploymentQueue:
     def _global_index() -> str:
         return "agenthub:deployments:all"
 
+    async def _call(self, operation: str, awaitable):
+        try:
+            return await awaitable
+        except DeploymentQueueUnavailable:
+            raise
+        except Exception as exc:
+            if "NOGROUP" in str(exc):
+                self._group_ready = False
+            redis_manager.mark_unavailable(exc, f"deployment queue {operation}")
+            raise DeploymentQueueUnavailable(
+                f"发布队列{operation}失败，请稍后重试"
+            ) from exc
+
     async def ensure_available(self):
         if not await redis_manager.check_connection():
-            raise DeploymentQueueUnavailable("Redis 不可用，无法安全启动持久化发布任务")
+            raise DeploymentQueueUnavailable(
+                "Redis 不可用，无法安全启动持久化发布任务；请先启动 Redis 和构建 Worker"
+            )
         client = redis_manager.get_client()
+        if self._group_ready:
+            return client
         try:
             await client.xgroup_create(self.stream, GROUP, id="0", mkstream=True)
         except Exception as exc:
             if "BUSYGROUP" not in str(exc):
+                redis_manager.mark_unavailable(exc, "deployment queue initialization")
                 raise DeploymentQueueUnavailable("无法初始化发布任务队列") from exc
+        self._group_ready = True
         return client
 
     async def enqueue(
@@ -104,11 +129,10 @@ class DeploymentQueue:
         *,
         action: str = "deploy",
         source_job_id: str = "",
+        snapshot_id: str = "",
         options: dict | None = None,
     ) -> DeploymentJob:
         client = await self.ensure_available()
-        if not await client.get(WORKER_HEARTBEAT_KEY):
-            raise DeploymentQueueUnavailable("构建 Worker 未运行，请启动 deployment-worker 服务")
         job = DeploymentJob(
             id=uuid.uuid4().hex,
             conversation_id=conversation_id,
@@ -116,6 +140,7 @@ class DeploymentQueue:
             target=target,
             action=action,
             source_job_id=source_job_id,
+            snapshot_id=snapshot_id,
             options=options,
             log="任务已进入持久化队列",
             log_entries=[{
@@ -126,51 +151,92 @@ class DeploymentQueue:
                 "progress": 5,
             }],
         )
-        locked = await client.set(self._lock_key(conversation_id), job.id, nx=True, ex=2 * 60 * 60)
-        if not locked:
-            raise DeploymentAlreadyQueued("该项目已有构建任务正在排队或运行")
         payload = json.dumps(asdict(job), ensure_ascii=False)
-        try:
-            await client.set(self._status_key(job.id), payload, ex=settings.deployment_status_ttl)
-            await client.xadd(self.stream, {"payload": payload}, maxlen=10_000, approximate=True)
-            score = datetime.fromisoformat(job.created_at).timestamp()
-            await client.zadd(self._user_index(user_id), {job.id: score})
-            await client.zadd(self._global_index(), {job.id: score})
-        except Exception:
-            await client.delete(self._lock_key(conversation_id))
-            raise
+        script = """
+        if not redis.call('get', KEYS[1]) then
+            return -1
+        end
+        if not redis.call('set', KEYS[2], ARGV[1], 'NX', 'EX', ARGV[4]) then
+            return 0
+        end
+        redis.call('set', KEYS[3], ARGV[2], 'EX', ARGV[3])
+        redis.call('xadd', KEYS[4], 'MAXLEN', '~', 10000, '*', 'payload', ARGV[2])
+        redis.call('zadd', KEYS[5], ARGV[5], ARGV[1])
+        redis.call('zadd', KEYS[6], ARGV[5], ARGV[1])
+        return 1
+        """
+        result = await self._call(
+            "原子写入任务",
+            client.eval(
+                script,
+                6,
+                WORKER_HEARTBEAT_KEY,
+                self._lock_key(conversation_id),
+                self._status_key(job.id),
+                self.stream,
+                self._user_index(user_id),
+                self._global_index(),
+                job.id,
+                payload,
+                settings.deployment_status_ttl,
+                2 * 60 * 60,
+                datetime.fromisoformat(job.created_at).timestamp(),
+            ),
+        )
+        if result == -1:
+            raise DeploymentQueueUnavailable("构建 Worker 未运行，请启动 deployment-worker 服务")
+        if result == 0:
+            raise DeploymentAlreadyQueued("该项目已有构建任务正在排队或运行")
         return job
 
     async def list_for_user(self, user_id: str, limit: int = 50) -> list[DeploymentJob]:
         client = await self.ensure_available()
-        ids = await client.zrevrange(self._user_index(user_id), 0, max(0, limit - 1))
+        ids = await self._call(
+            "读取用户索引",
+            client.zrevrange(self._user_index(user_id), 0, max(0, limit - 1)),
+        )
         if not ids:
             return []
-        values = await client.mget([self._status_key(job_id) for job_id in ids])
+        values = await self._call(
+            "读取任务状态",
+            client.mget([self._status_key(job_id) for job_id in ids]),
+        )
         jobs = [DeploymentJob(**json.loads(raw)) for raw in values if raw]
         return [job for job in jobs if job.action == "deploy"]
 
     async def indexed_job_ids(self) -> list[str]:
         client = await self.ensure_available()
-        return await client.zrange(self._global_index(), 0, -1)
+        return await self._call(
+            "读取全局索引", client.zrange(self._global_index(), 0, -1)
+        )
 
     async def remove_history(self, job: DeploymentJob) -> None:
         client = await self.ensure_available()
-        await client.delete(self._status_key(job.id))
-        await client.zrem(self._user_index(job.user_id), job.id)
-        await client.zrem(self._global_index(), job.id)
+        await self._call("删除任务状态", client.delete(self._status_key(job.id)))
+        await self._call(
+            "删除用户索引",
+            client.zrem(self._user_index(job.user_id), job.id),
+        )
+        await self._call(
+            "删除全局索引", client.zrem(self._global_index(), job.id)
+        )
 
     async def heartbeat(self) -> None:
         client = await self.ensure_available()
-        await client.set(WORKER_HEARTBEAT_KEY, self.consumer, ex=15)
+        await self._call(
+            "写入 Worker 心跳",
+            client.set(WORKER_HEARTBEAT_KEY, self.consumer, ex=15),
+        )
 
     async def get(self, job_id: str) -> DeploymentJob | None:
         client = await self.ensure_available()
-        raw = await client.get(self._status_key(job_id))
+        raw = await self._call("读取任务状态", client.get(self._status_key(job_id)))
         if not raw:
             return None
         job = DeploymentJob(**json.loads(raw))
-        job.cancel_requested = bool(await client.get(self._cancel_key(job_id)))
+        job.cancel_requested = bool(
+            await self._call("读取取消状态", client.get(self._cancel_key(job_id)))
+        )
         return job
 
     async def update(self, job: DeploymentJob, **changes) -> DeploymentJob:
@@ -178,10 +244,13 @@ class DeploymentQueue:
         for key, value in changes.items():
             setattr(job, key, value)
         job.updated_at = datetime.now(UTC).isoformat()
-        await client.set(
-            self._status_key(job.id),
-            json.dumps(asdict(job), ensure_ascii=False),
-            ex=settings.deployment_status_ttl,
+        await self._call(
+            "更新任务状态",
+            client.set(
+                self._status_key(job.id),
+                json.dumps(asdict(job), ensure_ascii=False),
+                ex=settings.deployment_status_ttl,
+            ),
         )
         return job
 
@@ -212,10 +281,43 @@ class DeploymentQueue:
             log_entries=entries,
         )
 
-    async def read(self, block_ms: int = 5_000):
+    async def complete(
+        self,
+        job: DeploymentJob,
+        *,
+        message: str,
+        url: str,
+        result_type: str,
+        provider: str,
+        published: bool,
+    ) -> DeploymentJob:
+        entry = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "stage": "complete",
+            "level": "info",
+            "message": str(message)[:4_000],
+            "progress": 100,
+        }
+        return await self.update(
+            job,
+            status="success",
+            stage="complete",
+            progress=100,
+            log=entry["message"],
+            log_entries=[*(job.log_entries or []), entry][-300:],
+            url=url,
+            result_type=result_type,
+            provider=provider,
+            published=published,
+        )
+
+    async def read(self, block_ms: int = 500):
         client = await self.ensure_available()
-        messages = await client.xreadgroup(
-            GROUP, self.consumer, {self.stream: ">"}, count=1, block=block_ms
+        messages = await self._call(
+            "领取任务",
+            client.xreadgroup(
+                GROUP, self.consumer, {self.stream: ">"}, count=1, block=block_ms
+            ),
         )
         if not messages:
             return None
@@ -223,10 +325,14 @@ class DeploymentQueue:
         message_id, fields = entries[0]
         return message_id, DeploymentJob(**json.loads(fields["payload"]))
 
-    async def reclaim_stale(self, min_idle_ms: int = 15 * 60_000):
+    async def reclaim_stale(self, min_idle_ms: int | None = None):
         client = await self.ensure_available()
-        response = await client.xautoclaim(
-            self.stream, GROUP, self.consumer, min_idle_ms, "0-0", count=1
+        min_idle_ms = min_idle_ms or settings.deployment_reclaim_idle_ms
+        response = await self._call(
+            "回收超时任务",
+            client.xautoclaim(
+                self.stream, GROUP, self.consumer, min_idle_ms, "0-0", count=1
+            ),
         )
         entries = response[1] if len(response) > 1 else []
         if not entries:
@@ -234,9 +340,80 @@ class DeploymentQueue:
         message_id, fields = entries[0]
         return message_id, DeploymentJob(**json.loads(fields["payload"]))
 
+    async def claim_execution(self, job: DeploymentJob) -> bool:
+        client = await self.ensure_available()
+        script = """
+        local project_owner = redis.call('get', KEYS[2])
+        if project_owner and project_owner ~= ARGV[2] then
+            return 0
+        end
+        if not project_owner then
+            redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[4])
+        end
+        if redis.call('set', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[3]) then
+            return 1
+        end
+        return 0
+        """
+        return bool(await self._call(
+            "获取执行租约",
+            client.eval(
+                script,
+                2,
+                self._execution_key(job.id),
+                self._lock_key(job.conversation_id),
+                self.consumer,
+                job.id,
+                max(30, settings.deployment_lease_ttl),
+                2 * 60 * 60,
+            ),
+        ))
+
+    async def heartbeat_execution(self, job: DeploymentJob) -> bool:
+        client = await self.ensure_available()
+        script = """
+        if redis.call('get', KEYS[1]) ~= ARGV[1] then
+            return 0
+        end
+        if redis.call('get', KEYS[2]) ~= ARGV[3] then
+            return 0
+        end
+        redis.call('expire', KEYS[1], ARGV[2])
+        redis.call('expire', KEYS[2], ARGV[4])
+        return 1
+        """
+        return bool(await self._call(
+            "续期执行租约",
+            client.eval(
+                script,
+                2,
+                self._execution_key(job.id),
+                self._lock_key(job.conversation_id),
+                self.consumer,
+                max(30, settings.deployment_lease_ttl),
+                job.id,
+                2 * 60 * 60,
+            ),
+        ))
+
+    async def release_execution(self, job: DeploymentJob) -> None:
+        client = await self.ensure_available()
+        script = """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('del', KEYS[1])
+        end
+        return 0
+        """
+        await self._call(
+            "释放执行租约",
+            client.eval(
+                script, 1, self._execution_key(job.id), self.consumer
+            ),
+        )
+
     async def acknowledge(self, message_id: str) -> None:
         client = await self.ensure_available()
-        await client.xack(self.stream, GROUP, message_id)
+        await self._call("确认任务", client.xack(self.stream, GROUP, message_id))
 
     async def release_lock(self, job: DeploymentJob) -> None:
         client = await self.ensure_available()
@@ -246,25 +423,33 @@ class DeploymentQueue:
         end
         return 0
         """
-        await client.eval(script, 1, self._lock_key(job.conversation_id), job.id)
+        await self._call(
+            "释放项目锁",
+            client.eval(script, 1, self._lock_key(job.conversation_id), job.id),
+        )
 
     async def request_cancel(self, job: DeploymentJob) -> DeploymentJob:
         client = await self.ensure_available()
-        await client.set(
-            self._cancel_key(job.id),
-            "1",
-            ex=settings.deployment_status_ttl,
+        await self._call(
+            "写入取消状态",
+            client.set(
+                self._cancel_key(job.id),
+                "1",
+                ex=settings.deployment_status_ttl,
+            ),
         )
         job.cancel_requested = True
         return job
 
     async def is_cancel_requested(self, job_id: str) -> bool:
         client = await self.ensure_available()
-        return bool(await client.get(self._cancel_key(job_id)))
+        return bool(
+            await self._call("读取取消状态", client.get(self._cancel_key(job_id)))
+        )
 
     async def clear_cancel(self, job_id: str) -> None:
         client = await self.ensure_available()
-        await client.delete(self._cancel_key(job_id))
+        await self._call("清除取消状态", client.delete(self._cancel_key(job_id)))
 
     async def retry(self, message_id: str, job: DeploymentJob) -> None:
         client = await self.ensure_available()
@@ -283,9 +468,26 @@ class DeploymentQueue:
         }][-300:]
         job.updated_at = datetime.now(UTC).isoformat()
         payload = json.dumps(asdict(job), ensure_ascii=False)
-        await client.set(self._status_key(job.id), payload, ex=settings.deployment_status_ttl)
-        await client.xadd(self.stream, {"payload": payload}, maxlen=10_000, approximate=True)
-        await client.xack(self.stream, GROUP, message_id)
+        await self._call(
+            "保存重试状态",
+            client.set(
+                self._status_key(job.id),
+                payload,
+                ex=settings.deployment_status_ttl,
+            ),
+        )
+        await self._call(
+            "重新写入任务",
+            client.xadd(
+                self.stream,
+                {"payload": payload},
+                maxlen=10_000,
+                approximate=True,
+            ),
+        )
+        await self._call(
+            "确认原任务", client.xack(self.stream, GROUP, message_id)
+        )
 
 
 deployment_queue = DeploymentQueue()

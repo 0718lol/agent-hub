@@ -95,7 +95,7 @@ class RedisCache:
                 return None
             except Exception as e:
                 logger.debug(f"Redis GET 失败 [{key}]: {e}，降级到内存缓存")
-                rm._is_connected = False
+                rm.mark_unavailable(e, "cache get")
 
         # 内存缓存回退
         return self._memory.get(key)
@@ -115,7 +115,7 @@ class RedisCache:
                     await client.set(key, value)
             except Exception as e:
                 logger.debug(f"Redis SET 失败 [{key}]: {e}")
-                rm._is_connected = False
+                rm.mark_unavailable(e, "cache set")
 
     async def delete(self, key: str):
         """删除单个缓存键。"""
@@ -128,7 +128,7 @@ class RedisCache:
                 await client.delete(key)
             except Exception as e:
                 logger.debug(f"Redis DEL 失败 [{key}]: {e}")
-                rm._is_connected = False
+                rm.mark_unavailable(e, "cache delete")
 
     async def delete_pattern(self, pattern: str):
         """按模式批量删除缓存键。
@@ -151,7 +151,7 @@ class RedisCache:
                         break
             except Exception as e:
                 logger.debug(f"Redis DEL_PATTERN 失败 [{pattern}]: {e}")
-                rm._is_connected = False
+                rm.mark_unavailable(e, "cache pattern delete")
 
     async def get_json(self, key: str) -> Optional[Any]:
         """读取 JSON 缓存，自动反序列化。"""

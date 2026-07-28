@@ -8,6 +8,15 @@ from typing import Any
 class CodebaseMapScanner:
     """Recursively scans a workspace directory and uses AST to map classes, methods, and functions."""
 
+    MAX_FILES = 200
+    MAX_FILE_BYTES = 1_000_000
+    MAX_OUTPUT_CHARS = 12_000
+    TEXT_EXTENSIONS = {
+        ".css", ".gradle", ".html", ".java", ".js", ".json", ".jsx",
+        ".kt", ".kts", ".md", ".properties", ".py", ".ts", ".tsx",
+        ".wxml", ".wxss", ".xml", ".yaml", ".yml",
+    }
+
     def __init__(self, ignored_names: list[str] = None):
         self.ignored_names = ignored_names or [
             ".git", ".venv", "venv", "__pycache__", "node_modules", "agenthub_export", "dist", "build"
@@ -19,31 +28,56 @@ class CodebaseMapScanner:
             return "（沙盒目录目前不存在）"
 
         tree_lines = []
+        output_chars = 0
+        scanned_files = 0
         for root, dirs, files in os.walk(directory_path):
             # Prune ignored directories in-place
-            dirs[:] = [d for d in dirs if d not in self.ignored_names and not d.startswith(".")]
+            dirs[:] = sorted(
+                d
+                for d in dirs
+                if d not in self.ignored_names
+                and not d.startswith(".")
+                and not os.path.islink(os.path.join(root, d))
+            )
 
-            for file in files:
+            for file in sorted(files):
                 ext = os.path.splitext(file)[1].lower()
-                if ext not in (".py", ".js", ".jsx", ".ts", ".tsx"):
+                if ext not in self.TEXT_EXTENSIONS and file not in {"Dockerfile", "gradlew"}:
                     continue
 
                 abs_path = os.path.join(root, file)
+                try:
+                    if os.path.islink(abs_path) or os.path.getsize(abs_path) > self.MAX_FILE_BYTES:
+                        continue
+                except OSError:
+                    continue
+
+                scanned_files += 1
+                if scanned_files > self.MAX_FILES:
+                    tree_lines.append("- (file map truncated; use file tools for the target file)")
+                    return "\n".join(tree_lines)
+
                 rel_path = os.path.relpath(abs_path, directory_path)
 
                 try:
                     if ext == ".py":
                         symbols = self._parse_file_symbols(abs_path)
-                    else:
+                    elif ext in (".js", ".jsx", ".ts", ".tsx"):
                         symbols = self._parse_js_symbols(abs_path)
-                    if symbols:
-                        tree_lines.append(self._format_file_symbols(rel_path, symbols))
+                    else:
+                        symbols = {"imports": [], "classes": {}, "functions": []}
+                    rendered = self._format_file_symbols(rel_path, symbols)
+                    if output_chars + len(rendered) > self.MAX_OUTPUT_CHARS:
+                        tree_lines.append("- (file map length limit reached; use file tools for details)")
+                        return "\n".join(tree_lines)
+                    tree_lines.append(rendered)
+                    output_chars += len(rendered) + 1
                 except Exception:
                     # Ignore parsing errors for broken scripts during live dev sessions
                     pass
 
         if not tree_lines:
-            return "（沙盒内目前没有可解析的 Python/JS/TS 符号定义）"
+            return "（项目工作区目前没有可读取的工程文件）"
 
         return "\n".join(tree_lines)
 

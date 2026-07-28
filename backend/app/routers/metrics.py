@@ -10,8 +10,11 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
+
+from app.core.metrics import metrics
+from app.core.tenancy import belongs_to_user, request_user_id
 
 logger = logging.getLogger("metrics_router")
 
@@ -29,7 +32,6 @@ async def push_trace(trace_data: dict):
     Non-blocking: if queue is full, drops silently.
     """
     dead = []
-    from app.core.tenancy import belongs_to_user
     conversation_id = trace_data.get("conversation_id", "")
     for user_id, q in _trace_queues:
         if not belongs_to_user(conversation_id, user_id):
@@ -47,6 +49,32 @@ async def push_trace(trace_data: dict):
             pass
 
 
+@router.get("/metrics")
+async def get_metrics(request: Request):
+    """Return evaluation metrics belonging to the current tenant."""
+    from app.core.llm_client import get_daily_llm_usage
+
+    user_id = request_user_id(request)
+    data = metrics.get_dashboard_data(user_id=user_id)
+    data["daily_llm_usage"] = await get_daily_llm_usage(user_id)
+    return data
+
+
+@router.get("/metrics/traces")
+async def get_traces(
+    request: Request,
+    limit: int = Query(default=10, ge=1, le=100),
+):
+    """Return completed and in-flight traces belonging to the current tenant."""
+    user_id = request_user_id(request)
+    traces = [
+        trace.to_dict()
+        for trace in metrics.traces
+        if belongs_to_user(trace.conversation_id, user_id)
+    ]
+    return traces[-limit:]
+
+
 @router.get("/metrics/traces/stream")
 async def stream_traces(request: Request):
     """SSE endpoint: stream trace updates in real-time.
@@ -56,7 +84,6 @@ async def stream_traces(request: Request):
         es.onmessage = (e) => { const trace = JSON.parse(e.data) }
     """
     queue: asyncio.Queue = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
-    from app.core.tenancy import request_user_id
     entry = (request_user_id(request), queue)
     _trace_queues.append(entry)
     logger.debug(f"SSE subscriber connected (total: {len(_trace_queues)})")

@@ -9,6 +9,7 @@ import InlineDeployCard from '../Chat/InlineDeployCard'
 import DeployProgressCard from '../Chat/DeployProgressCard'
 import IconAvatar from '../IconAvatar'
 import { wsClient } from '../../utils/websocket'
+import { scheduleGenerationStatusCheck } from '../../utils/generationStatus'
 
 // 全局消息加载缓存：已加载过的 convId 不重复请求（上限 200 防止内存膨胀）
 const LOADED_CONVS_MAX = 200
@@ -145,11 +146,12 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
       sender: 'user',
       content: { text, target_agent: targetAgent, mentioned_agents: mentionedAgents, attachments },
     })
-    if (generationTimeoutRef.current) clearTimeout(generationTimeoutRef.current)
-    generationTimeoutRef.current = setTimeout(() => {
-      useChatStore.getState().setGenerating(convId, false)
-      generationTimeoutRef.current = null
-    }, 60000)
+    useChatStore.getState().setGenerating(convId, true)
+    scheduleGenerationStatusCheck(
+      convId,
+      generationTimeoutRef,
+      (active) => useChatStore.getState().setGenerating(convId, active),
+    )
   }, [convId, isGenerating, isGroup, conv?.agentId, addMessage])
 
   const handleStop = useCallback(() => {

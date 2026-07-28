@@ -45,8 +45,8 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户像在钉钉/飞�
 **可视化协作画布**
 - DAG 图实时展示 Agent 间任务流转
 - 任务看板（自动根据 Agent 进度更新）
-- 代码面板（语法高亮，Agent 生成的代码自动显示）
-- 网页预览（iframe 实时渲染 Agent 生成的 HTML）
+- 代码面板（真实多文件树、语法高亮、Git 快照与版本恢复）
+- 项目预览（静态多文件 Web、隔离 Vite、API 请求调试、小程序体验二维码）
 
 **消息系统**
 - 代码卡片 — 语法高亮 + 一键复制
@@ -188,7 +188,10 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-端到端测试使用真实 React 页面和状态管理，并在浏览器层模拟 HTTP 与 WebSocket 后端，因此不需要模型密钥、Docker 或微信凭证。失败时会在 `frontend/test-results/` 保留截图、视频和 trace；GitHub Actions 同时上传测试报告。
+`core-journey.spec.js` 使用确定性 HTTP/WebSocket 模拟完成完整 UI 流程；
+`real-backend.spec.js` 在 CI 中连接真实 FastAPI、PostgreSQL 和 Redis，验证数据库迁移、WebSocket
+对话、文件上传与发布队列可用性。两类测试都不调用收费模型、Android SDK 或微信平台。失败时会在
+`frontend/test-results/` 保留截图、视频和 trace；GitHub Actions 同时上传测试报告。
 
 ## LLM 配置
 
@@ -197,7 +200,33 @@ npm run test:e2e
 3. 输入 API Key 和模型名称
 4. 保存即可
 
-无 API Key 时 Agent 使用 Mock 回复，功能完整可用。
+无 API Key 时 Agent 使用固定 Mock 回复，可体验界面和流水线；真实自然语言理解与代码生成必须配置模型 API。
+
+## 多人和生产部署
+
+- 本地单机可以使用 SQLite、本地上传目录和内嵌 Chroma；多 API 实例使用 PostgreSQL 和 Redis。
+- `migration` 服务先执行 Alembic 和默认数据初始化，成功后 API 副本才启动，避免多副本并发迁移。
+- Redis 负责 WebSocket 广播、持久化生成/发布队列、生成租约/停止信号、调度器主节点和定时任务执行租约。
+- 多主机部署应配置 S3/MinIO 与独立 Chroma；生成项目工作区仍需共享 RWX 卷或同一远程 Docker 数据卷。
+- 公网用户建议由 OIDC/OAuth2 身份代理注入用户与角色，并配置
+  `AGENTHUB_AUTH_MODE=proxy`。`viewer` 角色只读；机器客户端使用独立 Token 映射。
+- `GET /api/metrics/summary` 返回当前租户当日模型实际 Token 用量；
+  `AGENTHUB_LLM_DAILY_TOKEN_QUOTA` 可设置每日限额。
+
+生产 Compose 中，用户消息先写入 Redis Streams，再由独立 `generation-worker` 执行；浏览器断线或
+API 实例重启不会丢失排队任务。Worker 使用执行租约避免多副本重复消费，崩溃任务会被重新认领，
+生成状态可通过 `GET /api/conversations/{id}/generation` 恢复。当前尚未提供 Token 级断点续跑，
+Worker 在一次模型流式输出中崩溃时会从本轮任务起点重试。
+
+## 官方项目模板与文件协议
+
+`GET /api/projects/templates` 返回 Web、FastAPI、微信小程序和原生 Kotlin APK 四类模板；
+`POST /api/projects/{conversation_id}/initialize` 传入 `{"template_id":"web-static"}` 可在空工程中
+创建可预览、可继续对话修改的确定性骨架。初始化与 Agent 生成共用分布式工作区锁和 Git 快照。
+
+Agent 普通写文件仍兼容带 `path=relative/path` 的 Markdown 代码块。需要精确批量修改或删除文件时，
+可输出 `<agenthub-files>` JSON 协议，`operation` 支持 `write` 和 `delete`；路径穿越、超大文件、
+重复路径和受保护目录会在写盘前被拒绝。
 
 ## 构建与发布流水线
 
@@ -208,7 +237,7 @@ npm run test:e2e
 | Web | 校验 `index.html` → 打包 → Netlify | 公网地址；未配置 Netlify 时为 ZIP |
 | API | Docker 镜像构建 → 受限容器运行 → 反向代理 | 可分享的公网 API 地址 |
 | Android APK | 独立容器构建 → 演示密钥或用户 keystore 签名 → 校验 | 受当前用户权限保护的已签名 APK |
-| 微信小程序 | 工程校验 → `miniprogram-ci` 真实上传 | 凭证齐全时上传代码；否则生成开发者工具上传包 |
+| 微信小程序 | 工程校验 → `miniprogram-ci` 体验预览或真实上传 | 凭证齐全时返回二维码或上传代码；否则生成开发者工具上传包 |
 
 Web 公网发布需要在 `.env` 配置 `AGENTHUB_NETLIFY_TOKEN` 和
 `AGENTHUB_NETLIFY_SITE_ID`。基础服务使用 `docker compose up --build` 启动；需要本机 Docker
@@ -238,6 +267,10 @@ matplotlib；能力不完整时会停止使用该实例并回退到 Docker，而
 `AGENTHUB_RUNTIME_SANDBOX_MAX_PER_TENANT` 和
 `AGENTHUB_RUNTIME_SANDBOX_QUEUE_TIMEOUT` 调整。
 
+Vite 开发预览同样运行在只读源目录的受限 Docker 容器中，默认全局最多 8 个、每租户最多
+2 个；超出后自动回收最早的预览实例。可通过 `AGENTHUB_PREVIEW_RUNTIME_MAX_TOTAL` 和
+`AGENTHUB_PREVIEW_RUNTIME_MAX_PER_TENANT` 调整。
+
 只需单独构建运行沙箱时，可以执行：
 
 ```bash
@@ -266,6 +299,9 @@ APK 构建运行在没有 Docker Socket 的临时容器中；
 生成的 API 以非 root、只读文件系统、无 Linux capabilities 的方式运行，并限制 CPU、内存和进程数。
 API 容器只加入内部 `agenthub_runtime` 网络，由 `/published/{deployment_id}/` 反向代理访问。
 生产环境需将 `AGENTHUB_PUBLIC_BASE_URL` 设置为 AgentHub 的公网 Origin。
+
+上线前执行 `cd backend && python -m app.scripts.preflight --profile production`。完整演示流程、
+凭证矩阵、能力边界和验收命令见 [docs/DELIVERY_ACCEPTANCE.md](docs/DELIVERY_ACCEPTANCE.md)。
 
 ## 集成 Claude Code (Model Context Protocol - MCP)
 
@@ -325,7 +361,7 @@ agent-hub/
 
 ## 测试覆盖
 
-**后端测试：381 个**（14 个测试文件）
+**后端测试：488 个**
 
 | 测试类别 | 测试数 | 覆盖模块 |
 |---------|--------|---------|
@@ -339,9 +375,9 @@ agent-hub/
 | Git 工具测试（新增） | 14 | commit、push、create PR |
 | 其他测试 | 45 | Agent 回复逻辑、API 端点、配置持久化、工具注册 |
 
-**前端测试：91 个**（7 个测试文件）
+**前端测试：98 个**（8 个测试文件）
 
-**总计：472 个**
+**单元与组件测试总计：586 个，另含 Playwright 端到端场景**
 
 | 测试类别 | 测试数 | 覆盖模块 |
 |---------|--------|---------|

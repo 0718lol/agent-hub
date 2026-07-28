@@ -1,15 +1,21 @@
 """Speech-to-text settings and transcription endpoints."""
+import asyncio
 import json
 import logging
 import os
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from app.core.config import deobfuscate_key as decrypt_key
 from app.core.config import obfuscate_key as encrypt_key
-from app.core.llm_client import llm_client
 from app.core.speech import stt_client
+from app.core.tenancy import request_user_id
+from app.core.tenant_settings import (
+    get_tenant_llm_client,
+    get_tenant_stt_client,
+    save_tenant_stt_client,
+)
 
 logger = logging.getLogger("routers.speech")
 router = APIRouter(tags=["speech"])
@@ -61,29 +67,32 @@ class STTSettings(BaseModel):
 
 
 @router.get("/settings/stt")
-async def get_stt_settings():
+async def get_stt_settings(request: Request):
+    client = await asyncio.to_thread(get_tenant_stt_client, request_user_id(request))
     return {
-        "configured": stt_client.is_configured(),
-        "base_url": stt_client.base_url,
-        "model": stt_client.model,
-        "language": stt_client.language,
+        "configured": client.is_configured(),
+        "base_url": client.base_url,
+        "model": client.model,
+        "language": client.language,
     }
 
 
 @router.post("/settings/stt")
-async def update_stt_settings(s: STTSettings):
-    stt_client.configure(
-        api_key=s.api_key or stt_client.api_key,
+async def update_stt_settings(s: STTSettings, request: Request):
+    user_id = request_user_id(request)
+    client = await asyncio.to_thread(get_tenant_stt_client, user_id)
+    client.configure(
+        api_key=s.api_key or client.api_key,
         base_url=s.base_url,
         model=s.model,
         language=s.language,
     )
-    _save_stt_config()
-    return {"configured": stt_client.is_configured()}
+    await asyncio.to_thread(save_tenant_stt_client, user_id, client)
+    return {"configured": client.is_configured()}
 
 
 @router.post("/speech/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
+async def transcribe_audio(request: Request, file: UploadFile = File(...)):
     """Upload an audio file and get transcribed text back."""
     from app.core.config import settings
     from app.core.upload_security import UploadLimitExceeded, read_upload_limited
@@ -94,19 +103,22 @@ async def transcribe_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=413, detail=f"Audio too large (max {exc.max_bytes} bytes)") from exc
     filename = file.filename or "audio.webm"
 
-    if not stt_client.is_configured() and llm_client.is_configured():
-        stt_client.configure(
-            api_key=llm_client.api_key,
-            base_url=llm_client.base_url,
+    user_id = request_user_id(request)
+    client = await asyncio.to_thread(get_tenant_stt_client, user_id)
+    tenant_llm_client = await asyncio.to_thread(get_tenant_llm_client, user_id)
+    if not client.is_configured() and tenant_llm_client.is_configured():
+        client.configure(
+            api_key=tenant_llm_client.api_key,
+            base_url=tenant_llm_client.base_url,
             model="whisper-1",
             language="zh",
         )
 
-    if not stt_client.is_configured():
+    if not client.is_configured():
         return {"error": "语音识别未配置。请在设置中配置 STT API 或 LLM API。", "text": ""}
 
     try:
-        text = await stt_client.transcribe(audio_bytes, filename)
+        text = await client.transcribe(audio_bytes, filename)
         return {"text": text, "status": "ok"}
     except Exception as e:
         return {"error": f"语音识别失败: {str(e)[:200]}", "text": ""}

@@ -126,7 +126,7 @@ async def self_healing_review(code: str, agent, max_retries: int = 1) -> dict:
                 fixed += chunk
             if fixed.strip():
                 # Extract code block if present
-                code_match = re.search(r'```(?:\w+)?\n(.*?)```', fixed, re.DOTALL)
+                code_match = re.search(r'```[^\r\n`]*\r?\n(.*?)```', fixed, re.DOTALL)
                 if code_match:
                     current_code = code_match.group(1).strip()
                 else:

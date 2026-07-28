@@ -3,6 +3,8 @@ class WSClient {
     this.ws = null
     this.handlers = new Set()
     this.reconnectTimer = null
+    this.heartbeatTimer = null
+    this.heartbeatInterval = 25000
     this.pendingMessages = []
     this.currentConvId = null
     this.reconnectAttempts = 0
@@ -29,6 +31,20 @@ class WSClient {
     }
   }
 
+  _stopHeartbeat() {
+    clearInterval(this.heartbeatTimer)
+    this.heartbeatTimer = null
+  }
+
+  _startHeartbeat(ws) {
+    this._stopHeartbeat()
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws === ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }))
+      }
+    }, this.heartbeatInterval)
+  }
+
   connect(conversationId) {
     if (
       this.currentConvId === conversationId &&
@@ -43,6 +59,7 @@ class WSClient {
     clearTimeout(this.reconnectTimer)
 
     if (this.ws) {
+      this._stopHeartbeat()
       const oldWs = this.ws
       oldWs.onclose = null // Prevents the old socket close from triggering a stale reconnection
       oldWs.close()
@@ -59,6 +76,7 @@ class WSClient {
       if (this.ws !== ws) return // Safe guard against stale connections
       this.reconnectAttempts = 0
       this._setStatus('connected')
+      this._startHeartbeat(ws)
       while (this.pendingMessages.length > 0) {
         const msg = this.pendingMessages.shift()
         ws.send(msg)
@@ -77,6 +95,7 @@ class WSClient {
 
     ws.onclose = (event) => {
       if (this.ws !== ws) return // Safe guard against stale connections
+      this._stopHeartbeat()
       this.ws = null
       if (!this.shouldReconnect || this.currentConvId !== conversationId) return
       this.reconnectAttempts++
@@ -140,6 +159,7 @@ class WSClient {
   disconnect() {
     this.shouldReconnect = false
     clearTimeout(this.reconnectTimer)
+    this._stopHeartbeat()
     this.reconnectAttempts = 0
     this.pendingMessages = []
     this._setStatus('disconnected')

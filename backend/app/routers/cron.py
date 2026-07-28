@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from fastapi import APIRouter, Request
@@ -9,9 +10,10 @@ from app.core.async_wrappers import (
     async_save_cron_task,
     async_update_cron_task_status,
 )
+from app.core.database import claim_cron_task
+from app.core.tenancy import belongs_to_user, public_conversation_id, request_user_id, scope_conversation_id
 
 router = APIRouter(tags=["cron"])
-from app.core.tenancy import belongs_to_user, public_conversation_id, request_user_id, scope_conversation_id
 
 
 class CronTaskCreate(BaseModel):
@@ -61,13 +63,15 @@ async def run_cron_task_now(task_id: str, request: Request):
     task = next((t for t in tasks if t["id"] == task_id and belongs_to_user(t["conversation_id"], request_user_id(request))), None)
     if not task:
         return {"status": "error", "message": "自治任务未找到"}
+    if not await asyncio.to_thread(claim_cron_task, task_id, True):
+        return {"status": "busy", "message": "任务正在运行，请勿重复触发"}
 
     from app.routers.ws import create_tracked_task
     from app.services.daemon_scheduler import daemon_scheduler
 
     # 采用 Wac 强引用控制器进行 Task 运行，消除 GC 夭折隐患
     create_tracked_task(
-        daemon_scheduler._run_task(task),
+        daemon_scheduler._run_task(task, claimed=True),
         name=f"manual_cron_{task_id}"
     )
     return {"status": "ok", "message": "已手动触发后台自治作业运行！"}

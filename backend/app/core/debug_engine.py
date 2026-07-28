@@ -161,7 +161,7 @@ def build_analysis_prompt(error_info: dict, code: str) -> str:
 
 def extract_code_block(text: str) -> str | None:
     """Extract Python code block from LLM response."""
-    match = re.search(r'```(?:python)?\n(.*?)```', text, re.DOTALL)
+    match = re.search(r'```(?:python)?[^\r\n`]*\r?\n(.*?)```', text, re.DOTALL)
     if match:
         return match.group(1).strip()
     # Fallback: if response looks like code (has def/import/class)

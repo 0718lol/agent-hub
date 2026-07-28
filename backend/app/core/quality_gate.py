@@ -16,10 +16,21 @@ Usage:
 """
 
 import asyncio
+import contextvars
 import re
 
 from app.core.llm_client import llm_client
 from app.core.quality_standards import STANDARDS, QualityReport, detect_output_type, run_rules
+
+
+def _extract_code_blocks(text: str) -> list[tuple[str, str]]:
+    blocks = []
+    for info, code in re.findall(r'```([^\r\n`]*)\r?\n(.*?)```', text, re.DOTALL):
+        language = info.split()[0].split(":", 1)[0] if info.strip() else ""
+        blocks.append((language, code))
+    if not blocks:
+        blocks = re.findall(r'`(\w*)\r?\n(.*?)`', text, re.DOTALL)
+    return blocks
 
 
 class QualityGate:
@@ -39,7 +50,7 @@ class QualityGate:
             return QualityReport(output_type="general", score=1.0, passed=True)
 
         # Extract code blocks for targeted evaluation
-        code_blocks = re.findall(r'```(\w*)\n(.*?)```', text, re.DOTALL)
+        code_blocks = _extract_code_blocks(text)
 
         if code_blocks:
             reports = []
@@ -162,7 +173,7 @@ class QualityGate:
 
         # Optionally run LLM judge on final output
         if self.use_llm_judge and llm_client.is_configured():
-            code_blocks = re.findall(r'```(\w*)\n(.*?)```', current_output, re.DOTALL)
+            code_blocks = _extract_code_blocks(current_output)
             if code_blocks:
                 reports = []
                 for lang, code in code_blocks:
@@ -288,5 +299,42 @@ class QualityGate:
         return mapping.get(lang, "")
 
 
-# Global instance — configurable via API
-quality_gate = QualityGate(enabled=True, max_retries=1, use_llm_judge=False, best_of_n=1)
+class ContextualQualityGate:
+    """Proxy the legacy singleton API to a task-local tenant quality gate."""
+
+    def __init__(self, default_gate: QualityGate):
+        object.__setattr__(self, "_default_gate", default_gate)
+        object.__setattr__(
+            self,
+            "_current_gate",
+            contextvars.ContextVar("agenthub_quality_gate", default=None),
+        )
+
+    @property
+    def default_gate(self) -> QualityGate:
+        return object.__getattribute__(self, "_default_gate")
+
+    def current_gate(self) -> QualityGate:
+        current = object.__getattribute__(self, "_current_gate").get()
+        return current or self.default_gate
+
+    def set_current(self, gate: QualityGate):
+        return object.__getattribute__(self, "_current_gate").set(gate)
+
+    def reset_current(self, token) -> None:
+        object.__getattribute__(self, "_current_gate").reset(token)
+
+    def __getattr__(self, name):
+        return getattr(self.current_gate(), name)
+
+    def __setattr__(self, name, value):
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.current_gate(), name, value)
+
+
+# Backwards-compatible proxy; WebSocket tasks bind a tenant-specific instance.
+quality_gate = ContextualQualityGate(
+    QualityGate(enabled=True, max_retries=1, use_llm_judge=False, best_of_n=1)
+)

@@ -1,8 +1,11 @@
 import asyncio
+import contextvars
+import hashlib
 import json
 import logging
 import time
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -42,7 +45,7 @@ class ContextOptimizer:
 
         # Step 2: AST/Outline-based semantic code folding for extremely long code blocks (> 100 lines)
         # Identify fenced code blocks like ```python ... ``` or ```javascript ... ```
-        code_blocks = re.findall(r'(```(\w*)\n(.*?)```)', content, re.DOTALL)
+        code_blocks = re.findall(r'(```([^\r\n`]*)\r?\n(.*?)```)', content, re.DOTALL)
         for _full_block, _lang, code in code_blocks:
             lines = code.split("\n")
             if len(lines) > 100:
@@ -194,7 +197,7 @@ class CircuitBreaker:
                     return state, failed_attempts, last_state_change
             except Exception as e:
                 logger.warning(f"Failed to get CB state from Redis for {self.name}: {e}")
-                redis_manager._is_connected = False
+                redis_manager.mark_unavailable(e, "circuit breaker read")
 
         # Fallback to local variables
         return self.state, self.failed_attempts, self.last_state_change
@@ -220,7 +223,7 @@ class CircuitBreaker:
                 )
             except Exception as e:
                 logger.warning(f"Failed to set CB state to Redis for {self.name}: {e}")
-                redis_manager._is_connected = False
+                redis_manager.mark_unavailable(e, "circuit breaker write")
 
     async def record_success(self):
         async with self._lock:
@@ -383,6 +386,7 @@ class ResilienceManager:
         backoffs = [1.5, 3.0, 6.0]
 
         for attempt in range(max_retries):
+            stream_started = False
             try:
                 try:
                     gen = stream_func(messages, system, enabled_tools)
@@ -400,7 +404,7 @@ class ResilienceManager:
                 except Exception as e:
                     raise e
 
-                await breaker.record_success()
+                stream_started = True
                 output_chunks.append(first_chunk)
                 yield first_chunk
 
@@ -408,6 +412,7 @@ class ResilienceManager:
                     output_chunks.append(chunk)
                     yield chunk
 
+                await breaker.record_success()
                 # Successful end of LLM stream span logging
                 if span:
                     generated_text = "".join(output_chunks)
@@ -420,6 +425,29 @@ class ResilienceManager:
 
             except Exception as e:
                 logger.error(f"LLM attempt {attempt + 1} failed for {provider}: {type(e).__name__}: {e}")
+
+                # Once bytes have reached the browser, restarting the request would
+                # concatenate two independent model answers and can corrupt code.
+                if stream_started:
+                    await breaker.record_failure()
+                    err_msg = (
+                        "\n[LLM 调用出错: 流式响应在输出过程中中断，"
+                        "为避免拼接出损坏代码，本轮结果已作废，请重新发送需求。]"
+                    )
+                    output_chunks.append(err_msg)
+                    yield err_msg
+                    if span:
+                        span.finish(
+                            output_data="".join(output_chunks),
+                            status="error",
+                            metadata={
+                                "error": type(e).__name__,
+                                "model": model,
+                                "provider": provider,
+                                "partial_stream": True,
+                            },
+                        )
+                    return
 
                 retriable = True
                 if isinstance(e, LLMAPIError) and e.status_code != 429 and e.status_code < 500:
@@ -468,6 +496,35 @@ class ResilienceManager:
 resilience_manager = ResilienceManager()
 
 
+def _tenant_daily_usage_key(user_id: str) -> str:
+    tenant = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:24]
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
+    return f"agenthub:usage:llm:{tenant}:{day}"
+
+
+async def get_daily_llm_usage(user_id: str) -> dict:
+    from app.core.config import settings
+    from app.core.redis import redis_manager
+
+    if not await redis_manager.check_connection():
+        return {"available": False, "quota": settings.llm_daily_token_quota}
+    try:
+        values = await redis_manager.get_client().hgetall(_tenant_daily_usage_key(user_id))
+    except Exception as exc:
+        redis_manager.mark_unavailable(exc, "usage read")
+        return {"available": False, "quota": settings.llm_daily_token_quota}
+    return {
+        "available": True,
+        "prompt_tokens": int(values.get("prompt_tokens", 0)),
+        "completion_tokens": int(values.get("completion_tokens", 0)),
+        "total_tokens": int(values.get("total_tokens", 0)),
+        "requests": int(values.get("requests", 0)),
+        "provider": values.get("provider", ""),
+        "model": values.get("model", ""),
+        "quota": settings.llm_daily_token_quota,
+    }
+
+
 class LLMClient:
     """Unified LLM client supporting standard OpenAI Native Function Calling with delta conversion streams."""
 
@@ -478,6 +535,81 @@ class LLMClient:
         self.model: str = ""
         self.temperature: float = 0.5
         self.max_tokens: int = 8192
+        self.tenant_id: str = "legacy"
+        self._usage_context = contextvars.ContextVar(
+            f"agenthub_llm_usage_{id(self)}", default={}
+        )
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        return max(0, (len(text) + 3) // 4)
+
+    def _set_provider_usage(self, usage: dict) -> None:
+        current = dict(self._usage_context.get() or {})
+        prompt = usage.get("prompt_tokens", usage.get("input_tokens"))
+        completion = usage.get("completion_tokens", usage.get("output_tokens"))
+        if prompt is not None:
+            current["prompt_tokens"] = int(prompt)
+        if completion is not None:
+            current["completion_tokens"] = int(completion)
+        if prompt is not None or completion is not None:
+            current["estimated"] = False
+        current["provider"] = self.provider
+        current["model"] = self.model
+        current["total_tokens"] = int(
+            usage.get(
+                "total_tokens",
+                current.get("prompt_tokens", 0) + current.get("completion_tokens", 0),
+            )
+        )
+        self._usage_context.set(current)
+
+    def get_last_usage(self) -> dict:
+        return dict(self._usage_context.get() or {})
+
+    def _daily_usage_key(self) -> str:
+        return _tenant_daily_usage_key(self.tenant_id)
+
+    async def _quota_exceeded(self) -> bool:
+        from app.core.config import settings
+        from app.core.redis import redis_manager
+
+        if settings.llm_daily_token_quota <= 0 or not await redis_manager.check_connection():
+            return False
+        try:
+            total = await redis_manager.get_client().hget(
+                self._daily_usage_key(), "total_tokens"
+            )
+        except Exception as exc:
+            redis_manager.mark_unavailable(exc, "quota read")
+            logger.warning("LLM quota backend unavailable; allowing request: %s", exc)
+            return False
+        return int(total or 0) >= settings.llm_daily_token_quota
+
+    async def _persist_usage(self, usage: dict) -> None:
+        from app.core.redis import redis_manager
+
+        if not await redis_manager.check_connection():
+            return
+        try:
+            client = redis_manager.get_client()
+            key = self._daily_usage_key()
+            pipeline = client.pipeline(transaction=False)
+            pipeline.hincrby(key, "prompt_tokens", int(usage.get("prompt_tokens", 0)))
+            pipeline.hincrby(
+                key, "completion_tokens", int(usage.get("completion_tokens", 0))
+            )
+            pipeline.hincrby(key, "total_tokens", int(usage.get("total_tokens", 0)))
+            pipeline.hincrby(key, "requests", 1)
+            pipeline.hset(key, mapping={
+                "provider": usage.get("provider", self.provider),
+                "model": usage.get("model", self.model),
+            })
+            pipeline.expire(key, 90 * 24 * 60 * 60)
+            await pipeline.execute()
+        except Exception as exc:
+            redis_manager.mark_unavailable(exc, "usage write")
+            logger.warning("LLM usage telemetry could not be persisted: %s", exc)
 
     def configure(self, provider: str, api_key: str, base_url: str, model: str,
                   temperature: float | None = None, max_tokens: int | None = None):
@@ -563,35 +695,64 @@ class LLMClient:
 
     async def chat_stream(self, messages: list[dict], system: str = "", enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
         optimized_messages = ContextOptimizer.optimize_messages(messages)
+        prompt_text = system + "\n" + "\n".join(
+            str(message.get("content", "")) for message in optimized_messages
+        )
+        self._usage_context.set({
+            "prompt_tokens": self._estimate_tokens(prompt_text),
+            "completion_tokens": 0,
+            "total_tokens": self._estimate_tokens(prompt_text),
+            "estimated": True,
+            "provider": self.provider,
+            "model": self.model,
+        })
+        if await self._quota_exceeded():
+            yield "\n[LLM 调用已达到当前租户的每日 Token 配额，请联系管理员。]"
+            return
 
+        completion_chars = 0
         try:
             if self.provider == "opencode":
                 async for chunk in resilience_manager.execute_with_retry(self, self._opencode_stream, optimized_messages, system, enabled_tools):
+                    completion_chars += len(chunk)
                     yield chunk
             elif self.provider == "claude_code":
                 async for chunk in resilience_manager.execute_with_retry(self, self._claude_code_stream, optimized_messages, system, enabled_tools):
+                    completion_chars += len(chunk)
                     yield chunk
             elif self.provider == "anthropic":
                 async for chunk in resilience_manager.execute_with_retry(self, self._anthropic_stream, optimized_messages, system, enabled_tools):
+                    completion_chars += len(chunk)
                     yield chunk
             elif self.provider == "ollama":
                 if not self.base_url:
                     self.base_url = "http://127.0.0.1:11434/v1"
                 async for chunk in resilience_manager.execute_with_retry(self, self._openai_stream, optimized_messages, system, enabled_tools):
+                    completion_chars += len(chunk)
                     yield chunk
             else:
                 async for chunk in resilience_manager.execute_with_retry(self, self._openai_stream, optimized_messages, system, enabled_tools):
+                    completion_chars += len(chunk)
                     yield chunk
         except Exception as e:
-            yield f"\n[LLM 调用出错: {type(e).__name__}: {str(e)[:200]}]"
+            error_text = f"\n[LLM 调用出错: {type(e).__name__}: {str(e)[:200]}]"
+            completion_chars += len(error_text)
+            yield error_text
+        finally:
+            usage = self.get_last_usage()
+            if usage.get("estimated", True):
+                usage["completion_tokens"] = (completion_chars + 3) // 4
+                usage["total_tokens"] = usage.get("prompt_tokens", 0) + usage["completion_tokens"]
+                self._usage_context.set(usage)
+            await self._persist_usage(usage)
 
     def _get_api_tools(self, enabled_tools: list[str] | None = None) -> list[dict]:
         """Convert AgentTools dynamically into standard API tools definition format."""
         try:
-            from app.tools.registry import TOOL_REGISTRY
+            from app.tools.registry import TOOL_REGISTRY, is_tool_enabled
             api_tools = []
             for name, tool in TOOL_REGISTRY.items():
-                if not tool.enabled:
+                if not is_tool_enabled(name):
                     continue
                 if enabled_tools is not None and name not in enabled_tools:
                     continue
@@ -653,6 +814,8 @@ class LLMClient:
                             break
                         try:
                             chunk = json.loads(data)
+                            if chunk.get("usage"):
+                                self._set_provider_usage(chunk["usage"])
                             choices = chunk.get("choices", [])
                             if not choices:
                                 continue
@@ -745,6 +908,10 @@ class LLMClient:
                         try:
                             event = json.loads(line[6:])
                             event_type = event.get("type")
+                            if event_type == "message_start":
+                                self._set_provider_usage(event.get("message", {}).get("usage", {}))
+                            elif event_type == "message_delta":
+                                self._set_provider_usage(event.get("usage", {}))
 
                             # 1. Text chunk delta
                             if event_type == "content_block_delta":
@@ -795,7 +962,42 @@ class LLMClient:
             yield chunk
 
 
-llm_client = LLMClient()
+class ContextualLLMClient:
+    """Proxy the legacy singleton API to a task-local tenant client."""
+
+    def __init__(self, default_client: LLMClient):
+        object.__setattr__(self, "_default_client", default_client)
+        object.__setattr__(
+            self,
+            "_current_client",
+            contextvars.ContextVar("agenthub_llm_client", default=None),
+        )
+
+    @property
+    def default_client(self) -> LLMClient:
+        return object.__getattribute__(self, "_default_client")
+
+    def current_client(self) -> LLMClient:
+        current = object.__getattribute__(self, "_current_client").get()
+        return current or self.default_client
+
+    def set_current(self, client: LLMClient):
+        return object.__getattribute__(self, "_current_client").set(client)
+
+    def reset_current(self, token) -> None:
+        object.__getattribute__(self, "_current_client").reset(token)
+
+    def __getattr__(self, name):
+        return getattr(self.current_client(), name)
+
+    def __setattr__(self, name, value):
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.current_client(), name, value)
+
+
+llm_client = ContextualLLMClient(LLMClient())
 
 
 def _sanitize_for_anthropic(messages: list[dict]) -> list[dict]:

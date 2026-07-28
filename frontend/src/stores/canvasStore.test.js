@@ -12,6 +12,7 @@ describe('canvasStore', () => {
       previewHtml: null,
       generatedCode: null,
       previousCode: '',
+      projectRevision: 0,
       isDeploying: false,
       deployLogs: [],
       deployedUrl: '',
@@ -19,6 +20,7 @@ describe('canvasStore', () => {
       deployResultType: 'site',
       deployTarget: 'web',
       deployStatus: 'idle',
+      deployResultVisible: false,
       tasks: [
         { id: 1, title: '设计页面 UI', assignee: 'agent_designer', status: 'todo' },
         { id: 2, title: '实现前端组件', assignee: 'agent_frontend', status: 'todo' },
@@ -97,6 +99,12 @@ describe('canvasStore', () => {
     expect(state.previousCode).toBe('first code')
   })
 
+  it('should increment project revision for external file updates', () => {
+    useCanvasStore.getState().notifyProjectChanged()
+    useCanvasStore.getState().notifyProjectChanged()
+    expect(useCanvasStore.getState().projectRevision).toBe(2)
+  })
+
   // ---------- Deploy lifecycle ----------
 
   it('should start deploy', () => {
@@ -121,6 +129,16 @@ describe('canvasStore', () => {
     useCanvasStore.getState().finishDeploy('https://example.com')
     const state = useCanvasStore.getState()
     expect(state.isDeploying).toBe(false)
+    expect(state.deployStatus).toBe('success')
+    expect(state.deployedUrl).toBe('https://example.com')
+    expect(state.deployResultVisible).toBe(true)
+  })
+
+  it('should dismiss a completed deploy result without clearing deployment data', () => {
+    useCanvasStore.getState().finishDeploy('https://example.com')
+    useCanvasStore.getState().dismissDeployResult()
+    const state = useCanvasStore.getState()
+    expect(state.deployResultVisible).toBe(false)
     expect(state.deployStatus).toBe('success')
     expect(state.deployedUrl).toBe('https://example.com')
   })
@@ -151,6 +169,7 @@ describe('canvasStore', () => {
     expect(state.deployStatus).toBe('idle')
     expect(state.deployLogs).toEqual([])
     expect(state.deployedUrl).toBe('')
+    expect(state.deployResultVisible).toBe(false)
   })
 
   // ---------- Task management ----------

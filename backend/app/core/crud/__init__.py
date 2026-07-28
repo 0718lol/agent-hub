@@ -25,6 +25,7 @@ from app.core.crud.conversations import create_conversation, get_conversations
 
 # Cron Tasks
 from app.core.crud.cron import (
+    claim_cron_task,
     delete_cron_task,
     get_cron_tasks,
     get_due_cron_tasks,
@@ -82,6 +83,7 @@ __all__ = [
     "get_custom_agents",
     "save_custom_agent",
     # Cron Tasks
+    "claim_cron_task",
     "delete_cron_task",
     "get_cron_tasks",
     "get_due_cron_tasks",

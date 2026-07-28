@@ -11,7 +11,8 @@ from sqlmodel import create_engine
 
 _db_logger = _logging.getLogger("database._engine")
 
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'agenthub.db')
+_DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'agenthub.db')
+DB_PATH = os.path.abspath(os.path.expanduser(os.environ.get('AGENTHUB_DB_PATH', _DEFAULT_DB_PATH)))
 
 db_url = os.environ.get('DATABASE_URL')
 if db_url:

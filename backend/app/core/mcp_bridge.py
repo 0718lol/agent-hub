@@ -252,17 +252,23 @@ class BuiltinMCPServer:
         """Standard synchronous implementation to read the content of the specified workspace resource URI."""
         if uri == "workspace://repomap":
             from app.core.repo_map import codebase_map_scanner
-            # Pick workspace sandbox directory safely
-            workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-            if conversation_id:
-                if ".." in conversation_id or "/" in conversation_id or "\\" in conversation_id:
-                    raise ValueError("Invalid conversation_id")
-                sandbox_dir = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")), "agenthub_export", conversation_id)
-                if os.path.exists(sandbox_dir):
-                    workspace_dir = sandbox_dir
+            from app.core.workspace import resolve_workspace
 
-            logger.info(f"MCP Resource workspace://repomap called (Sync). Scanning workspace path: {workspace_dir}")
-            return codebase_map_scanner.scan_directory(workspace_dir)
+            if not conversation_id:
+                return "（当前没有关联的项目工作区）"
+            workspace = resolve_workspace(
+                conversation_id,
+                create=False,
+                migrate_legacy=False,
+            )
+            if workspace is None or not workspace.is_dir():
+                return "（当前项目工作区尚未创建）"
+
+            logger.info(
+                "MCP Resource workspace://repomap scanning project workspace: %s",
+                workspace,
+            )
+            return codebase_map_scanner.scan_directory(str(workspace))
 
         raise ValueError(f"Unknown Resource URI: {uri}")
 

@@ -72,6 +72,16 @@ class RedisManager:
             self._is_connected = False
             return False
 
+    def mark_unavailable(self, error: Exception, operation: str = "operation") -> None:
+        """Invalidate a cached healthy probe after an actual Redis command fails."""
+        was_connected = self._is_connected is True
+        self._is_connected = False
+        # A previously healthy connection gets one quick recovery probe. If
+        # that probe fails, check_connection applies the normal 30s backoff.
+        self._last_probe_time = time.time() - max(0.0, self._offline_probe_ttl - 1.0)
+        if was_connected:
+            logger.warning("Redis %s failed; marking connection unavailable: %s", operation, error)
+
     async def close(self):
         """Close the Redis client connection pool safely."""
         if self._client:

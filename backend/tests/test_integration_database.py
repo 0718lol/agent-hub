@@ -271,6 +271,20 @@ class TestCustomAgentPersistence:
         assert matching[0]["name"] == "新名"
         assert matching[0]["tools"] == ["tool_new"]
 
+    def test_custom_agents_are_filtered_and_deleted_by_tenant(self):
+        from app.core.crud import delete_custom_agent, get_custom_agents, save_custom_agent
+
+        save_custom_agent(
+            "agent_tenant_a", "A", "A", "role", "style", "prompt", [], "user-A"
+        )
+        save_custom_agent(
+            "agent_tenant_b", "B", "B", "role", "style", "prompt", [], "user-B"
+        )
+
+        assert [agent["agent_id"] for agent in get_custom_agents("user-A")] == ["agent_tenant_a"]
+        assert delete_custom_agent("agent_tenant_b", "user-A") is False
+        assert delete_custom_agent("agent_tenant_b", "user-B") is True
+
 
 # ===================================================================
 # Cron Task tests
@@ -406,6 +420,16 @@ class TestKnowledgeDocLifecycle:
 
         delete_knowledge_doc("doc_del_001")
         assert not any(d["id"] == "doc_del_001" for d in get_knowledge_docs())
+
+    def test_knowledge_documents_are_tenant_scoped(self):
+        from app.core.crud import delete_knowledge_doc, get_knowledge_docs, save_knowledge_doc
+
+        save_knowledge_doc("doc_tenant_a", "a.txt", user_id="user-A")
+        save_knowledge_doc("doc_tenant_b", "b.txt", user_id="user-B")
+
+        assert [doc["id"] for doc in get_knowledge_docs("user-A")] == ["doc_tenant_a"]
+        assert delete_knowledge_doc("doc_tenant_b", "user-A") is False
+        assert delete_knowledge_doc("doc_tenant_b", "user-B") is True
 
 
 # ===================================================================

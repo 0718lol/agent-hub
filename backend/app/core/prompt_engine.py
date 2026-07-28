@@ -218,7 +218,12 @@ class PromptEngine:
                     try:
                         # Fetch project code outline skeleton via standard MCP Resource reading protocol
                         repo_map = mcp_bridge_manager.read_builtin_resource_sync("workspace://repomap", conversation_id)
-                        sections.append(f"\n\n【📂 当前工作区沙盒代码符号地图】:\n{repo_map}")
+                        sections.append(
+                            "\n\n【当前项目文件地图】:\n"
+                            f"{repo_map}\n"
+                            "修改已有工程时，必须先使用 file_read 或 file_view_windowed "
+                            "读取相关文件，再输出完整文件内容；不要根据文件名猜测现有实现。"
+                        )
                     except Exception:
                         # Fallback silently to prevent system interruption
                         pass

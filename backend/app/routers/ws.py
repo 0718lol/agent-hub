@@ -1,18 +1,26 @@
 ﻿"""WebSocket endpoint for real-time agent communication."""
 import asyncio
 import contextlib
-import hmac
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save_message
-from app.core.auth import SESSION_COOKIE, verify_session_token
+from app.core.auth import (
+    SESSION_COOKIE,
+    bearer_client_identity,
+    trusted_proxy_identity,
+    trusted_proxy_role,
+    verify_session_token,
+)
 from app.core.concurrency import generation_admission
 from app.core.config import settings
 from app.core.crud import create_conversation
+from app.core.llm_client import llm_client
 from app.core.logging_config import get_logger
-from app.core.tenancy import has_valid_api_client_id, scope_conversation_id, websocket_user_id
+from app.core.quality_gate import quality_gate
+from app.core.tenancy import scope_conversation_id, websocket_user_id
+from app.core.tenant_settings import get_tenant_llm_client, get_tenant_quality_gate
 from app.core.websocket import manager
 from app.routers.harness_handler import handle_verdict
 from app.services.agent_orchestrator import (
@@ -22,20 +30,23 @@ from app.services.agent_orchestrator import (
     run_target_agent_flow,
     run_user_message_flow,
 )
-from app.tools.judge_tools import _pending_interactions
+from app.services.generation_queue import (
+    GenerationAlreadyQueued,
+    GenerationQueueUnavailable,
+    generation_queue,
+)
+from app.services.generation_runner import run_admitted_flow
+from app.tools.judge_tools import (
+    _pending_interactions,
+    submit_distributed_hil_reply,
+)
+from app.tools.registry import reset_tool_tenant, set_tool_tenant
 
 router = APIRouter()
 logger = get_logger("ws")
 
 # Background task tracking
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
-
-
-async def _run_admitted_flow(user_id: str, conversation_id: str, flow) -> None:
-    try:
-        await flow
-    finally:
-        await generation_admission.release(user_id, conversation_id)
 
 
 def create_tracked_task(coro, name: str | None = None) -> asyncio.Task:
@@ -68,20 +79,25 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     # An empty secret explicitly means authentication is disabled. This is
     # needed for local Docker deployments, where the peer is the nginx
     # container rather than 127.0.0.1. Production compose requires a secret.
-    authorized = not settings.api_secret
+    auth_required = bool(settings.api_secret or settings.api_client_tokens_json) or settings.auth_mode == "proxy"
+    authorized = not auth_required
 
-    if settings.api_secret:
-        header_token = websocket.headers.get("x-api-secret")
-        header_authorized = header_token and hmac.compare_digest(header_token, settings.api_secret)
-        if header_authorized and (settings.debug or has_valid_api_client_id(websocket.headers)):
+    if auth_required:
+        if trusted_proxy_identity(websocket.headers) or bearer_client_identity(websocket.headers):
             authorized = True
-        if verify_session_token(websocket.cookies.get(SESSION_COOKIE), settings.api_secret):
+        if settings.api_secret and verify_session_token(
+            websocket.cookies.get(SESSION_COOKIE), settings.api_secret
+        ):
             authorized = True
     if not authorized:
         await websocket.accept()
         await websocket.close(code=4001, reason="Unauthorized connection attempt")
         return
 
+    read_only = (
+        bool(trusted_proxy_identity(websocket.headers))
+        and trusted_proxy_role(websocket.headers) == "viewer"
+    )
     user_id = websocket_user_id(websocket)
     try:
         conversation_id = scope_conversation_id(user_id, public_conversation_id)
@@ -89,6 +105,8 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
         await websocket.accept()
         await websocket.close(code=4002, reason="Invalid conversation ID")
         return
+    tenant_client = await asyncio.to_thread(get_tenant_llm_client, user_id)
+    tenant_quality_gate = await asyncio.to_thread(get_tenant_quality_gate, user_id)
     # Direct WebSocket clients may connect before the REST conversation list
     # initializes this tenant's default rows.
     await asyncio.to_thread(
@@ -103,6 +121,17 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     )
 
     await manager.connect(websocket, conversation_id)
+    generation_status = await generation_admission.get_status(conversation_id)
+    if generation_status.get("state") in {"queued", "running", "cancelling"}:
+        await websocket.send_json({
+            "type": "generating",
+            "conversation_id": public_conversation_id,
+            "is_generating": True,
+            "state": generation_status["state"],
+        })
+    tenant_client_token = llm_client.set_current(tenant_client)
+    tenant_quality_token = quality_gate.set_current(tenant_quality_gate)
+    tenant_tool_token = set_tool_tenant(user_id)
     try:
         while True:
             data = await websocket.receive_text()
@@ -121,7 +150,19 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             text = content.get("text", "")
             target_agent = content.get("target_agent")
 
+            if read_only and msg_type != "read":
+                await websocket.send_json({
+                    "type": "error",
+                    "conversation_id": public_conversation_id,
+                    "content": {"text": "Viewer role is read-only"},
+                })
+                continue
+
             logger.debug(f"conv={conversation_id} type={msg_type} sender={sender} target_agent={target_agent} text={text[:60]}")
+
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
 
             # Intercept user interaction response if there's a pending interactive judge wait
             is_active_hil = conversation_id in _pending_interactions
@@ -149,8 +190,22 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                         with contextlib.suppress(asyncio.InvalidStateError):
                             fut.set_result(reply_text)
                 else:
-                    # Recovery path: trigger asynchronous recovery task
-                    create_tracked_task(resume_graph_from_checkpoint(conversation_id, reply_text), name=f"resume_graph_{conversation_id}")
+                    status = await generation_admission.get_status(conversation_id)
+                    bridged = (
+                        settings.generation_worker_enabled
+                        and status.get("state") in {"queued", "running", "cancelling"}
+                        and await submit_distributed_hil_reply(
+                            conversation_id, reply_text
+                        )
+                    )
+                    if not bridged:
+                        # No live Worker owns the flow; resume from the DB checkpoint.
+                        create_tracked_task(
+                            resume_graph_from_checkpoint(
+                                conversation_id, reply_text
+                            ),
+                            name=f"resume_graph_{conversation_id}",
+                        )
 
                 # We still want to save and broadcast this message to display it in the Chat UI as a user reply
                 await async_save_message(conversation_id, sender, content, streaming=False)
@@ -167,6 +222,12 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             # the in-flight generation task (which is why generation runs as a
             # background task, not awaited here).
             if msg_type == "stop":
+                if settings.generation_worker_enabled:
+                    with contextlib.suppress(GenerationQueueUnavailable):
+                        await generation_queue.request_cancel_by_conversation(
+                            conversation_id
+                        )
+                await generation_admission.request_cancel(conversation_id)
                 event = _stop_events.get(conversation_id)
                 logger.debug(f"[STOP] conv={conversation_id} event_exists={event is not None} already_set={event.is_set() if event else 'N/A'}")
                 if event:
@@ -195,14 +256,37 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 if stripped.isdigit() or all(c in "!@#$%^&*()_+-=[]{}|;:',.<>?/~`" for c in stripped):
                     continue
 
-                admitted, reason = await generation_admission.acquire(user_id, conversation_id)
-                if not admitted:
-                    await manager.broadcast(conversation_id, {
-                        "type": "error",
-                        "conversation_id": conversation_id,
-                        "content": {"text": reason},
-                    })
-                    continue
+                current_agents = get_agents(conversation_id)
+                queued_job = None
+                if settings.generation_worker_enabled:
+                    try:
+                        queued_job = await generation_queue.enqueue(
+                            conversation_id,
+                            user_id,
+                            text,
+                            target_agent if target_agent in current_agents else None,
+                        )
+                    except (GenerationAlreadyQueued, GenerationQueueUnavailable) as exc:
+                        await manager.broadcast(conversation_id, {
+                            "type": "error",
+                            "conversation_id": conversation_id,
+                            "content": {"text": str(exc)},
+                        })
+                        continue
+                else:
+                    admitted, reason = await generation_admission.acquire(
+                        user_id, conversation_id
+                    )
+                    if not admitted:
+                        await manager.broadcast(conversation_id, {
+                            "type": "error",
+                            "conversation_id": conversation_id,
+                            "content": {"text": reason},
+                        })
+                        continue
+            else:
+                current_agents = get_agents(conversation_id)
+                queued_job = None
 
             await async_save_message(conversation_id, sender, content, streaming=False)
 
@@ -214,10 +298,17 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 "stream": False,
             })
 
-            current_agents = get_agents()
-            if target_agent and target_agent in current_agents:
+            if queued_job is not None:
+                await manager.broadcast(conversation_id, {
+                    "type": "generating",
+                    "conversation_id": conversation_id,
+                    "is_generating": True,
+                    "state": "queued",
+                    "job_id": queued_job.id,
+                })
+            elif sender == "user" and target_agent and target_agent in current_agents:
                 create_tracked_task(
-                    _run_admitted_flow(
+                    run_admitted_flow(
                         user_id,
                         conversation_id,
                         run_target_agent_flow(conversation_id, current_agents[target_agent], text),
@@ -226,7 +317,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 )
             elif sender == "user":
                 create_tracked_task(
-                    _run_admitted_flow(
+                    run_admitted_flow(
                         user_id,
                         conversation_id,
                         run_user_message_flow(conversation_id, text, target_agent),
@@ -238,3 +329,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
         manager.disconnect(websocket, conversation_id)
         # A browser refresh or brief network loss must not abort generation.
         # The explicit "stop" message remains the only user cancellation path.
+    finally:
+        reset_tool_tenant(tenant_tool_token)
+        quality_gate.reset_current(tenant_quality_token)
+        llm_client.reset_current(tenant_client_token)

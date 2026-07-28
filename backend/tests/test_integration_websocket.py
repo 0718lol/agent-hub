@@ -64,11 +64,13 @@ def ws_app():
 
 
 @pytest.fixture(autouse=True)
-def _set_api_secret():
+def _set_api_secret(monkeypatch):
     """Set a known api_secret for every test so auth logic is deterministic."""
-    with patch("app.routers.ws.settings") as mock_settings:
-        mock_settings.api_secret = "test-secret"
-        yield
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "api_secret", "test-secret")
+    monkeypatch.setattr(settings, "api_client_tokens_json", "")
+    monkeypatch.setattr(settings, "auth_mode", "shared")
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +172,7 @@ async def test_connect_with_wrong_token_rejected(ws_app):
 @pytest.mark.asyncio
 async def test_connect_localhost_no_secret_allowed(ws_app):
     """When api_secret is empty, localhost clients should be allowed through."""
-    with patch("app.routers.ws.settings") as mock_settings:
-        mock_settings.api_secret = ""
+    with patch("app.routers.ws.settings.api_secret", ""):
 
         async with ASGIWebSocketTransport(app=ws_app) as transport:
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
@@ -186,6 +187,23 @@ async def test_connect_localhost_no_secret_allowed(ws_app):
 # ---------------------------------------------------------------------------
 # Message flow tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ping_receives_pong_without_starting_generation(ws_app):
+    async with ASGIWebSocketTransport(app=ws_app) as transport:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            headers={"x-api-secret": "test-secret"},
+        ) as client:
+            async with aconnect_ws(
+                "ws://testserver/ws/conv_ping", client
+            ) as ws:
+                await ws.send_text(json.dumps({"type": "ping"}))
+                response = await _receive_json(ws)
+
+                assert response == {"type": "pong"}
 
 
 @pytest.mark.asyncio

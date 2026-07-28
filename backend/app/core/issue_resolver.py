@@ -93,7 +93,7 @@ async def resolve_issue(issue, llm_client=None):
         resp = ""
         async for c in llm_client.chat_stream([{"role": "user", "content": prompt}]):
             resp += c
-        code_match = re.search(r"```(?:python|jsx|js)?\n(.*?)```", resp, re.DOTALL)
+        code_match = re.search(r"```(?:python|jsx|js)?[^\r\n`]*\r?\n(.*?)```", resp, re.DOTALL)
         if code_match:
             fixed = code_match.group(1).strip()
             fixes.append({"file": loc.get("file"), "original": content, "fixed": fixed})

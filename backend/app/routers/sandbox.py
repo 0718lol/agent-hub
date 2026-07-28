@@ -1,13 +1,15 @@
 """Code sandbox execution and healing endpoints."""
+import asyncio
 import logging
 import re
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from app.core.llm_client import llm_client
 from app.core.metrics import metrics
 from app.core.sandbox import execute_code
+from app.core.tenancy import request_user_id
+from app.core.tenant_settings import get_tenant_llm_client
 
 logger = logging.getLogger("routers.sandbox")
 router = APIRouter(tags=["sandbox"])
@@ -21,7 +23,7 @@ class CodeRunRequest(BaseModel):
 
 
 @router.post("/sandbox/run")
-async def sandbox_run(req: CodeRunRequest):
+async def sandbox_run(req: CodeRunRequest, request: Request):
     """Execute code in a sandboxed subprocess and return results."""
     result = await execute_code(
         code=req.code,
@@ -29,7 +31,12 @@ async def sandbox_run(req: CodeRunRequest):
         timeout=max(1, min(req.timeout, 30)),
         stdin_data=req.stdin,
     )
-    metrics.record_sandbox(req.language, result.status, result.duration_ms)
+    metrics.record_sandbox(
+        req.language,
+        result.status,
+        result.duration_ms,
+        user_id=request_user_id(request),
+    )
     return result.to_dict()
 
 
@@ -40,7 +47,7 @@ class CodeHealRequest(BaseModel):
 
 
 @router.post("/sandbox/heal")
-async def sandbox_heal(req: CodeHealRequest):
+async def sandbox_heal(req: CodeHealRequest, request: Request):
     """Ask backend agent to heal broken code."""
     prompt = (
         f"你是一个专门修复代码报错的 AI 专家。\n"
@@ -53,7 +60,8 @@ async def sandbox_heal(req: CodeHealRequest):
 
     response = ""
     try:
-        async for chunk in llm_client.chat_stream(
+        client = await asyncio.to_thread(get_tenant_llm_client, request_user_id(request))
+        async for chunk in client.chat_stream(
             [{"role": "user", "content": prompt}],
             "你是代码修复专家。只输出修复后的完整代码，不要解释。"
         ):

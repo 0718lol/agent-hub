@@ -136,9 +136,10 @@ class SkillLibrary:
     def extract_skills_from_output(self, output: str, agent_id: str) -> list[dict]:
         """Extract reusable code snippets from agent output."""
         skills = []
-        code_blocks = re.findall(r'```(\w*)\n(.*?)```', output, re.DOTALL)
+        code_blocks = re.findall(r'```([^\r\n`]*)\r?\n(.*?)```', output, re.DOTALL)
 
-        for lang, code in code_blocks:
+        for info, code in code_blocks:
+            lang = info.split()[0].split(":", 1)[0] if info.strip() else ""
             code = code.strip()
             if len(code) < 30:
                 continue

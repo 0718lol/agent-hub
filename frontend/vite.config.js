@@ -13,6 +13,7 @@ export default defineConfig({
         ws: true,
       },
       '/uploads': 'http://127.0.0.1:8000',
+      '/published': 'http://127.0.0.1:8000',
     },
   },
   test: {

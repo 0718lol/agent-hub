@@ -6,21 +6,25 @@ import io
 import json
 import os
 import re
+import shutil
+import tarfile
 import tempfile
 import uuid
 import zipfile
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Awaitable, Callable
 
 import httpx
 
 from app.core.config import deobfuscate_key, settings
 from app.core.file_storage import FileStorageManager
+from app.core.workspace import resolve_workspace
 
 MAX_DEPLOY_FILES = 2_000
 MAX_DEPLOY_BYTES = 100 * 1024 * 1024
-IGNORED_DIRECTORIES = {".git", "node_modules", ".venv", "venv", "__pycache__"}
+IGNORED_DIRECTORIES = {".git", ".agenthub", "node_modules", ".venv", "venv", "__pycache__"}
 DEPLOY_TARGETS = {"auto", "web", "api", "apk", "miniprogram"}
 ProgressCallback = Callable[[str, str, int], Awaitable[None]]
 CancellationCallback = Callable[[], Awaitable[bool]]
@@ -123,11 +127,10 @@ class DeploymentResult:
 
 
 def get_workspace_path(conversation_id: str) -> Path:
-    if not conversation_id or any(char in conversation_id for char in ("/", "\\")) or ".." in conversation_id:
+    workspace = resolve_workspace(conversation_id, create=False)
+    if workspace is None:
         raise DeploymentError("Invalid conversation ID")
-    root = Path(__file__).resolve().parents[3] / "agenthub_export"
-    workspace = (root / conversation_id).resolve()
-    if workspace.parent != root.resolve() or not workspace.is_dir():
+    if not workspace.is_dir():
         raise DeploymentError("No generated project was found for this conversation")
     return workspace
 
@@ -211,7 +214,7 @@ def build_static_site_archive(workspace: Path) -> bytes:
 
 
 def _web_root(workspace: Path) -> Path:
-    for candidate in (workspace, workspace / "dist", workspace / "build"):
+    for candidate in (workspace / "dist", workspace / "build", workspace):
         if (candidate / "index.html").is_file():
             return candidate
     raise DeploymentError("Web pipeline requires index.html in the project root, dist, or build directory")
@@ -278,6 +281,11 @@ def _latest_apk(android_root: Path) -> Path | None:
     return max(apks, key=lambda path: path.stat().st_mtime) if apks else None
 
 
+def _clear_existing_apks(android_root: Path) -> None:
+    for apk in android_root.glob("**/build/outputs/apk/**/*.apk"):
+        apk.unlink(missing_ok=True)
+
+
 async def _build_apk(
     workspace: Path,
     progress: ProgressCallback,
@@ -285,10 +293,7 @@ async def _build_apk(
 ) -> bytes:
     await _raise_if_cancelled(cancelled)
     android_root = _android_root(workspace)
-    existing = await asyncio.to_thread(_latest_apk, android_root)
-    if existing:
-        await progress("build", f"发现现有 APK：{existing.name}，正在归档...", 60)
-        return await asyncio.to_thread(existing.read_bytes)
+    await asyncio.to_thread(_clear_existing_apks, android_root)
 
     await progress("dependencies", "正在解析 Gradle 和 Android 构建依赖...", 30)
     await progress("build", "执行 Gradle assembleRelease，首次构建可能需要下载 Android 依赖...", 45)
@@ -317,7 +322,7 @@ async def _build_apk(
             "--pids-limit", "256",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
-            "--tmpfs", "/tmp:rw,nosuid,size=512m",
+            "--tmpfs", "/tmp:rw,nosuid,size=512m",  # nosec B108
             "--mount", mount,
             "-w", build_dir,
             settings.builder_image,
@@ -401,6 +406,89 @@ async def _run_docker_command(
     return text.strip()
 
 
+def _clear_web_build_outputs(workspace: Path) -> None:
+    for directory in (workspace / "dist", workspace / "build"):
+        if directory.is_dir():
+            shutil.rmtree(directory)
+
+
+async def _build_web_project(
+    workspace: Path,
+    progress: ProgressCallback,
+    cancelled: CancellationCallback | None = None,
+) -> Path:
+    package = _read_package_json(workspace)
+    scripts = package.get("scripts", {}) if isinstance(package, dict) else {}
+    if not isinstance(scripts, dict) or not scripts.get("build"):
+        return _web_root(workspace)
+
+    await _raise_if_cancelled(cancelled)
+    await asyncio.to_thread(_clear_web_build_outputs, workspace)
+    install = "npm ci" if (workspace / "package-lock.json").is_file() else "npm install"
+    await progress("dependencies", "正在隔离安装 Web 依赖...", 32)
+
+    if settings.docker_sandbox:
+        suffix = hashlib.sha256(str(workspace).encode("utf-8")).hexdigest()[:12]
+        if str(workspace).startswith("/agenthub_export/"):
+            project_subpath = workspace.relative_to("/agenthub_export").as_posix()
+            mount = (
+                f"type=volume,src={settings.generated_projects_volume},dst=/workspace,"
+                f"volume-subpath={project_subpath}"
+            )
+        else:
+            mount = f"type=bind,src={workspace},dst=/workspace"
+        command = [
+            "docker", "run", "--rm",
+            "--name", f"agenthub-web-build-{suffix}",
+            "--network", settings.runtime_dependency_network,
+            "--memory", settings.deployment_build_memory,
+            "--cpus", settings.deployment_build_cpus,
+            "--pids-limit", str(settings.deployment_build_pids),
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--tmpfs", "/tmp:rw,nosuid,size=1024m",  # nosec B108
+            "--mount", mount,
+            "-w", "/workspace",
+            "-e", "HOME=/tmp",
+            "-e", "npm_config_cache=/tmp/.npm",
+            settings.runtime_sandbox_image,
+            "sh", "-lc",
+            f"{install} --no-audit --no-fund && npm run build",
+        ]
+        await _run_docker_command(command, 600, "Web 项目构建", cancelled)
+    elif settings.allow_unsandboxed_shell:
+        process = await asyncio.create_subprocess_exec(
+            *install.split(), "--no-audit", "--no-fund",
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output, _ = await _communicate_cancellable(
+            process, timeout=300, action="Web 依赖安装", cancelled=cancelled
+        )
+        if process.returncode != 0:
+            raise DeploymentError(output.decode("utf-8", errors="replace")[-1600:])
+        process = await asyncio.create_subprocess_exec(
+            "npm", "run", "build",
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output, _ = await _communicate_cancellable(
+            process, timeout=300, action="Web 项目构建", cancelled=cancelled
+        )
+        if process.returncode != 0:
+            raise DeploymentError(output.decode("utf-8", errors="replace")[-1600:])
+    else:
+        raise DeploymentError("没有可用的隔离构建环境，禁止在主机直接执行 Web 构建")
+
+    await progress("build", "Web 项目编译完成，正在校验发布产物...", 62)
+    for candidate in (workspace / "dist", workspace / "build"):
+        if (candidate / "index.html").is_file():
+            return candidate
+    raise DeploymentError("Web 构建完成但未找到 dist/index.html 或 build/index.html")
+
+
 async def _deploy_api_container(
     workspace: Path,
     deployment_id: str,
@@ -421,9 +509,18 @@ async def _deploy_api_container(
     container_name = f"agenthub-api-{suffix}"
     await progress("dependencies", "正在校验 Dockerfile、端口和服务依赖...", 30)
     await progress("build", "正在隔离构建 API 容器镜像...", 45)
+    try:
+        cpu_quota = max(10_000, int(float(settings.deployment_build_cpus) * 100_000))
+    except ValueError as exc:
+        raise DeploymentError("Invalid deployment build CPU limit") from exc
     await _run_docker_command(
         [
             "docker", "build", "--pull=false",
+            "--network", settings.deployment_build_network,
+            "--memory", settings.deployment_build_memory,
+            "--cpu-period", "100000",
+            "--cpu-quota", str(cpu_quota),
+            "--shm-size", "256m",
             "--label", "agenthub.managed=true",
             "--label", f"agenthub.deployment={deployment_id}",
             "-t", image_name, str(workspace),
@@ -452,7 +549,7 @@ async def _deploy_api_container(
                 "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges:true",
                 "--read-only",
-                "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+                "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",  # nosec B108
                 "--user", "65532:65532",
                 "-e", "PYTHONDONTWRITEBYTECODE=1",
                 image_name,
@@ -580,7 +677,9 @@ async def _sign_apk(
                 raise
         await progress("sign", "正在使用系统演示密钥签名 APK（仅用于测试安装）...", 74)
     elif mode == "uploaded":
-        keystore = _owned_secret_path(user_id, options.get("keystore_file_id", ""))
+        keystore = await asyncio.to_thread(
+            _owned_secret_path, user_id, options.get("keystore_file_id", "")
+        )
         alias = options.get("key_alias", "")
         store_password = deobfuscate_key(options.get("store_password", ""))
         key_password = deobfuscate_key(options.get("key_password", "")) or store_password
@@ -631,13 +730,131 @@ async def _upload_miniprogram(
     version = options.get("version", "1.0.0")
     if not re.fullmatch(r"[0-9A-Za-z._-]{1,32}", version):
         raise DeploymentError("小程序版本号格式不正确")
-    private_key = _owned_secret_path(user_id, private_key_id)
+    private_key = await asyncio.to_thread(_owned_secret_path, user_id, private_key_id)
     script = Path(__file__).resolve().parents[1] / "scripts" / "miniprogram_upload.js"
     await progress("upload", f"正在通过微信 miniprogram-ci 上传版本 {version}...", 82)
     await _run_trusted_command([
-        "node", str(script), str(workspace), appid, str(private_key), version,
-        options.get("description", "AgentHub 发布"),
+        "node", str(script), "upload", str(workspace), appid, str(private_key), version,
+        options.get("description", "AgentHub 发布"), "",
     ], 600, "微信小程序上传", cancelled)
+
+
+async def _preview_miniprogram(
+    workspace: Path,
+    user_id: str,
+    options: dict,
+    progress: ProgressCallback,
+    cancelled: CancellationCallback | None = None,
+) -> str:
+    await _raise_if_cancelled(cancelled)
+    appid = options.get("mini_appid", "")
+    private_key_id = options.get("mini_private_key_file_id", "")
+    if not appid or not private_key_id:
+        raise DeploymentError("生成体验二维码需要微信 AppID 和代码上传私钥")
+    if not re.fullmatch(r"wx[a-fA-F0-9]{16}", appid):
+        raise DeploymentError("微信小程序 AppID 格式不正确")
+    private_key = await asyncio.to_thread(_owned_secret_path, user_id, private_key_id)
+    script = Path(__file__).resolve().parents[1] / "scripts" / "miniprogram_upload.js"
+    await progress("upload", "正在通过微信 miniprogram-ci 编译体验版并生成二维码...", 82)
+    with tempfile.TemporaryDirectory(prefix="agenthub-mini-preview-") as temp:
+        qrcode_path = Path(temp) / "preview.jpg"
+        await _run_trusted_command([
+            "node", str(script), "preview", str(workspace), appid, str(private_key),
+            options.get("version", "1.0.0"),
+            options.get("description", "AgentHub 体验预览"),
+            str(qrcode_path),
+        ], 600, "微信小程序体验版预览", cancelled)
+        if not qrcode_path.is_file() or qrcode_path.stat().st_size == 0:
+            raise DeploymentError("微信编译成功，但没有生成体验二维码")
+        return await asyncio.to_thread(_save_artifact, qrcode_path.read_bytes(), user_id, "jpg")
+
+
+def _extract_snapshot_archive(archive_path: Path, destination: Path) -> None:
+    file_count = 0
+    total_bytes = 0
+    with tarfile.open(archive_path, mode="r:") as bundle:
+        for member in bundle.getmembers():
+            relative = PurePosixPath(member.name)
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or not relative.parts
+            ):
+                raise DeploymentError("项目快照包含不安全路径")
+            target = destination.joinpath(*relative.parts)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            if not member.isfile():
+                raise DeploymentError("项目快照包含不支持的链接或设备文件")
+            file_count += 1
+            total_bytes += member.size
+            if file_count > MAX_DEPLOY_FILES or total_bytes > MAX_DEPLOY_BYTES:
+                raise DeploymentError("项目快照超过发布文件数量或大小限制")
+            source = bundle.extractfile(member)
+            if source is None:
+                raise DeploymentError("无法读取项目快照文件")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read())
+            target.chmod(member.mode & 0o777)
+    if file_count == 0:
+        raise DeploymentError("项目快照为空")
+
+
+async def _export_project_snapshot(
+    source: Path,
+    snapshot_id: str,
+    destination: Path,
+) -> None:
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", snapshot_id):
+        raise DeploymentError("Invalid deployment snapshot")
+    archive_path = destination.parent / "snapshot.tar"
+    process = await asyncio.create_subprocess_exec(
+        "git",
+        "archive",
+        "--format=tar",
+        f"--output={archive_path}",
+        snapshot_id,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=source,
+    )
+    try:
+        _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
+    except asyncio.TimeoutError as exc:
+        await _stop_process(process)
+        raise DeploymentError("导出项目快照超时") from exc
+    if process.returncode != 0:
+        detail = stderr.decode("utf-8", errors="replace").strip()
+        raise DeploymentError(f"无法读取发布快照：{detail[:300]}")
+    if (
+        not archive_path.is_file()
+        or archive_path.stat().st_size > MAX_DEPLOY_BYTES + 2 * 1024 * 1024
+    ):
+        raise DeploymentError("项目快照超过发布大小限制")
+    await asyncio.to_thread(_extract_snapshot_archive, archive_path, destination)
+    archive_path.unlink(missing_ok=True)
+
+
+@asynccontextmanager
+async def _deployment_workspace(conversation_id: str, snapshot_id: str):
+    source = get_workspace_path(conversation_id)
+    if not snapshot_id:
+        yield source
+        return
+    shared_root = Path("/agenthub_export")
+    temporary_parent = None
+    if source.is_relative_to(shared_root):
+        temporary_parent = shared_root / ".deployment-builds"
+        temporary_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="agenthub-deployment-",
+        dir=temporary_parent,
+    ) as temp:
+        workspace = Path(temp) / "workspace"
+        workspace.mkdir()
+        await _export_project_snapshot(source, snapshot_id, workspace)
+        yield workspace
 
 
 async def run_deployment_pipeline(
@@ -649,14 +866,48 @@ async def run_deployment_pipeline(
     site_id: str,
     progress: ProgressCallback,
     deployment_id: str = "",
+    snapshot_id: str = "",
     options: dict | None = None,
     cancelled: CancellationCallback | None = None,
 ) -> DeploymentResult:
     """Detect, build, package, and optionally publish one generated project."""
+    async with _deployment_workspace(conversation_id, snapshot_id) as workspace:
+        if snapshot_id:
+            await progress(
+                "generate",
+                f"已装载不可变项目快照 {snapshot_id[:12]}。",
+                16,
+            )
+        return await _run_deployment_from_workspace(
+            workspace,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            target=target,
+            token=token,
+            site_id=site_id,
+            progress=progress,
+            deployment_id=deployment_id,
+            options=options,
+            cancelled=cancelled,
+        )
+
+
+async def _run_deployment_from_workspace(
+    workspace: Path,
+    *,
+    conversation_id: str,
+    user_id: str,
+    target: str,
+    token: str,
+    site_id: str,
+    progress: ProgressCallback,
+    deployment_id: str = "",
+    options: dict | None = None,
+    cancelled: CancellationCallback | None = None,
+) -> DeploymentResult:
     if target not in DEPLOY_TARGETS:
         raise DeploymentError(f"Unsupported deployment target: {target}")
     await _raise_if_cancelled(cancelled)
-    workspace = get_workspace_path(conversation_id)
     options = options or {}
     detected = await asyncio.to_thread(detect_project_type, workspace)
     await _raise_if_cancelled(cancelled)
@@ -667,11 +918,11 @@ async def run_deployment_pipeline(
         await progress("generate", f"已按手动选择覆盖自动识别结果（{detected}）。", 22)
 
     if selected == "web":
-        await progress("dependencies", "正在检查 Web 静态资源和发布目录...", 30)
-        root = _web_root(workspace)
+        await progress("dependencies", "正在检查 Web 工程和发布目录...", 28)
+        root = await _build_web_project(workspace, progress, cancelled)
         archive = await asyncio.to_thread(build_project_archive, root)
         await _raise_if_cancelled(cancelled)
-        await progress("build", "Web 静态资源校验和压缩完成。", 62)
+        await progress("build", "Web 发布产物校验和压缩完成。", 68)
         if token and site_id:
             await progress("upload", "正在上传 Netlify CDN...", 82)
             return await NetlifyDeploymentProvider(token, site_id).deploy(archive, cancelled)
@@ -710,6 +961,15 @@ async def run_deployment_pipeline(
     await _raise_if_cancelled(cancelled)
     await progress("build", "微信小程序工程检查和打包完成。", 62)
     if options.get("mini_appid") and options.get("mini_private_key_file_id"):
+        if options.get("mini_action") == "preview":
+            url = await _preview_miniprogram(
+                workspace, user_id, options, progress, cancelled
+            )
+            await progress("upload", "体验版二维码已生成，请使用微信扫码预览。", 94)
+            return DeploymentResult(
+                url=url, provider="miniprogram-ci", target="miniprogram",
+                result_type="miniprogram-preview", published=False,
+            )
         await _upload_miniprogram(
             workspace, user_id, options, progress, cancelled
         )

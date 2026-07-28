@@ -1,9 +1,10 @@
 import uuid
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from app.core.async_wrappers import async_get_custom_agents
+from app.core.tenancy import request_user_id
 from app.services.agent_registry import agent_registry
 
 router = APIRouter(tags=["agents"])
@@ -25,13 +26,13 @@ class CustomAgentCreate(BaseModel):
     role: str = ""
     style: str = ""
     system_prompt: str
-    tools: list[str] = []
+    tools: list[str] = Field(default_factory=list)
 
 
 @router.get("/agents")
-async def list_agents():
+async def list_agents(request: Request):
     all_agents = list(AGENTS_META)
-    for ca in await async_get_custom_agents():
+    for ca in await async_get_custom_agents(request_user_id(request)):
         # Safeguard tools parsing if returned as JSON string
         ca_tools = ca.get("tools", [])
         import json
@@ -55,16 +56,16 @@ async def list_agents():
 
 # 必须放在 /agents/{agent_id} 前面，否则被参数化路由吞掉
 @router.get("/agents/custom")
-async def list_custom_agents_route():
-    return await async_get_custom_agents()
+async def list_custom_agents_route(request: Request):
+    return await async_get_custom_agents(request_user_id(request))
 
 
 @router.get("/agents/{agent_id}")
-async def get_agent(agent_id: str):
+async def get_agent(agent_id: str, request: Request):
     for agent in AGENTS_META:
         if agent["agent_id"] == agent_id:
             return agent
-    for ca in await async_get_custom_agents():
+    for ca in await async_get_custom_agents(request_user_id(request)):
         if ca["agent_id"] == agent_id:
             ca_tools = ca.get("tools", [])
             import json
@@ -78,13 +79,8 @@ async def get_agent(agent_id: str):
     raise HTTPException(status_code=404, detail="Agent not found")
 
 
-@router.get("/agents/custom")
-async def list_custom_agents():
-    return await async_get_custom_agents()
-
-
 @router.post("/agents/custom")
-async def create_custom_agent(body: CustomAgentCreate):
+async def create_custom_agent(body: CustomAgentCreate, request: Request):
     agent_id = f"agent_custom_{uuid.uuid4().hex[:8]}"
     config = {
         "agent_id": agent_id,
@@ -96,14 +92,16 @@ async def create_custom_agent(body: CustomAgentCreate):
         "tools": body.tools,
     }
     # Invoke the concurrency-safe agent registry
-    await agent_registry.register_custom_agent(config)
+    await agent_registry.register_custom_agent(config, request_user_id(request))
     return {"status": "created", "agent": config}
 
 
 @router.delete("/agents/custom/{agent_id}")
-async def delete_custom_agent_api(agent_id: str):
+async def delete_custom_agent_api(agent_id: str, request: Request):
     # Invoke the concurrency-safe agent registry
-    await agent_registry.unregister_custom_agent(agent_id)
+    deleted = await agent_registry.unregister_custom_agent(agent_id, request_user_id(request))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Agent not found")
     return {"status": "deleted"}
 
 # ============================================================
@@ -111,9 +109,9 @@ async def delete_custom_agent_api(agent_id: str):
 # ============================================================
 
 @router.get("/agents/custom/{agent_id}/export")
-async def export_custom_agent(agent_id: str):
+async def export_custom_agent(agent_id: str, request: Request):
     """Export a custom agent as JSON (filters sensitive data)."""
-    agents = await async_get_custom_agents()
+    agents = await async_get_custom_agents(request_user_id(request))
     agent = next((a for a in agents if a.get("agent_id") == agent_id), None)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -139,7 +137,7 @@ class AgentImportRequest(BaseModel):
 
 
 @router.post("/agents/import")
-async def import_custom_agent(body: AgentImportRequest):
+async def import_custom_agent(body: AgentImportRequest, request: Request):
     """Import a custom agent from exported JSON."""
     agent_data = body.agent
     
@@ -150,7 +148,7 @@ async def import_custom_agent(body: AgentImportRequest):
         raise HTTPException(status_code=400, detail="Agent system_prompt is required")
     
     # Check for duplicate name
-    existing = await async_get_custom_agents()
+    existing = await async_get_custom_agents(request_user_id(request))
     existing_names = [a.get("name", "") for a in existing]
     original_name = agent_data["name"]
     name = original_name
@@ -172,5 +170,5 @@ async def import_custom_agent(body: AgentImportRequest):
         "tools": agent_data.get("tools", []),
     }
     
-    await agent_registry.register_custom_agent(config)
+    await agent_registry.register_custom_agent(config, request_user_id(request))
     return {"status": "imported", "agent": config, "duplicate_renamed": name != original_name}
