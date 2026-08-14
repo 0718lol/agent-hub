@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # Redis config
     redis_url: str = "redis://localhost:6379/0"
 
+    # Optional remote Chroma service; empty host uses local persistent storage.
+    chroma_host: str = ""
+    chroma_port: int = 8000
+    chroma_ssl: bool = False
+
     # Sandbox config
     docker_sandbox: bool = True
     runtime_sandbox_image: str = "agenthub-runtime-sandbox:local"

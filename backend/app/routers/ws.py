@@ -1,18 +1,15 @@
 ﻿"""WebSocket endpoint for real-time agent communication."""
 import asyncio
 import contextlib
-import hmac
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save_message
-from app.core.auth import SESSION_COOKIE, verify_session_token
 from app.core.concurrency import generation_admission
-from app.core.config import settings
 from app.core.crud import create_conversation
 from app.core.logging_config import get_logger
-from app.core.tenancy import has_valid_api_client_id, scope_conversation_id, websocket_user_id
+from app.core.tenancy import scope_conversation_id, set_current_tenant, websocket_user_id
 from app.core.websocket import manager
 from app.routers.harness_handler import handle_verdict
 from app.services.agent_orchestrator import (
@@ -64,25 +61,15 @@ def create_tracked_task(coro, name: str | None = None) -> asyncio.Task:
 @router.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     public_conversation_id = conversation_id
-    # ---- WebSocket IP/Token 鉴权 ----
-    # An empty secret explicitly means authentication is disabled. This is
-    # needed for local Docker deployments, where the peer is the nginx
-    # container rather than 127.0.0.1. Production compose requires a secret.
-    authorized = not settings.api_secret
-
-    if settings.api_secret:
-        header_token = websocket.headers.get("x-api-secret")
-        header_authorized = header_token and hmac.compare_digest(header_token, settings.api_secret)
-        if header_authorized and (settings.debug or has_valid_api_client_id(websocket.headers)):
-            authorized = True
-        if verify_session_token(websocket.cookies.get(SESSION_COOKIE), settings.api_secret):
-            authorized = True
-    if not authorized:
+    user_id = websocket_user_id(websocket)
+    if not user_id:
         await websocket.accept()
         await websocket.close(code=4001, reason="Unauthorized connection attempt")
         return
 
-    user_id = websocket_user_id(websocket)
+    # Context is copied into generation background tasks created by this socket.
+    set_current_tenant(user_id)
+
     try:
         conversation_id = scope_conversation_id(user_id, public_conversation_id)
     except ValueError:
@@ -187,12 +174,11 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 await handle_verdict(conversation_id, msg, manager)
                 continue
 
-            # 过滤无意义消息：太短、纯数字、纯标点
+            # Only empty input is ignored. Single-character, numeric, and
+            # punctuation replies can carry valid conversational meaning.
             if sender == "user":
                 stripped = text.strip()
-                if len(stripped) < 2:
-                    continue
-                if stripped.isdigit() or all(c in "!@#$%^&*()_+-=[]{}|;:',.<>?/~`" for c in stripped):
+                if not stripped:
                     continue
 
                 admitted, reason = await generation_admission.acquire(user_id, conversation_id)
@@ -214,7 +200,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 "stream": False,
             })
 
-            current_agents = get_agents()
+            current_agents = get_agents(user_id)
             if target_agent and target_agent in current_agents:
                 create_tracked_task(
                     _run_admitted_flow(

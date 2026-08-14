@@ -181,9 +181,8 @@ function ToolResultBlock({ toolName, resultText }) {
   )
 }
 
-export default function MessageBubble({ message, isPinned, isLast }) {
+export default function MessageBubble({ message, conversationId, isPinned, isLast }) {
   const agents = useAgentStore((s) => s.agents)
-  const activeId = useChatStore((s) => s.activeConversationId)
   const addMessage = useChatStore((s) => s.addMessage)
   const deleteMessage = useChatStore((s) => s.deleteMessage)
   const allRead = useChatStore((s) => s.allRead)
@@ -195,7 +194,7 @@ export default function MessageBubble({ message, isPinned, isLast }) {
   const agent = agents.find((a) => a.agent_id === message.sender)
   const text = message.content?.text || ''
   const attachments = message.content?.attachments || []
-  const isRead = allRead[activeId]
+  const isRead = allRead[conversationId]
   const [copied, setCopied] = useState(false)
 
   const timeStr = message.timestamp
@@ -211,14 +210,14 @@ export default function MessageBubble({ message, isPinned, isLast }) {
   const handleRegenerate = () => {
     wsClient.send({
       type: 'message',
-      conversation_id: activeId,
+      conversation_id: conversationId,
       sender: 'user',
       content: { text: '请重新生成', regenerate: true, original_message_id: message.id },
     })
   }
 
   const handleReply = () => {
-    addMessage(activeId, {
+    addMessage(conversationId, {
       sender: 'user',
       content: { text: `> ${text.slice(0, 80)}${text.length > 80 ? '...' : ''}\n\n` },
       streaming: false,
@@ -227,7 +226,7 @@ export default function MessageBubble({ message, isPinned, isLast }) {
 
   const handleDelete = () => {
     if (window.confirm('确定删除这条消息吗？')) {
-      deleteMessage(activeId, message.id)
+      deleteMessage(conversationId, message.id)
     }
   }
 
@@ -243,42 +242,42 @@ export default function MessageBubble({ message, isPinned, isLast }) {
 
   const handleClarifySubmit = (qaList) => {
     const answerText = qaList.map((qa) => `**${qa.question}**\n${qa.answer}`).join('\n\n')
-    addMessage(activeId, {
+    addMessage(conversationId, {
       sender: 'user',
       content: { text: `需求澄清回答：\n\n${answerText}` },
       streaming: false,
     })
     wsClient.send({
       type: 'message',
-      conversation_id: activeId,
+      conversation_id: conversationId,
       sender: 'user',
       content: { text: `[clarified] ${answerText}`, target_agent: 'agent_pm' },
     })
   }
 
   const handleOptionClick = (option) => {
-    addMessage(activeId, {
+    addMessage(conversationId, {
       sender: 'user',
       content: { text: option },
       streaming: false,
     })
     wsClient.send({
       type: 'message',
-      conversation_id: activeId,
+      conversation_id: conversationId,
       sender: 'user',
       content: { text: option },
     })
   }
 
   const handleAskUserReply = (answer) => {
-    addMessage(activeId, {
+    addMessage(conversationId, {
       sender: 'user',
       content: { text: answer },
       streaming: false,
     })
     wsClient.send({
       type: 'message',
-      conversation_id: activeId,
+      conversation_id: conversationId,
       sender: 'user',
       content: {
         text: `[ask_user_reply] ${answer}`,
@@ -495,6 +494,7 @@ export default function MessageBubble({ message, isPinned, isLast }) {
           )}
           <div className="message-actions">
             <button onClick={handleCopy} title="复制">{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+            <button onClick={() => togglePinMessage(conversationId, message.id)} title={isPinned ? '取消固定' : '固定'}><Pin size={14} /></button>
             <button onClick={handleDelete} title="删除"><Trash2 size={14} /></button>
             <button onClick={handleShare} title="分享"><Share2 size={14} /></button>
             {!isUser && !message.streaming && isLast && (

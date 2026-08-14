@@ -152,7 +152,11 @@ class UnifiedTagMiddleware(StreamMiddleware):
                     try:
                         agent_config = json.loads(ca_match.group(1))
                         from app.services.agent_registry import agent_registry
-                        await agent_registry.register_custom_agent(agent_config)
+                        from app.core.tenancy import conversation_user_id
+                        await agent_registry.register_custom_agent(
+                            agent_config,
+                            conversation_user_id(context.conversation_id) or "legacy",
+                        )
                         await context.manager.broadcast(context.conversation_id, {
                             "type": "agent_created",
                             "conversation_id": context.conversation_id,
@@ -169,7 +173,11 @@ class UnifiedTagMiddleware(StreamMiddleware):
                 if da_match:
                     del_id = da_match.group(1)
                     from app.services.agent_registry import agent_registry
-                    await agent_registry.unregister_custom_agent(del_id)
+                    from app.core.tenancy import conversation_user_id
+                    await agent_registry.unregister_custom_agent(
+                        del_id,
+                        conversation_user_id(context.conversation_id) or "legacy",
+                    )
                     await context.manager.broadcast(context.conversation_id, {
                         "type": "agent_deleted",
                         "conversation_id": context.conversation_id,

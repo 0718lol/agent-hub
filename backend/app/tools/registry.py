@@ -90,6 +90,7 @@ class AgentTool(ABC):
 
 # ---- Global Tool Registry ----
 TOOL_REGISTRY: dict[str, AgentTool] = {}
+TENANT_TOOL_REGISTRY: dict[str, dict[str, AgentTool]] = {}
 
 
 def register_tool(tool: AgentTool):
@@ -98,13 +99,54 @@ def register_tool(tool: AgentTool):
     logger.info(f"Registered tool: {tool.name}")
 
 
+def register_tenant_tool(tenant_id: str, tool: AgentTool):
+    TENANT_TOOL_REGISTRY.setdefault(tenant_id, {})[tool.name] = tool
+    logger.info("Registered tenant tool %s for %s", tool.name, tenant_id)
+
+
+def unregister_tenant_tools(tenant_id: str, names: set[str]) -> None:
+    registry = TENANT_TOOL_REGISTRY.get(tenant_id, {})
+    for name in names:
+        registry.pop(name, None)
+
+
 def get_tool(name: str) -> AgentTool | None:
+    from app.core.tenancy import current_tenant_id
+
+    tenant_id = current_tenant_id()
+    if tenant_id and name in TENANT_TOOL_REGISTRY.get(tenant_id, {}):
+        return TENANT_TOOL_REGISTRY[tenant_id][name]
     return TOOL_REGISTRY.get(name)
+
+
+def is_tool_enabled(name: str, tool: AgentTool | None = None) -> bool:
+    from app.core.tenancy import current_tenant_id
+    from app.core.tenant_config import get_tenant_json
+
+    tool = tool or get_tool(name)
+    if tool is None or not tool.enabled:
+        return False
+    tenant_id = current_tenant_id()
+    if not tenant_id:
+        return True
+    states = get_tenant_json(tenant_id, "runtime_tools", {}) or {}
+    return states.get(name, True)
 
 
 def list_tools() -> list[dict]:
     """List all registered tools as dicts."""
-    return [t.to_dict() for t in TOOL_REGISTRY.values()]
+    from app.core.tenancy import current_tenant_id
+
+    tools = dict(TOOL_REGISTRY)
+    tenant_id = current_tenant_id()
+    if tenant_id:
+        tools.update(TENANT_TOOL_REGISTRY.get(tenant_id, {}))
+    result = []
+    for name, tool in tools.items():
+        item = tool.to_dict()
+        item["enabled"] = is_tool_enabled(name, tool)
+        result.append(item)
+    return result
 
 
 def get_tools_prompt(tool_names: list[str] | None = None) -> str:
@@ -114,8 +156,9 @@ def get_tools_prompt(tool_names: list[str] | None = None) -> str:
         tool_names: if provided, only include these tools; else include all enabled
     """
     tools = []
-    for name, tool in TOOL_REGISTRY.items():
-        if not tool.enabled:
+    tools_for_tenant = {item["name"]: get_tool(item["name"]) for item in list_tools()}
+    for name, tool in tools_for_tenant.items():
+        if tool is None or not is_tool_enabled(name, tool):
             continue
         if tool_names is not None and name not in tool_names:
             continue
@@ -168,7 +211,7 @@ async def execute_tool_call(tool_name: str, params: dict) -> ToolResult:
     tool = get_tool(tool_name)
     if not tool:
         return ToolResult(success=False, error=f"未知工具: {tool_name}")
-    if not tool.enabled:
+    if not is_tool_enabled(tool_name, tool):
         return ToolResult(success=False, error=f"工具已禁用: {tool_name}")
 
     from app.core.metrics import active_step_var

@@ -50,6 +50,7 @@ backend/gen_test.py
 # 运行时数据（含 API Key 和沙箱文件）
 backend/data/adapters.json
 backend/data/llm_config.json
+backend/data/.session_secret
 backend/data/agenthub.db
 backend/data/sandbox/
 backend/data/uploads/

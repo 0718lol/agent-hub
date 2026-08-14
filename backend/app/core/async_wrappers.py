@@ -41,8 +41,8 @@ async def async_save_message(conversation_id, sender, content, streaming=False):
     return await asyncio.to_thread(save_message, conversation_id, sender, content, streaming)
 
 
-async def async_get_messages(conversation_id, limit=100):
-    return await asyncio.to_thread(get_messages, conversation_id, limit)
+async def async_get_messages(conversation_id, limit=100, before_id=None):
+    return await asyncio.to_thread(get_messages, conversation_id, limit, before_id)
 
 
 async def async_get_conversations():
@@ -53,16 +53,18 @@ async def async_clear_messages(conversation_id):
     return await asyncio.to_thread(clear_messages, conversation_id)
 
 
-async def async_save_custom_agent(agent_id, name, avatar, role, style, system_prompt, tools):
-    return await asyncio.to_thread(save_custom_agent, agent_id, name, avatar, role, style, system_prompt, tools)
+async def async_save_custom_agent(agent_id, name, avatar, role, style, system_prompt, tools, user_id="legacy"):
+    return await asyncio.to_thread(
+        save_custom_agent, agent_id, name, avatar, role, style, system_prompt, tools, user_id
+    )
 
 
-async def async_get_custom_agents():
-    return await asyncio.to_thread(get_custom_agents)
+async def async_get_custom_agents(user_id=None):
+    return await asyncio.to_thread(get_custom_agents, user_id)
 
 
-async def async_delete_custom_agent(agent_id):
-    return await asyncio.to_thread(delete_custom_agent, agent_id)
+async def async_delete_custom_agent(agent_id, user_id=None):
+    return await asyncio.to_thread(delete_custom_agent, agent_id, user_id)
 
 
 async def async_create_conversation(conv_id, conv_type, name, avatar, agent_id=None, agents=None, preview=""):
@@ -113,8 +115,8 @@ async def async_delete_memory_item(conversation_id, key):
     return await asyncio.to_thread(delete_memory_item, conversation_id, key)
 
 
-async def async_search_messages(query: str, conversation_id: str | None = None, limit: int = 50):
-    return await asyncio.to_thread(search_messages, query, conversation_id, limit)
+async def async_search_messages(query: str, conversation_id: str | None = None, limit: int = 50, tenant_id: str | None = None):
+    return await asyncio.to_thread(search_messages, query, conversation_id, limit, tenant_id)
 
 
 async def async_save_event(conversation_id, event_type, timestamp, data):
@@ -143,4 +145,3 @@ async def async_save_artifact(conversation_id, agent_id, language, code, name=No
 
 async def async_get_artifacts(conversation_id, limit=50):
     return await asyncio.to_thread(get_artifacts, conversation_id, limit)
-

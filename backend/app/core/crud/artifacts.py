@@ -99,12 +99,20 @@ def update_latest_artifact_quality(conversation_id: str, agent_id: str,
         session.commit()
 
 
-def get_artifacts_grouped(conversation_id: str | None = None,
-                          limit: int = 50) -> list[dict]:
+def get_artifacts_grouped(
+    conversation_id: str | None = None,
+    limit: int = 50,
+    user_id: str | None = None,
+) -> list[dict]:
     with Session(_engine_mod.engine) as session:
         if conversation_id:
             statement = select(Artifact).where(
                 Artifact.conversation_id == conversation_id
+            ).order_by(Artifact.created_at.asc())
+        elif user_id:
+            prefix = f"tenant__{user_id}__conv__"
+            statement = select(Artifact).where(
+                Artifact.conversation_id.startswith(prefix)
             ).order_by(Artifact.created_at.asc())
         else:
             statement = select(Artifact).order_by(Artifact.created_at.asc())

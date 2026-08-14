@@ -1,9 +1,11 @@
 """Quality gate settings and evaluation endpoints."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from app.core.deps import get_quality_gate
 from app.core.quality_gate import QualityGate
+from app.core.tenancy import request_user_id
+from app.core.tenant_config import set_tenant_json
 
 router = APIRouter(tags=["quality"])
 
@@ -26,11 +28,12 @@ async def get_quality_settings(qg: QualityGate = Depends(get_quality_gate)):
 
 
 @router.post("/settings/quality")
-async def update_quality_settings(s: QualityGateSettings, qg: QualityGate = Depends(get_quality_gate)):
+async def update_quality_settings(s: QualityGateSettings, request: Request, qg: QualityGate = Depends(get_quality_gate)):
     qg.enabled = s.enabled
     qg.max_retries = s.max_retries
     qg.use_llm_judge = s.use_llm_judge
     qg.best_of_n = s.best_of_n
+    set_tenant_json(request_user_id(request), "quality_gate", s.model_dump())
     return {"status": "ok", "best_of_n": qg.best_of_n}
 
 

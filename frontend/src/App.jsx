@@ -11,7 +11,7 @@ import { useTabStore } from './stores/tabStore'
 
 const VirtualOffice = lazy(() => import('./components/VirtualOffice/VirtualOffice'))
 
-export default function App() {
+export default function App({ currentUser }) {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [officeOpen, setOfficeOpen] = useState(false)
 
@@ -47,7 +47,7 @@ export default function App() {
         className={`sidebar-overlay ${mobileSidebarOpen ? 'visible' : ''}`}
         onClick={() => setMobileSidebarOpen(false)}
       />
-      <Sidebar mobileOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
+      <Sidebar currentUser={currentUser} mobileOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
       <ChatPanel onToggleSidebar={() => setMobileSidebarOpen((v) => !v)} />
       <SlidePanel />
       <DesktopPet />

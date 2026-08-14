@@ -12,6 +12,12 @@ def app():
     from app.routers import benchmark, conversations, quality, sandbox, uploads, webhook
 
     app = FastAPI()
+
+    @app.middleware("http")
+    async def inject_test_tenant(request, call_next):
+        request.state.tenant_id = "api-client"
+        return await call_next(request)
+
     app.include_router(conversations.router, prefix="/api")
     app.include_router(quality.router, prefix="/api")
     app.include_router(sandbox.router, prefix="/api")

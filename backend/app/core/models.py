@@ -5,7 +5,29 @@ This module contains ONLY declarative table classes -- no engine, no CRUD, no I/
 """
 from datetime import UTC, datetime
 
+from sqlalchemy import Boolean, Column, Integer, false
 from sqlmodel import Field, SQLModel, UniqueConstraint
+
+
+class Tenant(SQLModel, table=True):
+    __tablename__ = "tenants"
+    id: str = Field(primary_key=True)
+    name: str
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
+class User(SQLModel, table=True):
+    __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("username_normalized", name="idx_users_username_normalized"),
+    )
+    id: str = Field(primary_key=True)
+    tenant_id: str = Field(foreign_key="tenants.id", index=True)
+    username: str
+    username_normalized: str = Field(index=True)
+    password_hash: str
+    is_admin: bool = Field(default=False)
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class Conversation(SQLModel, table=True):
@@ -17,7 +39,11 @@ class Conversation(SQLModel, table=True):
     agent_id: str | None = None
     agents: str | None = None
     preview: str | None = None
+    pinned: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default=false()))
+    archived: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default=false()))
+    sort_order: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str | None = Field(default=None)
 
 
 class Message(SQLModel, table=True):
@@ -27,12 +53,14 @@ class Message(SQLModel, table=True):
     sender: str
     content: str
     streaming: int = Field(default=0)
+    pinned: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default=false()))
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class CustomAgent(SQLModel, table=True):
     __tablename__ = "custom_agents"
     id: str = Field(primary_key=True)
+    user_id: str = Field(default="legacy", index=True)
     name: str
     avatar: str = Field(default=chr(129302))
     role: str = Field(default="")
@@ -65,6 +93,16 @@ class UploadedFile(SQLModel, table=True):
     uploaded_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
+class TenantConfig(SQLModel, table=True):
+    __tablename__ = "tenant_configs"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="idx_tenant_config_key"),)
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    key: str
+    value: str
+    updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
 class CronTask(SQLModel, table=True):
     __tablename__ = "cron_tasks"
     id: str = Field(primary_key=True)
@@ -78,15 +116,26 @@ class CronTask(SQLModel, table=True):
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
+class KnowledgeBase(SQLModel, table=True):
+    __tablename__ = "knowledge_bases"
+    id: str = Field(primary_key=True)
+    user_id: str = Field(index=True)
+    name: str
+    description: str = Field(default="")
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
 class KnowledgeDoc(SQLModel, table=True):
     __tablename__ = "knowledge_docs"
     id: str = Field(primary_key=True)
+    user_id: str = Field(default="legacy", index=True)
     filename: str
     file_path: str = Field(default="")
     content_type: str = Field(default="")
     chunk_count: int = Field(default=0)
     char_count: int = Field(default=0)
     status: str = Field(default="ready")
+    knowledge_base_id: str | None = Field(default=None, index=True)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 

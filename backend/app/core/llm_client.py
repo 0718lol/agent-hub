@@ -588,10 +588,12 @@ class LLMClient:
     def _get_api_tools(self, enabled_tools: list[str] | None = None) -> list[dict]:
         """Convert AgentTools dynamically into standard API tools definition format."""
         try:
-            from app.tools.registry import TOOL_REGISTRY
+            from app.tools.registry import get_tool, is_tool_enabled, list_tools
             api_tools = []
-            for name, tool in TOOL_REGISTRY.items():
-                if not tool.enabled:
+            for item in list_tools():
+                name = item["name"]
+                tool = get_tool(name)
+                if tool is None or not is_tool_enabled(name, tool):
                     continue
                 if enabled_tools is not None and name not in enabled_tools:
                     continue
@@ -795,7 +797,47 @@ class LLMClient:
             yield chunk
 
 
-llm_client = LLMClient()
+class TenantAwareLLMClient:
+    """Dispatch LLM operations to an isolated client for the active tenant."""
+
+    def __init__(self):
+        self._default = LLMClient()
+        self._clients: dict[str, LLMClient] = {}
+
+    def _client(self) -> LLMClient:
+        from app.core.tenancy import current_tenant_id
+
+        tenant_id = current_tenant_id()
+        if not tenant_id:
+            return self._default
+        existing = self._clients.get(tenant_id)
+        if existing is not None:
+            return existing
+
+        from app.core.config import deobfuscate_key, settings
+        from app.core.tenant_config import get_tenant_json
+
+        config = get_tenant_json(tenant_id, "llm", {}, encrypted=True) or {}
+        client = LLMClient()
+        client.configure(
+            provider=config.get("provider") or settings.llm_provider,
+            api_key=deobfuscate_key(config.get("api_key", "")) or settings.llm_api_key,
+            base_url=config.get("base_url") or settings.llm_base_url,
+            model=config.get("model") or settings.llm_model,
+            temperature=config.get("temperature"),
+            max_tokens=config.get("max_tokens"),
+        )
+        self._clients[tenant_id] = client
+        return client
+
+    def __getattr__(self, name):
+        return getattr(self._client(), name)
+
+    def evict(self, tenant_id: str) -> None:
+        self._clients.pop(tenant_id, None)
+
+
+llm_client = TenantAwareLLMClient()
 
 
 def _sanitize_for_anthropic(messages: list[dict]) -> list[dict]:

@@ -10,6 +10,12 @@ from fastapi.testclient import TestClient
 def mcp_app():
     from app.routers.mcp import router
     app = FastAPI()
+
+    @app.middleware("http")
+    async def inject_test_tenant(request, call_next):
+        request.state.tenant_id = "tenant_test"
+        return await call_next(request)
+
     app.include_router(router, prefix="/api")
     return TestClient(app)
 

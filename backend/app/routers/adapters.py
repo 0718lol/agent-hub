@@ -20,11 +20,12 @@ import subprocess
 import sys
 from typing import Optional
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from app.adapters.base import AdapterConfig
 from app.adapters.registry import adapter_registry
+from app.core.tenancy import request_user_id
 
 logger = get_logger = logging.getLogger("adapter_router")
 
@@ -61,7 +62,7 @@ router = APIRouter(tags=["adapters"])
 # ---- Adapter Factory ----
 
 
-def create_adapter(agent_id: str, config_dict: dict, save: bool = True) -> bool:
+def create_adapter(tenant_id: str, agent_id: str, config_dict: dict, save: bool = True) -> bool:
     """根据配置创建适配器实例并注册。
 
     Args:
@@ -91,38 +92,20 @@ def create_adapter(agent_id: str, config_dict: dict, save: bool = True) -> bool:
     )
 
     adapter = adapter_cls(config)
-    adapter_registry.register(agent_id, adapter)
-
-    # 同步更新 AGENTS 字典中的 AdapterAgent 包装器
-    try:
-        from app.adapters.adapter_agent import AdapterAgent
-        from app.services.agent_orchestrator import get_agents
-        agents = get_agents()
-        if agent_id in agents:
-            old = agents[agent_id]
-            agents[agent_id] = AdapterAgent(
-                agent_id=agent_id,
-                name=getattr(old, 'name', adapter.name),
-                adapter=adapter,
-                avatar=getattr(old, 'avatar', '🤖'),
-                role=getattr(old, 'role', adapter.description),
-                system_prompt=getattr(old, 'system_prompt', ''),
-            )
-            logger.info(f"Updated AGENTS entry for {agent_id}")
-    except Exception as e:
-        logger.debug(f"Could not update AGENTS for {agent_id}: {e}")
+    adapter_registry.register(tenant_id, agent_id, adapter)
 
     if save:
-        adapter_registry.save_config(agent_id, config_dict)
+        adapter_registry.save_config(tenant_id, agent_id, config_dict)
     return True
 
 
-def load_saved_adapters():
+def load_saved_adapters(tenant_id: str):
     """从持久化配置加载所有已保存的适配器。"""
-    configs = adapter_registry.get_saved_configs()
+    configs = adapter_registry.get_saved_configs(tenant_id)
     for agent_id, config_dict in configs.items():
         try:
-            create_adapter(agent_id, config_dict)
+            if adapter_registry.get(tenant_id, agent_id) is None:
+                create_adapter(tenant_id, agent_id, config_dict, save=False)
         except Exception as e:
             logger.warning(f"Failed to load adapter {agent_id}: {e}")
 
@@ -130,7 +113,7 @@ def load_saved_adapters():
 # ---- Request/Response Models ----
 
 class AdapterCreateRequest(BaseModel):
-    agent_id: str
+    agent_id: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,128}$")
     adapter_type: str         # "claude" | "codex" | "coze" | "self_deployed" | "dify"
     name: str = ""
     api_key: str = ""
@@ -138,7 +121,7 @@ class AdapterCreateRequest(BaseModel):
     model: str = ""
     timeout: int = 60
     tool_mode: str = "agent"  # "agent" | "text" | "auto"
-    extra: dict = {}
+    extra: dict = Field(default_factory=dict)
     display_name: str = ""    # 自定义显示名称
     display_avatar: str = ""  # 自定义头像
     display_desc: str = ""    # 自定义简介
@@ -151,27 +134,33 @@ class AdapterTestRequest(BaseModel):
 # ---- API Endpoints ----
 
 @router.get("/adapters")
-async def list_adapters():
+async def list_adapters(request: Request):
     """查询所有适配器状态。"""
-    statuses = adapter_registry.get_all_status()
+    tenant_id = request_user_id(request)
+    load_saved_adapters(tenant_id)
+    statuses = adapter_registry.get_all_status(tenant_id)
     return {"adapters": statuses}
 
 
 @router.get("/adapters/{agent_id}")
-async def get_adapter(agent_id: str):
+async def get_adapter(agent_id: str, request: Request):
     """查询指定适配器状态。"""
-    status = adapter_registry.get_status_by_id(agent_id)
+    tenant_id = request_user_id(request)
+    load_saved_adapters(tenant_id)
+    status = adapter_registry.get_status_by_id(tenant_id, agent_id)
     if not status:
-        return {"error": f"Adapter not found: {agent_id}"}
+        raise HTTPException(status_code=404, detail=f"Adapter not found: {agent_id}")
     return status
 
 
 @router.post("/adapters")
-async def create_or_update_adapter(req: AdapterCreateRequest):
+async def create_or_update_adapter(req: AdapterCreateRequest, request: Request):
     """创建或更新适配器配置。"""
+    tenant_id = request_user_id(request)
+    previous = adapter_registry.get_config(tenant_id, req.agent_id) or {}
     config_dict = {
         "adapter_type": req.adapter_type,
-        "api_key": req.api_key,
+        "api_key": req.api_key or previous.get("api_key", ""),
         "api_url": req.api_url,
         "model": req.model,
         "timeout": req.timeout,
@@ -182,27 +171,30 @@ async def create_or_update_adapter(req: AdapterCreateRequest):
         "display_desc": req.display_desc,
     }
 
-    success = create_adapter(req.agent_id, config_dict)
+    success = create_adapter(tenant_id, req.agent_id, config_dict)
     if not success:
-        return {"error": f"Unknown adapter type: {req.adapter_type}"}
+        raise HTTPException(status_code=422, detail=f"Unknown adapter type: {req.adapter_type}")
 
     return {"status": "ok", "agent_id": req.agent_id}
 
 
 @router.delete("/adapters/{agent_id}")
-async def delete_adapter(agent_id: str):
+async def delete_adapter(agent_id: str, request: Request):
     """删除适配器。"""
-    adapter_registry.unregister(agent_id)
-    adapter_registry.remove_config(agent_id)
+    tenant_id = request_user_id(request)
+    adapter_registry.unregister(tenant_id, agent_id)
+    adapter_registry.remove_config(tenant_id, agent_id)
     return {"status": "deleted", "agent_id": agent_id}
 
 
 @router.post("/adapters/{agent_id}/test")
-async def test_adapter(agent_id: str, req: AdapterTestRequest):
+async def test_adapter(agent_id: str, req: AdapterTestRequest, request: Request):
     """测试适配器连接（发送一条测试消息）。"""
-    adapter = adapter_registry.get(agent_id)
+    tenant_id = request_user_id(request)
+    load_saved_adapters(tenant_id)
+    adapter = adapter_registry.get(tenant_id, agent_id)
     if not adapter:
-        return {"error": f"Adapter not found: {agent_id}"}
+        raise HTTPException(status_code=404, detail=f"Adapter not found: {agent_id}")
 
     valid, err = adapter.validate_config()
     if not valid:
@@ -245,7 +237,7 @@ async def start_proxy():
         return {"error": f"代理脚本不存在: {proxy_script}"}
 
     try:
-        env = {**os.environ, "NODE_TLS_REJECT_UNAUTHORIZED": "0"}
+        env = dict(os.environ)
         si = subprocess.STARTUPINFO() if sys.platform == "win32" else None
         if si:
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW

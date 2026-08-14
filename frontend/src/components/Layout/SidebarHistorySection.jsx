@@ -22,17 +22,22 @@ export default function SidebarHistorySection({
     <>
       {/* ===== 新对话 + 搜索 + 历史对话 ===== */}
       <div className="sidebar-new-conv-wrap">
-        <div className="sidebar-new-conv-btn" onClick={() => {
+        <div className="sidebar-new-conv-btn" onClick={async () => {
           if (!activeAgentId) return
           const convId = `conv_${activeAgentId}_${Date.now()}`
           const defaultName = `新对话${convCounterRef.current}`
           convCounterRef.current += 1
-          useChatStore.getState().addConversation({
-            id: convId, type: 'single', agentId: activeAgentId,
-            name: defaultName, avatar: null,
-            messages: [], pinned: false, unread: false, updatedAt: Date.now(),
-          })
-          openTab(convId, defaultName, activeAgentId)
+          try {
+            await useChatStore.getState().addConversation({
+              id: convId, type: 'single', agentId: activeAgentId,
+              name: defaultName, avatar: null,
+              messages: [], pinned: false, unread: false, updatedAt: Date.now(),
+            })
+            openTab(convId, defaultName, activeAgentId)
+          } catch (error) {
+            useChatStore.getState().removeConversation(convId)
+            console.error('Failed to create conversation:', error)
+          }
         }}>
           <Plus size={16} />
           <span>新对话</span>
@@ -82,7 +87,7 @@ export default function SidebarHistorySection({
             无匹配对话
           </div>
         ) : (
-          historyConversations.map((conv, i) => {
+          historyConversations.map((conv) => {
             const openConvIds = new Set(openTabs.map((t) => t.convId))
             return (
               <div
@@ -101,9 +106,9 @@ export default function SidebarHistorySection({
                 }}
                 onContextMenu={(e) => handleContextMenu(e, conv.id)}
                 draggable
-                onDragStart={(e) => handleDragStart(e, i)}
+                onDragStart={(e) => handleDragStart(e, conv.id)}
                 onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, i)}
+                onDrop={(e) => handleDrop(e, conv.id)}
               >
                 {conv.pinned && <span className="pin-indicator"><Pin size={10} /></span>}
                 <div className="conv-avatar" style={{ width: 32, height: 32 }}>

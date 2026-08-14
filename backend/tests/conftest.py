@@ -9,12 +9,14 @@ import pytest
 # Ensure backend is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# Engine modules can be imported while tests are collected, before fixtures run.
+os.environ["AGENTHUB_DB_PATH"] = ":memory:"
+os.environ["AGENTHUB_ENCRYPT_KEY"] = "test-key-12345"
+
 
 @pytest.fixture(autouse=True)
 def test_env():
     """Set test environment variables for all tests."""
-    os.environ["AGENTHUB_DB_PATH"] = ":memory:"
-    os.environ["AGENTHUB_ENCRYPT_KEY"] = "test-key-12345"
     yield
 
 

@@ -5,7 +5,13 @@ import os
 import sys
 from typing import Any
 
-from app.tools.registry import AgentTool, ToolResult, register_tool
+from app.tools.registry import (
+    AgentTool,
+    ToolResult,
+    register_tenant_tool,
+    register_tool,
+    unregister_tenant_tools,
+)
 
 logger = logging.getLogger("mcp_bridge")
 
@@ -327,7 +333,164 @@ class MCPBridgeManager:
 
     def __init__(self):
         self.servers: dict[str, MCPServerProcess] = {}
+        self._tenant_servers: dict[str, dict[str, MCPServerProcess]] = {}
+        self._server_tools: dict[tuple[str, str], set[str]] = {}
+        self._tenant_locks: dict[str, asyncio.Lock] = {}
+        self._loaded_tenants: set[str] = set()
         self.builtin_server = BuiltinMCPServer()
+
+    def _servers_for(self, tenant_id: str) -> dict[str, MCPServerProcess]:
+        if tenant_id == "legacy":
+            return self.servers
+        return self._tenant_servers.setdefault(tenant_id, {})
+
+    async def _start_server(
+        self,
+        tenant_id: str,
+        name: str,
+        command: str,
+        args: list[str],
+        env: dict[str, str] | None = None,
+    ) -> bool:
+        servers = self._servers_for(tenant_id)
+        existing = servers.get(name)
+        if existing and existing._running:
+            return True
+        server = MCPServerProcess(name, command, args, env)
+        try:
+            await server.start()
+            tools = await server.list_tools()
+            tool_names: set[str] = set()
+            for tool in tools:
+                tool_name = tool.get("name")
+                if not tool_name:
+                    continue
+                wrapper = MCPToolWrapper(
+                    name,
+                    server,
+                    tool_name,
+                    tool.get("description", ""),
+                    tool.get("inputSchema", {}),
+                )
+                register_tenant_tool(tenant_id, wrapper)
+                tool_names.add(tool_name)
+            servers[name] = server
+            self._server_tools[(tenant_id, name)] = tool_names
+            return True
+        except Exception as exc:
+            logger.error("Failed to start MCP server %s for tenant %s: %s", name, tenant_id, exc)
+            await server.stop()
+            return False
+
+    async def ensure_tenant_servers(self, tenant_id: str) -> None:
+        if tenant_id in self._loaded_tenants:
+            return
+        lock = self._tenant_locks.setdefault(tenant_id, asyncio.Lock())
+        async with lock:
+            if tenant_id in self._loaded_tenants:
+                return
+            from app.core.tenant_config import get_tenant_json
+
+            configs = get_tenant_json(tenant_id, "mcp_servers", {}, encrypted=True) or {}
+            for name, config in configs.items():
+                if config.get("enabled", True):
+                    await self._start_server(
+                        tenant_id,
+                        name,
+                        config.get("command", ""),
+                        config.get("args", []),
+                        config.get("env"),
+                    )
+            self._loaded_tenants.add(tenant_id)
+
+    async def register_server(
+        self,
+        tenant_id: str,
+        name: str,
+        command: str,
+        args: list[str],
+        env: dict[str, str] | None = None,
+    ) -> bool:
+        await self.unregister_server(tenant_id, name, remove_config=False)
+        success = await self._start_server(tenant_id, name, command, args, env)
+        if success:
+            from app.core.tenant_config import get_tenant_json, set_tenant_json
+
+            configs = get_tenant_json(tenant_id, "mcp_servers", {}, encrypted=True) or {}
+            configs[name] = {
+                "command": command,
+                "args": args,
+                "env": env or {},
+                "enabled": True,
+            }
+            set_tenant_json(tenant_id, "mcp_servers", configs, encrypted=True)
+            self._loaded_tenants.add(tenant_id)
+        return success
+
+    async def get_servers_status(self, tenant_id: str) -> list[dict]:
+        await self.ensure_tenant_servers(tenant_id)
+        from app.core.tenant_config import get_tenant_json
+
+        configs = get_tenant_json(tenant_id, "mcp_servers", {}, encrypted=True) or {}
+        running = self._servers_for(tenant_id)
+        return [
+            {
+                "name": name,
+                "command": config.get("command", ""),
+                "args": config.get("args", []),
+                "enabled": config.get("enabled", True),
+                "running": bool(running.get(name) and running[name]._running),
+                "tool_count": len(self._server_tools.get((tenant_id, name), set())),
+            }
+            for name, config in sorted(configs.items())
+        ]
+
+    async def toggle_server(self, tenant_id: str, name: str, enabled: bool) -> bool:
+        from app.core.tenant_config import get_tenant_json, set_tenant_json
+
+        configs = get_tenant_json(tenant_id, "mcp_servers", {}, encrypted=True) or {}
+        config = configs.get(name)
+        if not config:
+            return False
+        if enabled:
+            success = await self._start_server(
+                tenant_id,
+                name,
+                config.get("command", ""),
+                config.get("args", []),
+                config.get("env"),
+            )
+            if not success:
+                return False
+        else:
+            await self.unregister_server(tenant_id, name, remove_config=False)
+        config["enabled"] = enabled
+        configs[name] = config
+        set_tenant_json(tenant_id, "mcp_servers", configs, encrypted=True)
+        return True
+
+    async def unregister_server(
+        self,
+        tenant_id: str,
+        name: str,
+        *,
+        remove_config: bool = True,
+    ) -> bool:
+        servers = self._servers_for(tenant_id)
+        server = servers.pop(name, None)
+        names = self._server_tools.pop((tenant_id, name), set())
+        unregister_tenant_tools(tenant_id, names)
+        if server:
+            await server.stop()
+        if remove_config:
+            from app.core.tenant_config import get_tenant_json, set_tenant_json
+
+            configs = get_tenant_json(tenant_id, "mcp_servers", {}, encrypted=True) or {}
+            existed = name in configs
+            configs.pop(name, None)
+            set_tenant_json(tenant_id, "mcp_servers", configs, encrypted=True)
+            return bool(server or existed)
+        return bool(server)
 
     async def load_and_start_servers(self, config_path: str):
         """Parse configuration, start all stdio servers, and mount the builtin in-memory server."""
@@ -401,6 +564,18 @@ class MCPBridgeManager:
             except Exception as e:
                 logger.error(f"Error stopping server [{name}]: {e}")
         self.servers.clear()
+        for tenant_id, servers in list(self._tenant_servers.items()):
+            for name, server in list(servers.items()):
+                try:
+                    await server.stop()
+                except Exception as e:
+                    logger.error("Error stopping tenant MCP server %s: %s", name, e)
+                unregister_tenant_tools(
+                    tenant_id,
+                    self._server_tools.pop((tenant_id, name), set()),
+                )
+        self._tenant_servers.clear()
+        self._loaded_tenants.clear()
 
 # Global Singleton Manager
 mcp_bridge_manager = MCPBridgeManager()

@@ -9,7 +9,9 @@ from app.services.deployment_queue import DeploymentJob, deployment_queue
 
 
 def _request() -> Request:
-    return Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.state.tenant_id = "api-client"
+    return request
 
 
 @pytest.mark.asyncio

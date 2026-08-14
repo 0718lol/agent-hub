@@ -126,7 +126,7 @@ describe("WSClient (websocket.js)", () => {
     wsClient.send({ type: "message", text: "hello" })
 
     expect(wsClient.pendingMessages.length).toBe(1)
-    expect(JSON.parse(wsClient.pendingMessages[0]).text).toBe("hello")
+    expect(JSON.parse(wsClient.pendingMessages[0].json).text).toBe("hello")
   })
 
   it("send transmits JSON when connected", async () => {
@@ -153,6 +153,18 @@ describe("WSClient (websocket.js)", () => {
     const ws = MockWebSocket.instances[0]
     const texts = ws.sentMessages.map((m) => JSON.parse(m).text).filter(Boolean)
     expect(texts).toContain("queued")
+  })
+
+  it("does not flush a queued message into another conversation", async () => {
+    wsClient.currentConvId = "conv_a"
+    wsClient.send({ type: "message", conversation_id: "conv_a", text: "for-a" })
+    wsClient.connect("conv_b")
+    await vi.waitFor(() => expect(MockWebSocket.instances.at(-1).readyState).toBe(MockWebSocket.OPEN))
+
+    const socketB = MockWebSocket.instances.at(-1)
+    expect(socketB.sentMessages).toHaveLength(0)
+    expect(wsClient.pendingMessages).toHaveLength(1)
+    expect(wsClient.pendingMessages[0].conversationId).toBe("conv_a")
   })
 
   it("onMessage registers handler and receives parsed data", async () => {

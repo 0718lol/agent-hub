@@ -93,13 +93,24 @@ class BrowserSessionManager:
         self.elements_cache = {}
 
     async def get_page(self, conversation_id: str):
+        from app.core.tenancy import (
+            belongs_to_user,
+            current_tenant_id,
+            scope_conversation_id,
+        )
+
+        tenant_id = current_tenant_id()
+        if tenant_id:
+            if conversation_id == "default":
+                conversation_id = scope_conversation_id(tenant_id, "browser_default")
+            elif not belongs_to_user(conversation_id, tenant_id):
+                conversation_id = scope_conversation_id(tenant_id, conversation_id)
         if not self.playwright:
             from playwright.async_api import async_playwright
+            from app.core.browser_manager import browser_launch_options
+
             self.playwright = await async_playwright().start()
-            self.browser = await self.playwright.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox"]
-            )
+            self.browser = await self.playwright.chromium.launch(**browser_launch_options())
         if conversation_id not in self.pages:
             context = await self.browser.new_context(
                 viewport={"width": 1280, "height": 800},

@@ -24,16 +24,17 @@ Business logic is delegated to focused router modules and services:
 - routers/tools.py — Tool listing & testing
 """
 import asyncio
-import hmac
 import json
 import os
 import re
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import text
 from starlette.background import BackgroundTask
@@ -50,7 +51,13 @@ from app.routers import (
     agents as agents_router,
 )
 from app.routers import (
+    artifacts as artifacts_router,
+)
+from app.routers import (
     auth as auth_router,
+)
+from app.routers import (
+    admin as admin_router,
 )
 from app.routers import (
     benchmark as benchmark_router,
@@ -103,6 +110,10 @@ from app.routers import (
 from app.services.agent_orchestrator import get_agents
 
 logger = get_logger("main")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
+FRONTEND_ASSETS = FRONTEND_DIST / "assets"
+FRONTEND_AVATARS = FRONTEND_DIST / "avatars"
 
 # Trigger runtime tool auto-registration
 import app.tools  # noqa: F401
@@ -168,28 +179,42 @@ async def api_security_middleware(request: Request, call_next):
         return await call_next(request)
     if not (path.startswith("/api") or path.startswith("/uploads")):
         return await call_next(request)
-    if settings.api_secret:
-        from app.core.auth import SESSION_COOKIE, verify_session_token
-        auth_header = request.headers.get("Authorization")
-        bearer_valid = bool(
-            auth_header
-            and auth_header.startswith("Bearer ")
-            and hmac.compare_digest(auth_header.split(" ", 1)[1], settings.api_secret)
-        )
-        if bearer_valid and not settings.debug:
-            from app.core.tenancy import has_valid_api_client_id
+    from app.core.auth import SESSION_COOKIE, get_session_account
+    from app.core.tenancy import bearer_tenant_id
 
-            if not has_valid_api_client_id(request.headers):
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": "Production Bearer clients must provide X-AgentHub-Client-ID"},
-                )
-        session_valid = verify_session_token(request.cookies.get(SESSION_COOKIE), settings.api_secret)
-        if not bearer_valid and not session_valid:
-            return JSONResponse(status_code=401, content={"detail": "Unauthorized: Sign in or provide a valid bearer token"})
-    # No secret means authentication is deliberately disabled. Docker/Nginx
-    # proxy requests originate from the proxy container, not localhost.
-    return await call_next(request)
+    account = get_session_account(request.cookies.get(SESSION_COOKIE))
+    if account:
+        from app.core.tenancy import reset_current_tenant, set_current_tenant
+        request.state.auth_user_id = account.user_id
+        request.state.tenant_id = account.tenant_id
+        request.state.is_admin = account.is_admin
+        token = set_current_tenant(account.tenant_id)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_tenant(token)
+
+    api_tenant = bearer_tenant_id(request.headers)
+    if api_tenant:
+        from app.core.tenancy import reset_current_tenant, set_current_tenant
+        request.state.auth_user_id = None
+        request.state.tenant_id = api_tenant
+        request.state.is_admin = False
+        token = set_current_tenant(api_tenant)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_tenant(token)
+
+    return JSONResponse(status_code=401, content={"detail": "请先登录"})
+
+
+@app.middleware("http")
+async def no_store_authenticated_pages(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/auth/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 # ---- Agent registry ----
@@ -199,7 +224,9 @@ AGENTS = get_agents()
 
 # ---- Mount all routers ----
 app.include_router(auth_router.router, prefix="/api")
+app.include_router(admin_router.router, prefix="/api")
 app.include_router(agents_router.router, prefix="/api")
+app.include_router(artifacts_router.router, prefix="/api")
 app.include_router(uploads_router.router, prefix="/api")
 app.include_router(uploads_router.router)
 app.include_router(settings_router.router, prefix="/api")
@@ -219,53 +246,23 @@ app.include_router(knowledge_router.router, prefix="/api")
 app.include_router(adapters_router.router, prefix="/api")
 app.include_router(metrics_router.router, prefix="/api")
 
+if FRONTEND_ASSETS.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_ASSETS)), name="frontend-assets")
+if FRONTEND_AVATARS.is_dir():
+    app.mount("/avatars", StaticFiles(directory=str(FRONTEND_AVATARS)), name="frontend-avatars")
+
 # ---- Initialize database ----
 init_db()
 
 # ---- Load LLM config at startup ----
 load_llm_config(llm_client, settings)
 
-# ---- Load saved adapters and register as agents ----
-from app.adapters.adapter_agent import AdapterAgent
-from app.adapters.registry import adapter_registry as _ar
-from app.routers.adapters import ADAPTER_CLASSES, create_adapter, load_saved_adapters
-
-load_saved_adapters()
-
-# 预注册默认外部 Agent 适配器（即使未配置 API Key 也注册，前端靠它判断配置状态）
-_DEFAULT_ADAPTERS = {
-    "claude_code": {"adapter_type": "claude", "name": "Claude Code", "avatar": "/avatars/claude-code.svg"},
-    "codex": {"adapter_type": "codex", "name": "Codex", "avatar": "/avatars/codex.svg"},
-    "coze": {"adapter_type": "coze", "name": "Coze", "avatar": "🤖"},
-    "self_deployed": {"adapter_type": "self_deployed", "name": "本地 Agent", "avatar": "🔧"},
-}
-for _aid, _meta in _DEFAULT_ADAPTERS.items():
-    if _aid not in _ar._adapters:
-        saved = _ar.get_config(_aid)
-        if saved:
-            create_adapter(_aid, saved, save=False)
-        else:
-            create_adapter(_aid, {"adapter_type": _meta["adapter_type"]}, save=False)
-
-# 把所有适配器 Agent 注册到全局 AGENTS 字典
-for _aid, _adapter in _ar._adapters.items():
-    if _aid not in AGENTS:
-        _meta = _DEFAULT_ADAPTERS.get(_aid, {})
-        AGENTS[_aid] = AdapterAgent(
-            agent_id=_aid,
-            name=_meta.get("name", _adapter.name),
-            adapter=_adapter,
-            avatar=_meta.get("avatar", "🤖"),
-            role=_adapter.description,
-        )
-_registered = [a for a in AGENTS if a in _ar._adapters]
-if _registered:
-    logger.info(f"外部 Agent 已注册: {', '.join(_registered)}")
-
-
 # ---- Root & health endpoints ----
 @app.get("/")
 async def root():
+    index_path = FRONTEND_DIST / "index.html"
+    if index_path.is_file():
+        return FileResponse(index_path, media_type="text/html")
     return {"name": "AgentHub API", "version": "1.0.0", "docs": "/docs"}
 
 
@@ -282,26 +279,39 @@ async def health():
     except Exception as e:
         checks["database"] = f"error: {str(e)[:100]}"
 
-    # Redis check
+    capabilities = {}
+
+    # Redis backs distributed queues but is not required for local chat.
     try:
         from app.core.redis import redis_manager
         client = redis_manager.get_client()
         if client:
             await client.ping()
             checks["redis"] = "ok"
+            capabilities["deployment_queue"] = True
         else:
             checks["redis"] = "not_configured"
+            capabilities["deployment_queue"] = False
     except Exception as e:
-        checks["redis"] = f"error: {str(e)[:100]}"
+        checks["redis"] = f"unavailable: {str(e)[:100]}"
+        capabilities["deployment_queue"] = False
 
     # LLM check
     from app.core.llm_client import llm_client
     checks["llm"] = "configured" if llm_client.is_configured() else "not_configured"
+    capabilities["llm_chat"] = llm_client.is_configured()
 
-    all_ok = all(v == "ok" or v == "configured" or v == "not_configured" for v in checks.values())
+    try:
+        from app.core.browser_manager import PLAYWRIGHT_AVAILABLE
+        capabilities["browser_tools"] = PLAYWRIGHT_AVAILABLE
+    except Exception:
+        capabilities["browser_tools"] = False
+
+    core_ok = checks.get("database") == "ok"
     return {
-        "status": "ok" if all_ok else "degraded",
+        "status": "ok" if core_ok else "error",
         "checks": checks,
+        "capabilities": capabilities,
         "agents": list(AGENTS.keys()),
     }
 
@@ -582,3 +592,17 @@ async def proxy_published_api(deployment_id: str, path: str, request: Request):
         headers=response_headers,
         background=BackgroundTask(close_upstream),
     )
+
+
+@app.get("/{path:path}", include_in_schema=False)
+async def frontend_fallback(path: str):
+    """Serve public build files and return the SPA shell for client routes."""
+    if path.split("/", 1)[0] in {"api", "ws", "uploads", "published"}:
+        raise HTTPException(status_code=404, detail="Not found")
+    candidate = (FRONTEND_DIST / path).resolve()
+    if candidate.is_relative_to(FRONTEND_DIST.resolve()) and candidate.is_file():
+        return FileResponse(candidate)
+    index_path = FRONTEND_DIST / "index.html"
+    if index_path.is_file():
+        return FileResponse(index_path, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Frontend bundle not found")

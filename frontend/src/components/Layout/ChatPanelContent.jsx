@@ -1,5 +1,5 @@
-import React, { useRef, useEffect, useCallback, memo, useMemo } from 'react'
-import { MessageSquare } from 'lucide-react'
+import React, { useRef, useEffect, useCallback, memo, useMemo, useState } from 'react'
+import { ChevronUp, MessageSquare } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -21,6 +21,8 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
   const conv = useChatStore((s) => s.conversations.find((c) => c.id === convId))
   const addMessage = useChatStore((s) => s.addMessage)
   const loadMessages = useChatStore((s) => s.loadMessages)
+  const loadOlderMessages = useChatStore((s) => s.loadOlderMessages)
+  const hasOlderMessages = useChatStore((s) => s.hasOlderMessages[convId])
   const markRead = useChatStore((s) => s.markRead)
   const typingAgents = useChatStore((s) => s.typingAgents)
   const thinkingAgents = useChatStore((s) => s.thinkingAgents)
@@ -48,6 +50,7 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
   const messagesRef = useRef(null)
   const generationTimeoutRef = useRef(null)
   const hasRestoredScroll = useRef(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
 
   // P4: 消息加载缓存 — 已加载过的不重复请求
   useEffect(() => {
@@ -87,6 +90,7 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
   // 标记已读
   useEffect(() => {
     if (isActive && convId) {
+      useChatStore.getState().setActiveConversation(convId)
       markRead(convId)
     }
   }, [isActive, convId])
@@ -178,6 +182,26 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
   return (
     <div className="chat-panel-content">
       <div className="chat-messages" ref={messagesRef}>
+        {hasOlderMessages && (
+          <button
+            type="button"
+            className="load-older-messages"
+            disabled={loadingOlder}
+            onClick={async () => {
+              const element = messagesRef.current
+              const previousHeight = element?.scrollHeight || 0
+              setLoadingOlder(true)
+              await loadOlderMessages(convId)
+              requestAnimationFrame(() => {
+                if (element) element.scrollTop += element.scrollHeight - previousHeight
+              })
+              setLoadingOlder(false)
+            }}
+          >
+            <ChevronUp size={14} />
+            {loadingOlder ? '加载中...' : '更早消息'}
+          </button>
+        )}
         {conv.messages.length === 0 && (
           <div className="empty-state">
             <div className="text">发送消息开始对话</div>
@@ -187,6 +211,7 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
           <MessageBubble
             key={msg.id}
             message={msg}
+            conversationId={convId}
             isPinned={currentPinned.includes(msg.id)}
             isLast={msg.id === lastAgentMsgId}
           />

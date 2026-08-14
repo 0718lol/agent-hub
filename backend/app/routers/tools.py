@@ -1,10 +1,12 @@
 """Tool listing and testing endpoints."""
 import asyncio
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.agents.custom import AVAILABLE_TOOLS
+from app.core.tenancy import request_user_id
+from app.core.tenant_config import get_tenant_json, set_tenant_json
 
 
 class ToolTestRequest(BaseModel):
@@ -53,12 +55,16 @@ async def test_runtime_tool(tool_name: str, body: ToolTestRequest = ToolTestRequ
 
 
 @router.post("/runtime-tools/{tool_name}/toggle")
-async def toggle_runtime_tool(tool_name: str):
+async def toggle_runtime_tool(tool_name: str, request: Request):
     """Enable/disable a runtime tool."""
     from app.tools import get_tool
     tool = get_tool(tool_name)
     if not tool:
-        return {"error": f"Tool not found: {tool_name}"}
+        raise HTTPException(status_code=404, detail=f"Tool not found: {tool_name}")
+    tenant_id = request_user_id(request)
     async with _tool_toggle_lock:
-        tool.enabled = not tool.enabled
-    return {"tool": tool_name, "enabled": tool.enabled}
+        states = get_tenant_json(tenant_id, "runtime_tools", {}) or {}
+        enabled = not states.get(tool_name, True)
+        states[tool_name] = enabled
+        set_tenant_json(tenant_id, "runtime_tools", states)
+    return {"tool": tool_name, "enabled": enabled}

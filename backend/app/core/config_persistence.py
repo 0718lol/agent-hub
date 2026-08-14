@@ -14,6 +14,17 @@ HIL_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "h
 
 def get_hil_settings() -> dict:
     """Load HIL (Human-in-the-Loop) settings from disk."""
+    from app.core.tenancy import current_tenant_id
+
+    tenant_id = current_tenant_id()
+    if tenant_id:
+        from app.core.tenant_config import get_tenant_json
+
+        return get_tenant_json(
+            tenant_id,
+            "hil",
+            {"human_input_mode": "NEVER", "cooldown_steps": 2},
+        )
     try:
         if os.path.exists(HIL_CONFIG_PATH):
             with open(HIL_CONFIG_PATH, encoding="utf-8") as f:
@@ -25,6 +36,14 @@ def get_hil_settings() -> dict:
 
 def save_hil_settings(cfg: dict):
     """Persist HIL settings to disk."""
+    from app.core.tenancy import current_tenant_id
+
+    tenant_id = current_tenant_id()
+    if tenant_id:
+        from app.core.tenant_config import set_tenant_json
+
+        set_tenant_json(tenant_id, "hil", cfg)
+        return
     try:
         os.makedirs(os.path.dirname(HIL_CONFIG_PATH), exist_ok=True)
         with open(HIL_CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -36,6 +55,21 @@ def save_hil_settings(cfg: dict):
 def save_llm_config(llm_client, settings):
     """Persist current LLM client configuration to disk with key obfuscation."""
     from app.core.config import obfuscate_key
+    from app.core.tenancy import current_tenant_id
+
+    tenant_id = current_tenant_id()
+    if tenant_id:
+        from app.core.tenant_config import set_tenant_json
+
+        set_tenant_json(tenant_id, "llm", {
+            "provider": llm_client.provider,
+            "api_key": obfuscate_key(llm_client.api_key),
+            "base_url": llm_client.base_url,
+            "model": llm_client.model,
+            "temperature": llm_client.temperature,
+            "max_tokens": llm_client.max_tokens,
+        }, encrypted=True)
+        return
     try:
         os.makedirs(os.path.dirname(LLM_CONFIG_PATH), exist_ok=True)
         api_key_to_save = llm_client.api_key

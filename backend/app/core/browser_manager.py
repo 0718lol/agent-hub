@@ -7,13 +7,33 @@ Provides a singleton browser instance with:
 """
 import asyncio
 import atexit
+import glob
 import logging
+import os
 import signal
 import sys
 import time
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("browser_manager")
+
+
+def browser_launch_options() -> dict:
+    """Reuse a managed Chromium binary when Playwright's exact revision is absent."""
+    configured = os.environ.get("AGENTHUB_CHROMIUM_EXECUTABLE", "").strip()
+    candidates = [configured] if configured else []
+    candidates.extend(sorted(
+        glob.glob("/opt/ms-playwright/chromium-*/chrome-linux*/chrome"),
+        reverse=True,
+    ))
+    executable = next((path for path in candidates if path and os.path.isfile(path)), None)
+    options = {
+        "headless": True,
+        "args": ["--no-sandbox", "--disable-dev-shm-usage"],
+    }
+    if executable:
+        options["executable_path"] = executable
+    return options
 
 # Try to import playwright, graceful fallback if not installed
 try:
@@ -65,10 +85,7 @@ class BrowserManager:
                 return
             try:
                 self._playwright = await async_playwright().start()
-                self._browser = await self._playwright.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-dev-shm-usage']
-                )
+                self._browser = await self._playwright.chromium.launch(**browser_launch_options())
                 self._context = await self._browser.new_context(
                     viewport={'width': 1280, 'height': 720},
                     user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'

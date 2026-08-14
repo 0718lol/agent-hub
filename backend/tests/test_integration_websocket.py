@@ -1,7 +1,7 @@
 ﻿"""Integration tests for the WebSocket endpoint.
 
 Tests the full lifecycle: connection, authentication, message send/receive,
-stop signal, invalid JSON handling, short-message filtering, and disconnect cleanup.
+stop signal, invalid JSON handling, short-message delivery, and disconnect cleanup.
 
 All external dependencies (LLM, Redis, database) are mocked.
 """
@@ -64,11 +64,11 @@ def ws_app():
 
 
 @pytest.fixture(autouse=True)
-def _set_api_secret():
+def _set_api_secret(monkeypatch):
     """Set a known api_secret for every test so auth logic is deterministic."""
-    with patch("app.routers.ws.settings") as mock_settings:
-        mock_settings.api_secret = "test-secret"
-        yield
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "api_secret", "test-secret")
 
 
 # ---------------------------------------------------------------------------
@@ -169,18 +169,16 @@ async def test_connect_with_wrong_token_rejected(ws_app):
 
 @pytest.mark.asyncio
 async def test_connect_localhost_no_secret_allowed(ws_app):
-    """When api_secret is empty, localhost clients should be allowed through."""
-    with patch("app.routers.ws.settings") as mock_settings:
-        mock_settings.api_secret = ""
+    """Localhost remains protected when no API secret is configured."""
+    from app.core.config import settings
 
+    with patch.object(settings, "api_secret", ""):
         async with ASGIWebSocketTransport(app=ws_app) as transport:
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
-                async with aconnect_ws(
-                    "ws://testserver/ws/conv_localhost", client
-                ) as ws:
-                    await ws.send_text(json.dumps({"type": "read"}))
-                    resp = await _receive_json(ws)
-                    assert resp["type"] == "read"
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                with pytest.raises(BaseExceptionGroup) as exc_info:
+                    async with aconnect_ws("ws://testserver/ws/conv_localhost", client) as ws:
+                        await ws.receive_text()
+                assert _find_ws_disconnect(exc_info.value).code == 4001
 
 
 # ---------------------------------------------------------------------------
@@ -301,8 +299,8 @@ async def test_invalid_json_handled_gracefully(ws_app):
 
 
 @pytest.mark.asyncio
-async def test_short_user_message_filtered(ws_app):
-    """A single-character user message should be silently dropped (no broadcast)."""
+async def test_short_user_message_delivered(ws_app):
+    """A single-character user message can carry intent and must be delivered."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(
@@ -314,15 +312,14 @@ async def test_short_user_message_filtered(ws_app):
                     "content": {"text": "x"},
                 }
                 await ws.send_text(json.dumps(payload))
-                # No broadcast expected; confirm the socket is still alive with a read
-                await ws.send_text(json.dumps({"type": "read"}))
                 resp = await _receive_json(ws)
-                assert resp["type"] == "read"
+                assert resp["type"] == "message"
+                assert resp["content"]["text"] == "x"
 
 
 @pytest.mark.asyncio
-async def test_punctuation_only_user_message_filtered(ws_app):
-    """A punctuation-only user message should be silently dropped."""
+async def test_punctuation_only_user_message_delivered(ws_app):
+    """Punctuation can be a valid reply and must be delivered."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(
@@ -334,14 +331,14 @@ async def test_punctuation_only_user_message_filtered(ws_app):
                     "content": {"text": "!!??##"},
                 }
                 await ws.send_text(json.dumps(payload))
-                await ws.send_text(json.dumps({"type": "read"}))
                 resp = await _receive_json(ws)
-                assert resp["type"] == "read"
+                assert resp["type"] == "message"
+                assert resp["content"]["text"] == "!!??##"
 
 
 @pytest.mark.asyncio
-async def test_digit_only_user_message_filtered(ws_app):
-    """A digit-only user message should be silently dropped."""
+async def test_digit_only_user_message_delivered(ws_app):
+    """Numeric answers are valid and must be delivered."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver", headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws(
@@ -353,9 +350,9 @@ async def test_digit_only_user_message_filtered(ws_app):
                     "content": {"text": "12345"},
                 }
                 await ws.send_text(json.dumps(payload))
-                await ws.send_text(json.dumps({"type": "read"}))
                 resp = await _receive_json(ws)
-                assert resp["type"] == "read"
+                assert resp["type"] == "message"
+                assert resp["content"]["text"] == "12345"
 
 
 # ---------------------------------------------------------------------------

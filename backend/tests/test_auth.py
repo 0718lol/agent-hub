@@ -1,4 +1,4 @@
-"""Tests for signed browser sessions and production security policy."""
+"""Tests for local accounts, signed sessions, and production security policy."""
 
 import pytest
 from fastapi import FastAPI
@@ -9,7 +9,7 @@ from app.core.config import Settings
 
 
 def test_signed_session_roundtrip_and_expiry():
-    token = create_session_token("a" * 32, now=1_000)
+    token = create_session_token("a" * 32, now=1_000, user_id="usr_test")
     assert verify_session_token(token, "a" * 32, now=1_001)
     assert not verify_session_token(token, "wrong", now=1_001)
     assert not verify_session_token(token, "a" * 32, now=1_000 + SESSION_TTL_SECONDS + 1)
@@ -38,31 +38,42 @@ def test_worker_rejects_implicit_host_docker_socket(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_login_sets_httponly_cookie_and_status(monkeypatch):
+    from app.core.accounts import create_account
     from app.core.config import settings
     from app.routers.auth import router
 
-    monkeypatch.setattr(settings, "api_secret", "s" * 32)
     monkeypatch.setattr(settings, "debug", True)
+    account = create_account("test-user", "password123")
     app = FastAPI()
     app.include_router(router, prefix="/api")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        login = await client.post("/api/auth/login", json={"secret": "s" * 32})
+        login = await client.post(
+            "/api/auth/login",
+            json={"username": "test-user", "password": "password123"},
+        )
         assert login.status_code == 200
         assert "httponly" in login.headers["set-cookie"].lower()
         status = await client.get("/api/auth/status")
-        assert status.json() == {"auth_required": True, "authenticated": True}
+        assert status.json() == {
+            "auth_required": True,
+            "authenticated": True,
+            "user": account.public_dict(),
+        }
 
 
 @pytest.mark.asyncio
 async def test_login_rejects_wrong_secret(monkeypatch):
-    from app.core.config import settings
+    from app.core.accounts import create_account
     from app.routers.auth import router
 
-    monkeypatch.setattr(settings, "api_secret", "s" * 32)
+    create_account("test-user", "password123")
     app = FastAPI()
     app.include_router(router, prefix="/api")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/auth/login", json={"secret": "wrong"})
+        response = await client.post(
+            "/api/auth/login",
+            json={"username": "test-user", "password": "wrong-password"},
+        )
     assert response.status_code == 401

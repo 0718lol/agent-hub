@@ -3,7 +3,7 @@ import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 
-from app.core.database import get_due_cron_tasks, update_cron_task_run_time, update_cron_task_status
+from app.core.database import claim_cron_task, get_due_cron_tasks, update_cron_task_run_time, update_cron_task_status
 
 logger = logging.getLogger("daemon_scheduler")
 
@@ -81,8 +81,9 @@ class DaemonScheduler:
                 due_tasks = await loop.run_in_executor(None, get_due_cron_tasks, now_str)
 
                 for task in due_tasks:
-                    # Guard against double firing by setting running status before process spawn
-                    await loop.run_in_executor(None, update_cron_task_status, task["id"], "running")
+                    claimed = await loop.run_in_executor(None, claim_cron_task, task["id"])
+                    if not claimed:
+                        continue
 
                     if self._manager is None:
                         # Fallback: run in-thread when multiprocessing Manager failed

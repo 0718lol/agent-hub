@@ -1,81 +1,100 @@
 import React from 'react'
+import { Database, KeyRound, LogOut, Send, ShieldCheck, UserRound } from 'lucide-react'
 import { labelStyle, inputStyle, makeBtnStyle } from './sharedStyles'
 
 export default function SecurityTab({
-  securityToken, setSecurityToken, showToken, setShowToken, saving,
-  authStatus, handleLogin, handleLogout, notificationStatus,
-  testingNotification, handleTestNotification,
+  authStatus,
+  currentPassword,
+  setCurrentPassword,
+  newPassword,
+  setNewPassword,
+  confirmPassword,
+  setConfirmPassword,
+  saving,
+  handleChangePassword,
+  handleLogout,
+  legacyTenants,
+  legacyLoading,
+  notificationStatus,
+  testingNotification,
+  handleTestNotification,
 }) {
   const btnStyle = makeBtnStyle(saving)
+  const user = authStatus.user
 
   return (
     <>
-      <div style={{
-        padding: '10px 14px', borderRadius: 8, marginBottom: 20,
-        background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.2)',
-        fontSize: 13, color: 'var(--orange)',
-      }}>
-        🔒 全局安全门禁与 API/WebSocket 会话密钥管理
-      </div>
-
-      <div style={{ padding: '16px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>
-        <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>浏览器安全会话</label>
-        
-        <div style={{ marginBottom: 16 }}>
-          <label style={labelStyle}>访问密钥</label>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              value={securityToken}
-              onChange={(e) => setSecurityToken(e.target.value)}
-              type={showToken ? "text" : "password"}
-              placeholder="输入系统接口鉴权 Token..."
-              style={{ ...inputStyle, flex: 1 }}
-            />
-            <button
-              onClick={() => setShowToken(!showToken)}
-              style={{
-                padding: '10px 12px',
-                background: 'var(--bg-tertiary)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                cursor: 'pointer',
-                fontSize: 14,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-              type="button"
-              title={showToken ? "隐藏密码" : "显示密码"}
-            >
-              {showToken ? '👁️' : '👁️‍🗨️'}
-            </button>
+      <div style={{ padding: 16, borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 14 }}>
+          <ShieldCheck size={18} color="var(--green)" />
+          <span style={{ ...labelStyle, fontWeight: 600, margin: 0 }}>账户安全</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <UserRound size={18} />
+          <div>
+            <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 600 }}>{user?.username || '当前账户'}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{user?.is_admin ? '管理员账户' : '个人账户'}</div>
           </div>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
-            密钥只在本次登录请求中发送，不会保存在浏览器脚本存储中。登录后使用最长 8 小时的 HttpOnly 会话 Cookie，JavaScript 无法读取该凭证。
-          </p>
         </div>
-
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button
-            onClick={handleLogin}
-            disabled={saving || (authStatus.auth_required && !securityToken)}
-            style={{ ...btnStyle, flex: 1, background: 'var(--accent)' }}
-          >
-            {authStatus.authenticated ? '刷新登录' : '登录'}
-          </button>
-          <button
-            onClick={handleLogout}
-            style={{ ...btnStyle, flex: 1, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-          >
-            退出会话
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleLogout}
+          style={{ ...btnStyle, width: '100%', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', display: 'flex', gap: 7, alignItems: 'center', justifyContent: 'center' }}
+        >
+          <LogOut size={15} />
+          退出登录
+        </button>
       </div>
 
-      <div style={{ padding: 16, borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>
-        <label style={{ ...labelStyle, fontWeight: 600, marginBottom: 12 }}>审批通知通道</label>
+      <form onSubmit={handleChangePassword} style={{ padding: 16, borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 14 }}>
+          <KeyRound size={18} />
+          <span style={{ ...labelStyle, fontWeight: 600, margin: 0 }}>修改密码</span>
+        </div>
+        <label style={{ ...labelStyle, display: 'block', marginBottom: 10 }}>
+          当前密码
+          <input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} style={{ ...inputStyle, width: '100%', marginTop: 6 }} required />
+        </label>
+        <label style={{ ...labelStyle, display: 'block', marginBottom: 10 }}>
+          新密码
+          <input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} style={{ ...inputStyle, width: '100%', marginTop: 6 }} minLength={8} required />
+        </label>
+        <label style={{ ...labelStyle, display: 'block', marginBottom: 14 }}>
+          确认新密码
+          <input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} style={{ ...inputStyle, width: '100%', marginTop: 6 }} minLength={8} required />
+        </label>
+        <button type="submit" disabled={saving} style={{ ...btnStyle, width: '100%', background: 'var(--accent)' }}>
+          {saving ? '保存中...' : '更新密码'}
+        </button>
+      </form>
+
+      {user?.is_admin && (
+        <div style={{ padding: 16, borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8 }}>
+            <Database size={18} />
+            <span style={{ ...labelStyle, fontWeight: 600, margin: 0 }}>旧租户恢复区</span>
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, margin: '0 0 12px' }}>
+            旧数据保持隔离，不会自动并入任何账户。后续确认归属后再手动导入。
+          </p>
+          {legacyLoading && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>读取中...</div>}
+          {!legacyLoading && legacyTenants.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>没有待恢复的旧租户</div>}
+          {!legacyLoading && legacyTenants.map((tenant) => (
+            <div key={tenant.legacy_tenant_id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderTop: '1px solid var(--border)' }}>
+              <code style={{ fontSize: 11, overflowWrap: 'anywhere' }}>{tenant.legacy_tenant_id}</code>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{tenant.conversation_count} 个会话</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ padding: 16, borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 12 }}>
+          <Send size={18} />
+          <span style={{ ...labelStyle, fontWeight: 600, margin: 0 }}>审批通知通道</span>
+        </div>
         {['slack', 'telegram'].map((channel) => (
-          <div key={channel} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+          <div key={channel} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
             <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{channel === 'slack' ? 'Slack' : 'Telegram'}</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontSize: 11, color: notificationStatus[channel] ? 'var(--green)' : 'var(--text-muted)' }}>
@@ -88,17 +107,6 @@ export default function SecurityTab({
             </div>
           </div>
         ))}
-        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
-          通道凭证由服务端环境变量配置，页面只显示状态，不会返回 Token 或 Webhook URL。
-        </p>
-      </div>
-
-      <div style={{ padding: '14px', borderRadius: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-        <b>💡 物理安全说明：</b>
-        <br />
-        - 后端未设置密钥时，接口鉴权会被关闭，适合仅限本机的开发环境；部署到局域网或公网前必须设置 <code>AGENTHUB_API_SECRET</code> 并限制访问来源。
-        <br />
-        - 非 Docker 终端命令执行（RCE防护）已自动接入脚本安全包裹隔离保护。
       </div>
     </>
   )

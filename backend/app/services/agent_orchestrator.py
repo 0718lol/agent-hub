@@ -25,6 +25,7 @@ from app.core.debug_engine import build_fix_prompt, extract_code_block, parse_er
 from app.core.llm_client import llm_client
 from app.core.metrics import metrics
 from app.core.output_validator import get_retry_prompt, validate_output
+from app.core.tenancy import conversation_user_id
 
 try:
     from app.core.reflexion_engine import ReflexionEngine
@@ -113,16 +114,35 @@ def parse_create_agent_tag(buffer: str) -> tuple[dict | None, str]:
     return None, buffer
 
 
-def get_agents() -> dict:
-    """Return the current agent registry dict (direct reference, not a copy)."""
-    return agent_registry._agents
+def get_agents(user_id: str | None = None) -> dict:
+    """Return built-in, custom, and tenant-owned external agents."""
+    agents = dict(agent_registry.get_agent_dict(user_id))
+    if not user_id:
+        return agents
+
+    from app.adapters.adapter_agent import AdapterAgent
+    from app.adapters.registry import adapter_registry
+    from app.routers.adapters import load_saved_adapters
+
+    load_saved_adapters(user_id)
+    for agent_id, adapter in adapter_registry.get_adapters(user_id).items():
+        config = adapter_registry.get_config(user_id, agent_id) or {}
+        agents[agent_id] = AdapterAgent(
+            agent_id=agent_id,
+            name=config.get("display_name") or adapter.name,
+            adapter=adapter,
+            avatar=config.get("display_avatar") or "🤖",
+            role=config.get("display_desc") or adapter.description,
+        )
+    return agents
 # ============================================================
 # Custom Agent helpers
 # ============================================================
 
-async def _remove_custom_agent(agent_id: str):
+async def _remove_custom_agent(agent_id: str, conversation_id: str):
     """Delete a custom agent via the concurrency-safe agent registry."""
-    await agent_registry.unregister_custom_agent(agent_id)
+    user_id = conversation_user_id(conversation_id) or "legacy"
+    await agent_registry.unregister_custom_agent(agent_id, user_id)
 
 
 # ============================================================
@@ -480,7 +500,9 @@ async def stream_agent_reply(
                     if ca_match:
                         try:
                             agent_config = json.loads(ca_match.group(1))
-                            await agent_registry.register_custom_agent(agent_config)
+                            await agent_registry.register_custom_agent(
+                                agent_config, conversation_user_id(conversation_id) or "legacy"
+                            )
                             await manager.broadcast(conversation_id, {
                                 "type": "agent_created",
                                 "conversation_id": conversation_id,
@@ -525,7 +547,9 @@ async def stream_agent_reply(
                         if json_end != -1 and json_end < len(buffer) and buffer[json_end] == ']':
                             try:
                                 agent_config = json.loads(buffer[json_start:json_end])
-                                await agent_registry.register_custom_agent(agent_config)
+                                await agent_registry.register_custom_agent(
+                                    agent_config, conversation_user_id(conversation_id) or "legacy"
+                                )
                                 await manager.broadcast(conversation_id, {
                                     "type": "agent_created",
                                     "conversation_id": conversation_id,
@@ -543,7 +567,7 @@ async def stream_agent_reply(
                     if not da_match:
                         break
                     del_id = da_match.group(1)
-                    await _remove_custom_agent(del_id)
+                    await _remove_custom_agent(del_id, conversation_id)
                     await manager.broadcast(conversation_id, {
                         "type": "agent_deleted",
                         "conversation_id": conversation_id,
@@ -817,7 +841,7 @@ async def stream_agent_reply(
 async def run_target_agent_flow(conversation_id: str, agent, text: str):
     """Background generation flow when user targets a specific agent."""
     logger.info(f"run_target_agent_flow: conv={conversation_id}, agent={agent.agent_id}")
-    AGENTS = get_agents()
+    AGENTS = get_agents(conversation_user_id(conversation_id))
     stop_event = asyncio.Event()
     _stop_events[conversation_id] = stop_event
     try:
@@ -856,7 +880,7 @@ async def run_target_agent_flow(conversation_id: str, agent, text: str):
 def build_group_chat_graph(conversation_id: str, text: str, trace: Any, stop_event: asyncio.Event) -> Any:
     """Build a StateGraph for multi-agent group chat orchestration."""
     from app.core.state_graph import StateGraph
-    AGENTS = get_agents()
+    AGENTS = get_agents(conversation_user_id(conversation_id))
 
     graph = StateGraph()
 
@@ -1193,4 +1217,3 @@ async def run_user_message_flow(conversation_id: str, text: str, target_agent: s
             "conversation_id": conversation_id,
             "is_generating": False,
         })
-

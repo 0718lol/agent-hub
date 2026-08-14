@@ -21,10 +21,16 @@ from app.core.crud.artifacts import (
 )
 
 # Conversations
-from app.core.crud.conversations import create_conversation, get_conversations
+from app.core.crud.conversations import (
+    create_conversation,
+    get_conversations,
+    reorder_conversations,
+    update_conversation,
+)
 
 # Cron Tasks
 from app.core.crud.cron import (
+    claim_cron_task,
     delete_cron_task,
     get_cron_tasks,
     get_due_cron_tasks,
@@ -53,7 +59,14 @@ from app.core.crud.events import (
 from app.core.crud.knowledge import delete_knowledge_doc, get_knowledge_docs, save_knowledge_doc
 
 # Messages
-from app.core.crud.messages import clear_messages, get_messages, save_message, search_messages
+from app.core.crud.messages import (
+    clear_messages,
+    delete_message,
+    get_messages,
+    save_message,
+    search_messages,
+    update_message_pin,
+)
 
 # Uploaded Files
 from app.core.crud.uploads import get_all_uploaded_files, get_uploaded_file, save_uploaded_file
@@ -72,16 +85,21 @@ __all__ = [
     # Conversations
     "create_conversation",
     "get_conversations",
+    "reorder_conversations",
+    "update_conversation",
     # Messages
     "clear_messages",
+    "delete_message",
     "get_messages",
     "save_message",
     "search_messages",
+    "update_message_pin",
     # Custom Agents
     "delete_custom_agent",
     "get_custom_agents",
     "save_custom_agent",
     # Cron Tasks
+    "claim_cron_task",
     "delete_cron_task",
     "get_cron_tasks",
     "get_due_cron_tasks",

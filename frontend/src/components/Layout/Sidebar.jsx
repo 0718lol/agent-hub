@@ -11,7 +11,7 @@ import SidebarAgentSection from './SidebarAgentSection'
 import SidebarHistorySection from './SidebarHistorySection'
 import SidebarFooter from './SidebarFooter'
 
-export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
+export default function Sidebar({ currentUser, mobileOpen = false, onClose = () => {} }) {
   const conversations = useChatStore((s) => s.conversations)
   const agents = useAgentStore((s) => s.agents)
   const adapterStatus = useAgentStore((s) => s.adapterStatus)
@@ -123,6 +123,7 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
 
     return filtered.sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+      if (a.sortOrder !== b.sortOrder) return (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
       return (b.updatedAt || 0) - (a.updatedAt || 0)
     })
   }, [conversations, activeAgentId, searchQuery])
@@ -216,8 +217,8 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
   }
 
   // HTML5 Drag
-  const handleDragStart = useCallback((e, index) => {
-    setDragIndex(index)
+  const handleDragStart = useCallback((e, conversationId) => {
+    setDragIndex(conversationId)
     e.dataTransfer.effectAllowed = 'move'
   }, [])
 
@@ -226,10 +227,10 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
     e.dataTransfer.dropEffect = 'move'
   }, [])
 
-  const handleDrop = useCallback((e, dropIndex) => {
+  const handleDrop = useCallback((e, dropId) => {
     e.preventDefault()
-    if (dragIndex !== null && dragIndex !== dropIndex) {
-      reorderConversations(dragIndex, dropIndex)
+    if (dragIndex !== null && dragIndex !== dropId) {
+      reorderConversations(dragIndex, dropId)
     }
     setDragIndex(null)
   }, [dragIndex, reorderConversations])
@@ -316,6 +317,7 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
         </div>
 
         <SidebarFooter
+          currentUser={currentUser}
           setSettingsTab={setSettingsTab}
           setShowSettings={setShowSettings}
         />

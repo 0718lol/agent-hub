@@ -59,10 +59,15 @@ class WSClient {
       if (this.ws !== ws) return // Safe guard against stale connections
       this.reconnectAttempts = 0
       this._setStatus('connected')
-      while (this.pendingMessages.length > 0) {
-        const msg = this.pendingMessages.shift()
-        ws.send(msg)
+      const remaining = []
+      for (const pending of this.pendingMessages) {
+        if (!pending.conversationId || pending.conversationId === conversationId) {
+          ws.send(pending.json)
+        } else {
+          remaining.push(pending)
+        }
       }
+      this.pendingMessages = remaining
     }
 
     ws.onmessage = (event) => {
@@ -108,11 +113,12 @@ class WSClient {
 
   send(data) {
     const json = JSON.stringify(data)
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    const conversationId = data.conversation_id || this.currentConvId
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && conversationId === this.currentConvId) {
       this.ws.send(json)
     } else {
-      // Queue for sending once connected
-      this.pendingMessages.push(json)
+      this.pendingMessages.push({ conversationId, json })
+      if (conversationId && conversationId !== this.currentConvId) this.connect(conversationId)
     }
   }
 
@@ -126,7 +132,7 @@ class WSClient {
       this.ws.send(json)
       return
     }
-    this.pendingMessages.push(json)
+    this.pendingMessages.push({ conversationId: targetConvId, json })
     this.connect(targetConvId)
   }
 

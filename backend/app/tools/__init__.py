@@ -20,7 +20,10 @@ from .registry import (  # noqa: F401
     execute_tool_call,
     get_tool,
     get_tools_prompt,
+    is_tool_enabled,
     list_tools,
     parse_tool_calls,
     register_tool,
+    register_tenant_tool,
+    unregister_tenant_tools,
 )

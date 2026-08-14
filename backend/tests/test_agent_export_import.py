@@ -11,6 +11,12 @@ from app.routers.agents import router
 @pytest.fixture
 def client():
     app = FastAPI()
+
+    @app.middleware("http")
+    async def inject_test_tenant(request, call_next):
+        request.state.tenant_id = "api-client"
+        return await call_next(request)
+
     app.include_router(router, prefix="/api")
     return TestClient(app)
 

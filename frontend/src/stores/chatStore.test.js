@@ -3,6 +3,10 @@ import { useChatStore } from './chatStore'
 
 describe('chatStore', () => {
   beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ status: 'ok' }),
+    }))
     useChatStore.setState({
       conversations: [],
       activeConversationId: null,
@@ -11,6 +15,7 @@ describe('chatStore', () => {
       generatingConvs: new Set(),
       allRead: {},
       pinnedMessages: {},
+      hasOlderMessages: {},
     })
   })
 
@@ -236,6 +241,8 @@ describe('chatStore', () => {
 
   it('should toggle pinned message in a conversation', () => {
     const store = useChatStore.getState()
+    store.addConversation({ id: 'conv_001', name: 'A', messages: [] })
+    store.addMessage('conv_001', { id: 'msg_001', sender: 'user', content: { text: 'hi' } })
     store.togglePinMessage('conv_001', 'msg_001')
     expect(useChatStore.getState().pinnedMessages['conv_001']).toContain('msg_001')
     store.togglePinMessage('conv_001', 'msg_001')
@@ -249,9 +256,8 @@ describe('chatStore', () => {
     store.addConversation({ id: 'conv_1', name: 'First' })
     store.addConversation({ id: 'conv_2', name: 'Second' })
     store.addConversation({ id: 'conv_3', name: 'Third' })
-    store.reorderConversations(0, 2)
+    store.reorderConversations('conv_1', 'conv_3')
     const convs = useChatStore.getState().conversations
     expect(convs[2].id).toBe('conv_1')
   })
 })
-

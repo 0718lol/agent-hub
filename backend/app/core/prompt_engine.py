@@ -178,7 +178,7 @@ class PromptEngine:
         sections = []
 
         for layer in sorted(layers, key=lambda layer_item: layer_item.level):
-            if not layer.should_inject(context):
+            if not self._layer_enabled(layer) or not layer.should_inject(context):
                 continue
 
             # Special handling for dynamic layers
@@ -232,10 +232,32 @@ class PromptEngine:
 
     def set_layer_enabled(self, layer_id: str, enabled: bool):
         """Enable/disable a global layer by id."""
+        from app.core.tenancy import current_tenant_id
+
+        tenant_id = current_tenant_id()
+        if tenant_id:
+            from app.core.tenant_config import get_tenant_json, set_tenant_json
+
+            states = get_tenant_json(tenant_id, "prompt_layers", {}) or {}
+            states[layer_id] = enabled
+            set_tenant_json(tenant_id, "prompt_layers", states)
+            return
         for layer in self.global_layers:
             if layer.id == layer_id:
                 layer.enabled = enabled
                 break
+
+    @staticmethod
+    def _layer_enabled(layer: PromptLayer) -> bool:
+        from app.core.tenancy import current_tenant_id
+
+        tenant_id = current_tenant_id()
+        if not tenant_id:
+            return layer.enabled
+        from app.core.tenant_config import get_tenant_json
+
+        states = get_tenant_json(tenant_id, "prompt_layers", {}) or {}
+        return states.get(layer.id, layer.enabled)
 
     def get_layers_info(self) -> list[dict]:
         """Return info about all global layers for API exposure."""
@@ -243,7 +265,7 @@ class PromptEngine:
             {
                 "id": layer.id,
                 "level": layer.level,
-                "enabled": layer.enabled,
+                "enabled": self._layer_enabled(layer),
                 "has_condition": layer.condition is not None,
                 "content_preview": layer.content[:80] + "..." if len(layer.content) > 80 else layer.content,
             }

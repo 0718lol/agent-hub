@@ -10,7 +10,6 @@ import PromptLayersTab from './PromptLayersTab'
 import CronTasksTab from './CronTasksTab'
 import OtherTab from './OtherTab'
 import SecurityTab from './SecurityTab'
-import { wsClient } from '../../utils/websocket'
 
 export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
   const theme = useThemeStore((s) => s.theme)
@@ -28,9 +27,12 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
   const [configured, setConfigured] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
-  const [securityToken, setSecurityToken] = useState('')
-  const [showToken, setShowToken] = useState(false)
-  const [authStatus, setAuthStatus] = useState({ auth_required: false, authenticated: false })
+  const [authStatus, setAuthStatus] = useState({ auth_required: true, authenticated: false, user: null })
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [legacyTenants, setLegacyTenants] = useState([])
+  const [legacyLoading, setLegacyLoading] = useState(false)
   const [notificationStatus, setNotificationStatus] = useState({ slack: false, telegram: false })
   const [testingNotification, setTestingNotification] = useState('')
   const [activeProvider, setActiveProvider] = useState('')
@@ -200,33 +202,41 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
           const channels = await channelResp.json()
           setNotificationStatus(channels.channels || {})
         }
+        if (status.user?.is_admin) {
+          setLegacyLoading(true)
+          const legacyResp = await fetch('/api/admin/legacy-tenants')
+          const legacyData = await legacyResp.json().catch(() => ({}))
+          if (legacyResp.ok) setLegacyTenants(legacyData.tenants || [])
+          setLegacyLoading(false)
+        }
       }
     } catch { setMsg('无法读取安全状态') }
   }
 
-  const handleSecurityLogin = async () => {
+  const handleChangePassword = async (event) => {
+    event.preventDefault()
+    if (newPassword !== confirmPassword) {
+      setMsg('两次输入的新密码不一致')
+      return
+    }
     setSaving(true); setMsg('')
     try {
-      const resp = await fetch('/api/auth/login', {
+      const resp = await fetch('/api/auth/change-password', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret: securityToken }),
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
       })
-      if (!resp.ok) throw new Error('密钥错误')
-      localStorage.removeItem('agenthub_api_secret')
-      setSecurityToken('')
-      setMsg('登录成功，会话凭证已安全写入 HttpOnly Cookie')
-      await fetchSecurityStatus()
-      await useChatStore.getState().fetchConversations()
-      wsClient.connect(useChatStore.getState().activeConversationId || 'conv_pm')
-    } catch (e) { setMsg(`登录失败：${e.message}`) }
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(data.detail || '修改密码失败')
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('')
+      setMsg('密码已更新成功')
+    } catch (e) { setMsg(`修改失败：${e.message}`) }
     setSaving(false)
   }
 
   const handleSecurityLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
-    setAuthStatus((s) => ({ ...s, authenticated: !s.auth_required }))
-    setNotificationStatus({ slack: false, telegram: false })
-    setMsg('当前浏览器会话已退出')
+    localStorage.removeItem('agenthub_api_secret')
+    window.location.reload()
   }
 
   const handleTestNotification = async (channel) => {
@@ -627,9 +637,12 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
         )}
 
         {tab === 'security' && (
-          <SecurityTab securityToken={securityToken} setSecurityToken={setSecurityToken}
-            showToken={showToken} setShowToken={setShowToken} saving={saving}
-            authStatus={authStatus} handleLogin={handleSecurityLogin} handleLogout={handleSecurityLogout}
+          <SecurityTab authStatus={authStatus} saving={saving}
+            currentPassword={currentPassword} setCurrentPassword={setCurrentPassword}
+            newPassword={newPassword} setNewPassword={setNewPassword}
+            confirmPassword={confirmPassword} setConfirmPassword={setConfirmPassword}
+            handleChangePassword={handleChangePassword} handleLogout={handleSecurityLogout}
+            legacyTenants={legacyTenants} legacyLoading={legacyLoading}
             notificationStatus={notificationStatus} testingNotification={testingNotification}
             handleTestNotification={handleTestNotification} />
         )}

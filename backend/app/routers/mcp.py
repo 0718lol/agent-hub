@@ -1,10 +1,11 @@
 import re
 import shlex
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, Request
+from pydantic import BaseModel, Field
 
 from app.core.mcp_bridge import mcp_bridge_manager
+from app.core.tenancy import request_user_id
 
 ALLOWED_MCP_COMMANDS = {"npx", "node", "python", "uvx"}
 
@@ -23,19 +24,19 @@ router = APIRouter(tags=["mcp"])
 
 
 class MCPServerRegister(BaseModel):
-    name: str
+    name: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,64}$")
     command: str
-    args: list[str] = []
+    args: list[str] = Field(default_factory=list, max_length=64)
 
 
 @router.get("/mcp/servers")
-async def list_mcp_servers():
+async def list_mcp_servers(request: Request):
     """List all registered MCP servers and their available tool namespaced schemas."""
-    return await mcp_bridge_manager.get_servers_status()
+    return await mcp_bridge_manager.get_servers_status(request_user_id(request))
 
 
 @router.post("/mcp/servers")
-async def register_mcp_server(body: MCPServerRegister):
+async def register_mcp_server(body: MCPServerRegister, request: Request):
     """Dynamically launch and connect to a new stdio JSON-RPC MCP server."""
     parts = shlex.split(body.command) if body.command.strip() else []
     cmd_base = parts[0] if parts else ""
@@ -63,6 +64,7 @@ async def register_mcp_server(body: MCPServerRegister):
                     return {"status": "error", "message": f"Dangerous arg pattern '{arg}' not allowed for '{cmd_base}'"}
 
     success = await mcp_bridge_manager.register_server(
+        tenant_id=request_user_id(request),
         name=body.name,
         command=body.command,
         args=body.args
@@ -73,18 +75,18 @@ async def register_mcp_server(body: MCPServerRegister):
 
 
 @router.post("/mcp/servers/{server_name}/toggle")
-async def toggle_mcp_server(server_name: str, enabled: bool):
+async def toggle_mcp_server(server_name: str, enabled: bool, request: Request):
     """Temporarily suspend or reactivate an active MCP server."""
-    success = await mcp_bridge_manager.toggle_server(server_name, enabled)
+    success = await mcp_bridge_manager.toggle_server(request_user_id(request), server_name, enabled)
     if success:
         return {"status": "ok", "message": "Server status updated."}
     return {"status": "error", "message": "Failed to toggle server state."}
 
 
 @router.delete("/mcp/servers/{server_name}")
-async def unregister_mcp_server(server_name: str):
+async def unregister_mcp_server(server_name: str, request: Request):
     """Stop child stdio processes and permanently unregister MCP server."""
-    success = await mcp_bridge_manager.unregister_server(server_name)
+    success = await mcp_bridge_manager.unregister_server(request_user_id(request), server_name)
     if success:
         return {"status": "ok", "message": f"MCP Server '{server_name}' successfully stopped."}
     return {"status": "error", "message": "Server not found."}
