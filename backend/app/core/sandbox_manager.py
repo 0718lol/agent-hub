@@ -32,6 +32,7 @@ logger = logging.getLogger("sandbox_manager")
 MAX_OUTPUT_LIMIT = 5000
 CONTAINER_TMPFS_MOUNT = "/tmp:rw,nosuid,size=512m"  # nosec B108
 COMMAND_FILE = ".agenthub-command"
+COMMAND_PATH = "/tmp/workspace/.agenthub-command"  # nosec B108
 
 
 class BaseSandbox(ABC):
@@ -380,14 +381,14 @@ class DockerSandbox(BaseSandbox):
             )
             bootstrap_parts.extend([
                 "mkdir -p /tmp/workspace",
-                "tar -xf - -C /tmp/workspace",
+                "tar --no-same-owner -xf - -C /tmp/workspace",
                 *runtime_bootstrap,
                 "cd /tmp/workspace",
             ])
             if runner[-1] == "-":
-                runner[-1] = f"/tmp/workspace/{COMMAND_FILE}"
+                runner[-1] = COMMAND_PATH
             else:
-                runner.append(f"/tmp/workspace/{COMMAND_FILE}")
+                runner.append(COMMAND_PATH)
         if bootstrap_parts:
             bootstrap_parts.append(f"exec {shlex.join(runner)}")
             runner = ["sh", "-lc", " && ".join(bootstrap_parts)]

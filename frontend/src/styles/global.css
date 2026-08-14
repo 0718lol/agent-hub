@@ -1789,6 +1789,7 @@ body {
 
 .slide-panel.open {
   border-left-color: var(--border);
+  z-index: 10000;
 }
 
 /* 拖拽中禁用过渡，保证跟手 */

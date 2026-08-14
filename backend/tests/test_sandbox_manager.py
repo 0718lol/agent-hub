@@ -92,7 +92,7 @@ async def test_docker_workspace_is_streamed_into_read_only_container(tmp_path):
     assert command[command.index("--network") + 1] == "none"
     assert "agenthub-runtime-sandbox:local" in command
     bootstrap = command[command.index("-lc") + 1]
-    assert "tar -xf - -C /tmp/workspace" in bootstrap
+    assert "tar --no-same-owner -xf - -C /tmp/workspace" in bootstrap
     assert "cd /tmp/workspace" in bootstrap
     assert "type=bind" not in command
     assert calls[1][:3] == ("docker", "start", "-a")
