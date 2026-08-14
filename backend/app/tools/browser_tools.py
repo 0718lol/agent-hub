@@ -107,6 +107,7 @@ class BrowserSessionManager:
                 conversation_id = scope_conversation_id(tenant_id, conversation_id)
         if not self.playwright:
             from playwright.async_api import async_playwright
+
             from app.core.browser_manager import browser_launch_options
 
             self.playwright = await async_playwright().start()

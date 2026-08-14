@@ -48,6 +48,9 @@ from app.routers import (
     adapters as adapters_router,
 )
 from app.routers import (
+    admin as admin_router,
+)
+from app.routers import (
     agents as agents_router,
 )
 from app.routers import (
@@ -55,9 +58,6 @@ from app.routers import (
 )
 from app.routers import (
     auth as auth_router,
-)
-from app.routers import (
-    admin as admin_router,
 )
 from app.routers import (
     benchmark as benchmark_router,

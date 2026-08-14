@@ -29,6 +29,7 @@ logger = logging.getLogger("sandbox_manager")
 
 # Unified max cap for characters of stdout/stderr read-backs
 MAX_OUTPUT_LIMIT = 5000
+CONTAINER_TMPFS_MOUNT = "/tmp:rw,nosuid,size=512m"  # nosec B108
 
 
 class BaseSandbox(ABC):
@@ -359,8 +360,9 @@ class DockerSandbox(BaseSandbox):
         if workspace is not None:
             archive_path = await asyncio.to_thread(self._create_workspace_archive, workspace)
             bootstrap_parts.extend([
+                "while [ ! -f /tmp/.agenthub-workspace-ready ]; do sleep 0.05; done",
                 "mkdir -p /tmp/workspace",
-                "tar -xf /workspace/project.tar -C /tmp/workspace",
+                "tar -xf /tmp/project.tar -C /tmp/workspace",
                 *runtime_bootstrap,
                 "cd /tmp/workspace",
             ])
@@ -377,7 +379,7 @@ class DockerSandbox(BaseSandbox):
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
             "--read-only",
-            "--tmpfs", "/tmp:rw,nosuid,size=512m",
+            "--tmpfs", CONTAINER_TMPFS_MOUNT,
             "--user", user,
             "-e", "PYTHONDONTWRITEBYTECODE=1",
             "-e", "HOME=/tmp",
@@ -395,18 +397,34 @@ class DockerSandbox(BaseSandbox):
             created = True
 
             if archive_path is not None:
-                returncode, _stdout, stderr = await self._run_cli([
-                    "cp", str(archive_path), f"{container_name}:/workspace/project.tar",
-                ])
+                returncode, _stdout, stderr = await self._run_cli(["start", container_name])
                 if returncode != 0:
                     return self._result(language, "error", b"", stderr, returncode, started_at)
-
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "start", "-a", "-i", container_name,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                stdin=asyncio.subprocess.PIPE,
-            )
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "attach", "-i", container_name,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.PIPE,
+                )
+                returncode, _stdout, stderr = await self._run_cli([
+                    "cp", str(archive_path), f"{container_name}:/tmp/project.tar",
+                ])
+                if returncode == 0:
+                    returncode, _stdout, stderr = await self._run_cli([
+                        "exec", "-u", "0:0", container_name,
+                        "sh", "-c",
+                        "chmod 0444 /tmp/project.tar && touch /tmp/.agenthub-workspace-ready",
+                    ])
+                if returncode != 0:
+                    await safe_terminate_process_tree(proc)
+                    return self._result(language, "error", b"", stderr, returncode, started_at)
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "start", "-a", "-i", container_name,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.PIPE,
+                )
             try:
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(input=code.encode("utf-8")),

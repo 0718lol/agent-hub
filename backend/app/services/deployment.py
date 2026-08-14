@@ -22,6 +22,8 @@ MAX_DEPLOY_FILES = 2_000
 MAX_DEPLOY_BYTES = 100 * 1024 * 1024
 IGNORED_DIRECTORIES = {".git", "node_modules", ".venv", "venv", "__pycache__"}
 DEPLOY_TARGETS = {"auto", "web", "api", "apk", "miniprogram"}
+BUILD_TMPFS_MOUNT = "/tmp:rw,nosuid,size=512m"  # nosec B108
+RUNTIME_TMPFS_MOUNT = "/tmp:rw,noexec,nosuid,size=64m"  # nosec B108
 ProgressCallback = Callable[[str, str, int], Awaitable[None]]
 CancellationCallback = Callable[[], Awaitable[bool]]
 
@@ -317,7 +319,7 @@ async def _build_apk(
             "--pids-limit", "256",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
-            "--tmpfs", "/tmp:rw,nosuid,size=512m",
+            "--tmpfs", BUILD_TMPFS_MOUNT,
             "--mount", mount,
             "-w", build_dir,
             settings.builder_image,
@@ -452,7 +454,7 @@ async def _deploy_api_container(
                 "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges:true",
                 "--read-only",
-                "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+                "--tmpfs", RUNTIME_TMPFS_MOUNT,
                 "--user", "65532:65532",
                 "-e", "PYTHONDONTWRITEBYTECODE=1",
                 image_name,

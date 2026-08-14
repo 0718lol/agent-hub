@@ -23,7 +23,7 @@ from .registry import (  # noqa: F401
     is_tool_enabled,
     list_tools,
     parse_tool_calls,
-    register_tool,
     register_tenant_tool,
+    register_tool,
     unregister_tenant_tools,
 )

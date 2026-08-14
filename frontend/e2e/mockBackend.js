@@ -86,7 +86,13 @@ export async function installMockBackend(page, { holdDeployment = false } = {}) 
     const method = request.method()
     state.requests.push({ method, path, body: request.postDataJSON() || null })
 
-    if (path === '/api/auth/status') return json(route, { auth_required: false, authenticated: true })
+    if (path === '/api/auth/status') {
+      return json(route, {
+        auth_required: true,
+        authenticated: true,
+        user: { id: 'usr_e2e', tenant_id: 'tn_e2e', username: 'E2E User', is_admin: false },
+      })
+    }
     if (path === '/api/conversations') return json(route, [conversation])
     if (path === '/api/conversations/conv_pm/messages') return json(route, [])
     if (path === '/api/agents/custom') return json(route, [])

@@ -7,8 +7,8 @@ import logging as _logging
 import os
 
 from sqlalchemy import event
-from sqlmodel import create_engine
 from sqlalchemy.pool import StaticPool
+from sqlmodel import create_engine
 
 _db_logger = _logging.getLogger("database._engine")
 

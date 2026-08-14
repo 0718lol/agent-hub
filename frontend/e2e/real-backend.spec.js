@@ -3,6 +3,14 @@ import { expect, test } from '@playwright/test'
 test.skip(!process.env.REAL_BACKEND, 'Set REAL_BACKEND=1 to exercise the real FastAPI and Redis services')
 
 test('真实后端支持会话、上传、部署排队与取消', async ({ page }) => {
+  const registration = await page.request.post('/api/auth/register', {
+    data: {
+      username: `ci_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      password: `E2e-${crypto.randomUUID()}`,
+    },
+  })
+  expect(registration.status()).toBe(201)
+
   await page.goto('/')
   await expect(page.locator('#root')).not.toBeEmpty()
 
