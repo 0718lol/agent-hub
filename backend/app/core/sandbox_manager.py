@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
@@ -30,6 +31,7 @@ logger = logging.getLogger("sandbox_manager")
 # Unified max cap for characters of stdout/stderr read-backs
 MAX_OUTPUT_LIMIT = 5000
 CONTAINER_TMPFS_MOUNT = "/tmp:rw,nosuid,size=512m"  # nosec B108
+COMMAND_FILE = ".agenthub-command"
 
 
 class BaseSandbox(ABC):
@@ -239,7 +241,11 @@ class DockerSandbox(BaseSandbox):
             raise
 
     @classmethod
-    def _create_workspace_archive(cls, workspace: str | Path) -> Path:
+    def _create_workspace_archive(
+        cls,
+        workspace: str | Path,
+        command: str | None = None,
+    ) -> Path:
         root = Path(workspace).resolve(strict=True)
         if not root.is_dir():
             raise ValueError("Sandbox workspace must be a directory")
@@ -255,6 +261,8 @@ class DockerSandbox(BaseSandbox):
                     relative = path.relative_to(root)
                     if any(part in cls._IGNORED_WORKSPACE_PARTS for part in relative.parts):
                         continue
+                    if relative.as_posix() == COMMAND_FILE:
+                        continue
                     if path.is_symlink() or not path.is_file():
                         continue
                     stat = path.stat()
@@ -265,6 +273,12 @@ class DockerSandbox(BaseSandbox):
                     if total_bytes > settings.runtime_sandbox_archive_max_bytes:
                         raise ValueError("Sandbox workspace is too large")
                     archive.add(path, arcname=relative.as_posix(), recursive=False)
+                if command is not None:
+                    command_bytes = command.encode("utf-8")
+                    command_info = tarfile.TarInfo(COMMAND_FILE)
+                    command_info.mode = 0o400
+                    command_info.size = len(command_bytes)
+                    archive.addfile(command_info, io.BytesIO(command_bytes))
             return archive_path
         except Exception:
             archive_path.unlink(missing_ok=True)
@@ -357,15 +371,23 @@ class DockerSandbox(BaseSandbox):
         created = False
         runner = self._runner(language)
         bootstrap_parts: list[str] = []
+        command = code
         if workspace is not None:
-            archive_path = await asyncio.to_thread(self._create_workspace_archive, workspace)
+            archive_path = await asyncio.to_thread(
+                self._create_workspace_archive,
+                workspace,
+                command,
+            )
             bootstrap_parts.extend([
-                "while [ ! -f /tmp/.agenthub-workspace-ready ]; do sleep 0.05; done",
                 "mkdir -p /tmp/workspace",
-                "tar -xf /tmp/project.tar -C /tmp/workspace",
+                "tar -xf - -C /tmp/workspace",
                 *runtime_bootstrap,
                 "cd /tmp/workspace",
             ])
+            if runner[-1] == "-":
+                runner[-1] = f"/tmp/workspace/{COMMAND_FILE}"
+            else:
+                runner.append(f"/tmp/workspace/{COMMAND_FILE}")
         if bootstrap_parts:
             bootstrap_parts.append(f"exec {shlex.join(runner)}")
             runner = ["sh", "-lc", " && ".join(bootstrap_parts)]
@@ -396,38 +418,20 @@ class DockerSandbox(BaseSandbox):
                 return self._result(language, "error", b"", stderr, returncode, started_at)
             created = True
 
-            if archive_path is not None:
-                returncode, _stdout, stderr = await self._run_cli(["start", container_name])
-                if returncode != 0:
-                    return self._result(language, "error", b"", stderr, returncode, started_at)
-                proc = await asyncio.create_subprocess_exec(
-                    "docker", "attach", "-i", container_name,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    stdin=asyncio.subprocess.PIPE,
-                )
-                returncode, _stdout, stderr = await self._run_cli([
-                    "cp", str(archive_path), f"{container_name}:/tmp/project.tar",
-                ])
-                if returncode == 0:
-                    returncode, _stdout, stderr = await self._run_cli([
-                        "exec", "-u", "0:0", container_name,
-                        "sh", "-c",
-                        "chmod 0444 /tmp/project.tar && touch /tmp/.agenthub-workspace-ready",
-                    ])
-                if returncode != 0:
-                    await safe_terminate_process_tree(proc)
-                    return self._result(language, "error", b"", stderr, returncode, started_at)
-            else:
-                proc = await asyncio.create_subprocess_exec(
-                    "docker", "start", "-a", "-i", container_name,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    stdin=asyncio.subprocess.PIPE,
-                )
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "start", "-a", "-i", container_name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
+            )
             try:
+                input_bytes = (
+                    await asyncio.to_thread(archive_path.read_bytes)
+                    if archive_path is not None
+                    else command.encode("utf-8")
+                )
                 stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(input=code.encode("utf-8")),
+                    proc.communicate(input=input_bytes),
                     timeout=timeout,
                 )
             except TimeoutError:

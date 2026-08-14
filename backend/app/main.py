@@ -284,11 +284,14 @@ async def health():
     # Redis backs distributed queues but is not required for local chat.
     try:
         from app.core.redis import redis_manager
+        from app.services.deployment_queue import WORKER_HEARTBEAT_KEY
         client = redis_manager.get_client()
         if client:
             await client.ping()
             checks["redis"] = "ok"
-            capabilities["deployment_queue"] = True
+            worker_ready = bool(await client.get(WORKER_HEARTBEAT_KEY))
+            checks["deployment_worker"] = "ok" if worker_ready else "not_ready"
+            capabilities["deployment_queue"] = worker_ready
         else:
             checks["redis"] = "not_configured"
             capabilities["deployment_queue"] = False

@@ -1,6 +1,7 @@
 """Sandbox dispatch regression tests."""
 
 import asyncio
+import tarfile
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
@@ -70,7 +71,7 @@ async def test_docker_timeout_forcibly_removes_named_container():
 
 
 @pytest.mark.asyncio
-async def test_docker_workspace_is_copied_into_running_read_only_container(tmp_path):
+async def test_docker_workspace_is_streamed_into_read_only_container(tmp_path):
     calls = []
 
     async def create_process(*args, **kwargs):
@@ -91,16 +92,22 @@ async def test_docker_workspace_is_copied_into_running_read_only_container(tmp_p
     assert command[command.index("--network") + 1] == "none"
     assert "agenthub-runtime-sandbox:local" in command
     bootstrap = command[command.index("-lc") + 1]
-    assert "tar -xf /tmp/project.tar -C /tmp/workspace" in bootstrap
+    assert "tar -xf - -C /tmp/workspace" in bootstrap
     assert "cd /tmp/workspace" in bootstrap
     assert "type=bind" not in command
-    assert calls[1][1] == "start"
-    assert calls[1][2].startswith("agenthub-sandbox-")
-    assert calls[2][:3] == ("docker", "attach", "-i")
-    assert calls[3][1] == "cp"
-    assert calls[3][-1].endswith(":/tmp/project.tar")
-    assert calls[4][1:4] == ("exec", "-u", "0:0")
-    assert calls[5][:3] == ("docker", "rm", "-f")
+    assert calls[1][:3] == ("docker", "start", "-a")
+    assert calls[2][:3] == ("docker", "rm", "-f")
+
+
+def test_workspace_archive_contains_generated_command(tmp_path):
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    archive_path = DockerSandbox._create_workspace_archive(tmp_path, "echo sandbox-ready")
+    try:
+        with tarfile.open(archive_path) as archive:
+            assert archive.extractfile(".agenthub-command").read() == b"echo sandbox-ready"
+            assert "package.json" in archive.getnames()
+    finally:
+        archive_path.unlink(missing_ok=True)
 
 
 @pytest.mark.asyncio

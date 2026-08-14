@@ -35,9 +35,19 @@ test('真实后端支持会话、上传、部署排队与取消', async ({ page 
   expect(download.status()).toBe(200)
   expect(await download.text()).toBe('real backend upload')
 
+  const health = await page.request.get('/api/health')
+  expect(health.ok()).toBeTruthy()
+  const healthData = await health.json()
+  const queueReady = healthData.capabilities?.deployment_queue === true
+
   const deploy = await page.request.post(`/api/deploy/${rows[0].id}`, {
     data: { target: 'web' },
   })
+  if (!queueReady) {
+    expect(deploy.status()).toBe(503)
+    expect((await deploy.json()).detail).toContain('Worker')
+    return
+  }
   expect(deploy.status()).toBe(200)
   const queued = await deploy.json()
 

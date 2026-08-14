@@ -29,7 +29,7 @@ test('用户可以生成、修改、预览、发布并回滚工具软件', async
 
   await sidePanel.getByRole('button', { name: '部署' }).click()
   await expect(sidePanel.getByText('构建与发布流水线')).toBeVisible()
-  await expect(sidePanel.getByTitle('下载失败日志')).toHaveAttribute('href', '/api/deployments/job-failed/logs')
+  await expect(sidePanel.getByTitle('下载任务日志')).toHaveAttribute('href', '/api/deployments/job-failed/logs')
   await sidePanel.getByRole('group', { name: '发布目标' }).getByRole('button', { name: 'API', exact: true }).click()
   await sidePanel.getByRole('button', { name: '启动流水线' }).click()
 
