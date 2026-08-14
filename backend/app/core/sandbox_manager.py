@@ -18,6 +18,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.sandbox_dependencies import (
+    SANDBOX_WORKSPACE_PATH,
     DependencyPlan,
     DependencyPolicyError,
     resolve_dependencies,
@@ -32,7 +33,7 @@ logger = logging.getLogger("sandbox_manager")
 MAX_OUTPUT_LIMIT = 5000
 CONTAINER_TMPFS_MOUNT = "/tmp:rw,nosuid,size=512m"  # nosec B108
 COMMAND_FILE = ".agenthub-command"
-COMMAND_PATH = "/tmp/workspace/.agenthub-command"  # nosec B108
+COMMAND_PATH = f"{SANDBOX_WORKSPACE_PATH}/{COMMAND_FILE}"
 
 
 class BaseSandbox(ABC):
@@ -380,10 +381,10 @@ class DockerSandbox(BaseSandbox):
                 command,
             )
             bootstrap_parts.extend([
-                "mkdir -p /tmp/workspace",
-                "tar --no-same-owner -xf - -C /tmp/workspace",
+                f"mkdir -p {SANDBOX_WORKSPACE_PATH}",
+                f"tar --no-same-owner -xf - -C {SANDBOX_WORKSPACE_PATH}",
                 *runtime_bootstrap,
-                "cd /tmp/workspace",
+                f"cd {SANDBOX_WORKSPACE_PATH}",
             ])
             if runner[-1] == "-":
                 runner[-1] = COMMAND_PATH

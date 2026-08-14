@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 
 from app.core.config import settings
 
+SANDBOX_WORKSPACE_PATH = "/tmp/agenthub-workspace"  # nosec B108
+
 
 class DependencyPolicyError(ValueError):
     """A generated dependency manifest violates the sandbox policy."""
@@ -129,12 +131,12 @@ def _node_plan(workspace: Path) -> DependencyPlan:
         b"node-v1\0" + settings.runtime_sandbox_image.encode() + b"\0" + package_raw + b"\0" + lock_raw
     ).hexdigest()
     copy_lock = (
-        "cp /tmp/workspace/package-lock.json /deps/node/package-lock.json && "
+        f"cp {SANDBOX_WORKSPACE_PATH}/package-lock.json /deps/node/package-lock.json && "
         if lock_raw else ""
     )
     script = (
         "set -eu; rm -rf /deps/node/*; "
-        "cp /tmp/workspace/package.json /deps/node/package.json; "
+        f"cp {SANDBOX_WORKSPACE_PATH}/package.json /deps/node/package.json; "
         f"{copy_lock}"
         f"cd /deps/node; {install}; touch /deps/node/.agenthub-ready"
     )
@@ -146,7 +148,7 @@ def _node_plan(workspace: Path) -> DependencyPlan:
         install_script=script,
         install_environment=(("NPM_CONFIG_REGISTRY", settings.runtime_npm_registry),),
         runtime_environment=(("NODE_PATH", "/deps/node/node_modules"),),
-        runtime_bootstrap="ln -s /deps/node/node_modules /tmp/workspace/node_modules",
+        runtime_bootstrap=f"ln -s /deps/node/node_modules {SANDBOX_WORKSPACE_PATH}/node_modules",
     )
 
 
@@ -176,7 +178,7 @@ def _python_plan(workspace: Path) -> DependencyPlan:
         "set -eu; rm -rf /deps/python/*; "
         "python -m venv /deps/python/venv; "
         "/deps/python/venv/bin/pip install --disable-pip-version-check --no-input "
-        "--only-binary=:all: -r /tmp/workspace/requirements.txt; "
+        f"--only-binary=:all: -r {SANDBOX_WORKSPACE_PATH}/requirements.txt; "
         "touch /deps/python/.agenthub-ready"
     )
     return DependencyPlan(
