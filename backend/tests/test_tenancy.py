@@ -51,3 +51,17 @@ async def test_two_accounts_can_use_same_public_conversation_id():
     second_shared = next(row for row in second_rows.json() if row["id"] == "shared-id")
     assert first_shared["name"] == "First"
     assert second_shared["name"] == "Second"
+
+
+@pytest.mark.asyncio
+async def test_new_tenant_copies_only_builtin_conversation_templates():
+    from app.core.crud import create_conversation
+    from app.routers.conversations import _tenant_conversations
+
+    create_conversation("conv_pm", "single", "PM", "", "agent_pm")
+    create_conversation("private_legacy", "single", "Private legacy metadata", "", "agent_private")
+
+    rows = await _tenant_conversations("tenant-new")
+
+    assert any(row["id"] == "conv_pm" for row in rows)
+    assert not any(row["id"] == "private_legacy" for row in rows)

@@ -5,6 +5,7 @@ import os
 import sys
 from typing import Any
 
+from app.core.config import settings
 from app.tools.registry import (
     AgentTool,
     ToolResult,
@@ -40,6 +41,7 @@ class MCPServerProcess:
         self.listen_task: asyncio.Task = None
         self.error_task: asyncio.Task = None
         self._running = False
+        self.rpc_timeout = max(0.1, settings.mcp_rpc_timeout)
 
     async def start(self):
         """Start the MCP Server process and set up communication pipes."""
@@ -130,16 +132,8 @@ class MCPServerProcess:
             "params": {}
         }
 
-        fut = asyncio.get_running_loop().create_future()
-        self.pending_requests[req_id] = fut
-
-        try:
-            await self._write_stdin(payload)
-            response = await fut
-            return response.get("tools", [])
-        except Exception as e:
-            logger.error(f"Error querying tools list from MCP Server [{self.name}]: {e}")
-            raise e
+        response = await self._request(req_id, payload, "tools/list")
+        return response.get("tools", [])
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Invoke a specific tool on this MCP Server."""
@@ -156,16 +150,20 @@ class MCPServerProcess:
             }
         }
 
+        return await self._request(req_id, payload, f"tools/call:{tool_name}")
+
+    async def _request(self, req_id: int, payload: dict, operation: str) -> dict:
         fut = asyncio.get_running_loop().create_future()
         self.pending_requests[req_id] = fut
-
         try:
             await self._write_stdin(payload)
-            result = await fut
-            return result
-        except Exception as e:
-            logger.error(f"Error calling tool [{tool_name}] on MCP Server [{self.name}]: {e}")
-            raise e
+            return await asyncio.wait_for(fut, timeout=self.rpc_timeout)
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"MCP Server [{self.name}] timed out during {operation} after {self.rpc_timeout:g}s."
+            ) from exc
+        finally:
+            self.pending_requests.pop(req_id, None)
 
     async def _write_stdin(self, payload: dict):
         if not self.process or not self.process.stdin:

@@ -16,7 +16,21 @@ describe('chatStore', () => {
       allRead: {},
       pinnedMessages: {},
       hasOlderMessages: {},
+      _ownerId: null,
     })
+  })
+
+  it('should clear tenant-owned transient state when account changes', () => {
+    useChatStore.setState({
+      _ownerId: 'tenant-a',
+      conversations: [{ id: 'private-a', name: 'Private A', messages: [] }],
+      thinkingAgents: { 'private-a': { agent_pm: 'secret' } },
+    })
+    useChatStore.getState().setOwner('tenant-b')
+    const state = useChatStore.getState()
+    expect(state._ownerId).toBe('tenant-b')
+    expect(state.conversations.some((conversation) => conversation.id === 'private-a')).toBe(false)
+    expect(state.thinkingAgents).toEqual({})
   })
 
   // ---------- addConversation ----------

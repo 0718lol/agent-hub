@@ -1,8 +1,9 @@
 """Prompt engine configuration endpoints."""
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.prompt_engine import prompt_engine
+from app.core.tenancy import request_user_id
 from app.services.agent_registry import agent_registry
 
 
@@ -34,15 +35,15 @@ async def toggle_prompt_layer(layer_id: str, body: PromptLayerToggle):
 
 
 @router.post("/prompt/preview")
-async def preview_prompt(body: PromptPreviewRequest):
+async def preview_prompt(body: PromptPreviewRequest, request: Request):
     """Preview the assembled prompt for a given agent and context."""
     agent_id = body.agent_id
     message = body.message
     task_type = body.task_type
 
-    agent = agent_registry._agents.get(agent_id)
+    agent = await agent_registry.get_agent(agent_id, request_user_id(request))
     if not agent:
-        return {"error": f"Agent {agent_id} not found"}
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     if not task_type and message:
         task_type = prompt_engine.detect_task_type(message, agent_id)

@@ -2,7 +2,9 @@
 
 import asyncio
 import hashlib
+import math
 import time
+from dataclasses import dataclass
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -25,9 +27,20 @@ from app.core.auth import (
 from app.core.config import settings
 
 router = APIRouter(tags=["auth"])
-_login_attempts: dict[str, list[float]] = {}
-_login_lock = asyncio.Lock()
+_auth_attempts: dict[str, "_AttemptBucket"] = {}
+_auth_rate_lock = asyncio.Lock()
 _MAX_LOGIN_ATTEMPTS = 10
+_MAX_LOGIN_ATTEMPTS_PER_IP = 30
+_MAX_REGISTRATIONS_PER_IP = 5
+_LOGIN_WINDOW_SECONDS = 60
+_REGISTRATION_WINDOW_SECONDS = 10 * 60
+_MAX_RATE_LIMIT_BUCKETS = 10_000
+
+
+@dataclass
+class _AttemptBucket:
+    window: int
+    stamps: list[float]
 
 
 class CredentialsRequest(BaseModel):
@@ -52,21 +65,59 @@ def _set_session(response: Response, user_id: str) -> None:
     )
 
 
-async def _check_login_rate(request: Request, username: str) -> str:
+def _rate_key(prefix: str, value: str) -> str:
+    digest = hashlib.sha256(value.encode()).hexdigest()[:32]
+    return f"{prefix}:{digest}"
+
+
+async def _record_auth_attempt(request: Request, username: str | None = None) -> str | None:
     address = request.client.host if request.client else "unknown"
-    key = hashlib.sha256(f"{address}:{username.casefold()}".encode()).hexdigest()[:32]
-    cutoff = time.monotonic() - 60
-    async with _login_lock:
-        attempts = [stamp for stamp in _login_attempts.get(key, []) if stamp > cutoff]
-        if len(attempts) >= _MAX_LOGIN_ATTEMPTS:
+    now = time.monotonic()
+    if username is None:
+        identity_key = None
+        rules = [
+            (_rate_key("register-ip", address), _REGISTRATION_WINDOW_SECONDS, _MAX_REGISTRATIONS_PER_IP),
+        ]
+    else:
+        identity_key = _rate_key("login-account", f"{address}:{username.casefold()}")
+        rules = [
+            (_rate_key("login-ip", address), _LOGIN_WINDOW_SECONDS, _MAX_LOGIN_ATTEMPTS_PER_IP),
+            (identity_key, _LOGIN_WINDOW_SECONDS, _MAX_LOGIN_ATTEMPTS),
+        ]
+
+    async with _auth_rate_lock:
+        for key, bucket in list(_auth_attempts.items()):
+            bucket.stamps = [stamp for stamp in bucket.stamps if stamp > now - bucket.window]
+            if not bucket.stamps:
+                del _auth_attempts[key]
+
+        for key, window, limit in rules:
+            bucket = _auth_attempts.get(key)
+            stamps = bucket.stamps if bucket else []
+            if len(stamps) >= limit:
+                retry_after = max(1, math.ceil(stamps[0] + window - now))
+                raise HTTPException(
+                    status_code=429,
+                    detail="请求过于频繁，请稍后重试",
+                    headers={"Retry-After": str(retry_after)},
+                )
+
+        new_keys = sum(1 for key, _, _ in rules if key not in _auth_attempts)
+        if len(_auth_attempts) + new_keys > _MAX_RATE_LIMIT_BUCKETS:
             raise HTTPException(
                 status_code=429,
-                detail="登录尝试过于频繁，请一分钟后重试",
+                detail="请求过于频繁，请稍后重试",
                 headers={"Retry-After": "60"},
             )
-        attempts.append(time.monotonic())
-        _login_attempts[key] = attempts
-    return key
+        for key, window, _ in rules:
+            bucket = _auth_attempts.setdefault(key, _AttemptBucket(window=window, stamps=[]))
+            bucket.stamps.append(now)
+    return identity_key
+
+
+async def _clear_login_identity(identity_key: str) -> None:
+    async with _auth_rate_lock:
+        _auth_attempts.pop(identity_key, None)
 
 
 @router.get("/auth/status")
@@ -80,7 +131,8 @@ async def auth_status(request: Request):
 
 
 @router.post("/auth/register", status_code=201)
-async def register(payload: CredentialsRequest, response: Response):
+async def register(payload: CredentialsRequest, request: Request, response: Response):
+    await _record_auth_attempt(request)
     try:
         account = await asyncio.to_thread(create_account, payload.username, payload.password)
     except UsernameTakenError as exc:
@@ -93,12 +145,12 @@ async def register(payload: CredentialsRequest, response: Response):
 
 @router.post("/auth/login")
 async def login(payload: CredentialsRequest, request: Request, response: Response):
-    attempt_key = await _check_login_rate(request, payload.username)
+    identity_key = await _record_auth_attempt(request, payload.username)
     try:
         account = await asyncio.to_thread(authenticate, payload.username, payload.password)
     except InvalidCredentialsError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
-    _login_attempts.pop(attempt_key, None)
+    await _clear_login_identity(identity_key)
     _set_session(response, account.user_id)
     return {"status": "ok", "user": account.public_dict()}
 

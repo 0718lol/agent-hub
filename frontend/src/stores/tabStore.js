@@ -5,9 +5,21 @@ const MAX_TABS = 8
 
 const DEFAULT_TAB = { id: 'tab_conv_pm', convId: 'conv_pm', title: 'PM 小助手', agentId: 'agent_pm' }
 
-function loadSavedTabs() {
+function tenantStorageKey(ownerId) {
+  return `${STORAGE_KEY}:${ownerId}`
+}
+
+function loadSavedTabs(ownerId) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const key = tenantStorageKey(ownerId)
+    let raw = localStorage.getItem(key)
+    if (!raw) {
+      raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) {
+        localStorage.setItem(key, raw)
+        localStorage.removeItem(STORAGE_KEY)
+      }
+    }
     if (raw) {
       const data = JSON.parse(raw)
       if (data.openTabs?.length > 0) return data
@@ -16,18 +28,25 @@ function loadSavedTabs() {
   return null
 }
 
-const saved = loadSavedTabs()
-
 const initialLastActive = new Map([[DEFAULT_TAB.id, Date.now()]])
-if (saved?.openTabs) {
-  saved.openTabs.forEach((t) => initialLastActive.set(t.id, Date.now()))
-}
 
 export const useTabStore = create((set, get) => ({
-  openTabs: saved?.openTabs || [DEFAULT_TAB],
-  activeTabId: saved?.activeTabId || 'tab_conv_pm',
+  openTabs: [DEFAULT_TAB],
+  activeTabId: DEFAULT_TAB.id,
   lastActive: initialLastActive,
+  _ownerId: null,
   _synced: false,
+
+  setOwner: (ownerId) => {
+    if (!ownerId || get()._ownerId === ownerId) return
+    const saved = loadSavedTabs(ownerId)
+    const openTabs = saved?.openTabs?.length ? saved.openTabs : [DEFAULT_TAB]
+    const activeTabId = openTabs.some((tab) => tab.id === saved?.activeTabId)
+      ? saved.activeTabId
+      : openTabs[0].id
+    const lastActive = new Map(openTabs.map((tab) => [tab.id, Date.now()]))
+    set({ openTabs, activeTabId, lastActive, _ownerId: ownerId, _synced: false })
+  },
 
   openTab: (convId, title, agentId) => {
     const tabId = `tab_${convId}`
@@ -150,8 +169,9 @@ export const useTabStore = create((set, get) => ({
 
   _persist: () => {
     try {
-      const { openTabs, activeTabId } = get()
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ openTabs, activeTabId }))
+      const { openTabs, activeTabId, _ownerId } = get()
+      if (!_ownerId) return
+      localStorage.setItem(tenantStorageKey(_ownerId), JSON.stringify({ openTabs, activeTabId }))
     } catch (_e) { /* ignore storage errors */ }
   },
 }))

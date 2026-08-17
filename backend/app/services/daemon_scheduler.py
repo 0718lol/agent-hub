@@ -115,6 +115,17 @@ class DaemonScheduler:
             await asyncio.sleep(5)
 
     async def _run_task(self, task: dict):
+        from app.core.tenancy import conversation_user_id, reset_current_tenant, set_current_tenant
+
+        tenant_id = conversation_user_id(task.get("conversation_id", ""))
+        token = set_current_tenant(tenant_id) if tenant_id else None
+        try:
+            await self._run_task_for_tenant(task, tenant_id)
+        finally:
+            if token is not None:
+                reset_current_tenant(token)
+
+    async def _run_task_for_tenant(self, task: dict, tenant_id: str | None):
         task_id = task["id"]
         conversation_id = task["conversation_id"]
         agent_id = task["agent_id"]
@@ -140,7 +151,7 @@ class DaemonScheduler:
             from app.services.agent_orchestrator import stream_agent_reply as _stream_agent_reply
             from app.services.agent_registry import agent_registry
 
-            agent = await agent_registry.get_agent(agent_id)
+            agent = await agent_registry.get_agent(agent_id, tenant_id)
             if not agent:
                 raise ValueError(f"Agent '{agent_id}' is not loaded in current server agents dictionary.")
 

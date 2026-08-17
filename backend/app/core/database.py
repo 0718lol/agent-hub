@@ -17,6 +17,28 @@ from app.core.models import *  # noqa: F403
 logger = logging.getLogger("database")
 
 
+def _default_conversations() -> list[Conversation]:
+    return [
+        Conversation(id="conv_pm", type="single", name="PM 小助手", avatar="📋", agent_id="agent_pm", preview="需求分析与任务拆解"),
+        Conversation(id="conv_frontend", type="single", name="前端工程师", avatar="🎨", agent_id="agent_frontend", preview="React 组件与样式开发"),
+        Conversation(id="conv_backend", type="single", name="后端工程师", avatar="⚙️", agent_id="agent_backend", preview="API 接口与数据模型"),
+        Conversation(id="conv_tester", type="single", name="测试工程师", avatar="🧪", agent_id="agent_tester", preview="测试用例与 Bug 分析"),
+        Conversation(id="conv_devops", type="single", name="运维工程师", avatar="🚀", agent_id="agent_devops", preview="Docker 部署与 CI/CD"),
+        Conversation(id="conv_designer", type="single", name="设计顾问", avatar="🎯", agent_id="agent_designer", preview="UI/UX 设计建议"),
+        Conversation(id="conv_builder", type="single", name="Agent 工坊", avatar="🔧", agent_id="agent_builder", preview="对话式创建自定义 Agent"),
+        Conversation(
+            id="conv_group_demo", type="group", name="Demo 项目群", avatar="💬",
+            agents=json.dumps([
+                "agent_pm", "agent_frontend", "agent_backend", "agent_tester",
+                "agent_devops", "agent_designer",
+            ]), preview="多 Agent 协作演示",
+        ),
+    ]
+
+
+DEFAULT_CONVERSATION_IDS = frozenset(row.id for row in _default_conversations())
+
+
 def _ensure_dir() -> None:
     directory = os.path.dirname(DB_PATH)
     if directory:
@@ -69,22 +91,7 @@ def init_db() -> None:
 
 
 def populate_database_defaults() -> None:
-    defaults = [
-        Conversation(id="conv_pm", type="single", name="PM 小助手", avatar="📋", agent_id="agent_pm", preview="需求分析与任务拆解"),
-        Conversation(id="conv_frontend", type="single", name="前端工程师", avatar="🎨", agent_id="agent_frontend", preview="React 组件与样式开发"),
-        Conversation(id="conv_backend", type="single", name="后端工程师", avatar="⚙️", agent_id="agent_backend", preview="API 接口与数据模型"),
-        Conversation(id="conv_tester", type="single", name="测试工程师", avatar="🧪", agent_id="agent_tester", preview="测试用例与 Bug 分析"),
-        Conversation(id="conv_devops", type="single", name="运维工程师", avatar="🚀", agent_id="agent_devops", preview="Docker 部署与 CI/CD"),
-        Conversation(id="conv_designer", type="single", name="设计顾问", avatar="🎯", agent_id="agent_designer", preview="UI/UX 设计建议"),
-        Conversation(id="conv_builder", type="single", name="Agent 工坊", avatar="🔧", agent_id="agent_builder", preview="对话式创建自定义 Agent"),
-        Conversation(
-            id="conv_group_demo", type="group", name="Demo 项目群", avatar="💬",
-            agents=json.dumps([
-                "agent_pm", "agent_frontend", "agent_backend", "agent_tester",
-                "agent_devops", "agent_designer",
-            ]), preview="多 Agent 协作演示",
-        ),
-    ]
+    defaults = _default_conversations()
     with Session(engine) as session:
         for conversation in defaults:
             if session.get(Conversation, conversation.id) is None:

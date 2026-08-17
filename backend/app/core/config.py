@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     upload_max_bytes: int = 50 * 1024 * 1024
     knowledge_upload_max_bytes: int = 25 * 1024 * 1024
     speech_upload_max_bytes: int = 25 * 1024 * 1024
+    mcp_rpc_timeout: float = 30.0
 
     # Static site deployment (Netlify Deploy API)
     netlify_token: str = ""

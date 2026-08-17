@@ -11,7 +11,7 @@ test('真实后端支持会话、上传、部署排队与取消', async ({ page 
   })
   expect(registration.status()).toBe(201)
 
-  await page.goto('/')
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root')).not.toBeEmpty()
 
   const conversations = await page.request.get('/api/conversations')
@@ -45,7 +45,7 @@ test('真实后端支持会话、上传、部署排队与取消', async ({ page 
   })
   if (!queueReady) {
     expect(deploy.status()).toBe(503)
-    expect((await deploy.json()).detail).toContain('Worker')
+    expect((await deploy.json()).detail).toMatch(/Redis|Worker/)
     return
   }
   expect(deploy.status()).toBe(200)

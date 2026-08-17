@@ -1,12 +1,14 @@
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config
 from app.core.llm_client import llm_client
+from app.core.tenancy import current_tenant_id
+from app.core.tenant_config import delete_tenant_config
 
 router = APIRouter(tags=["settings"])
 from app.core.logging_config import get_logger
@@ -53,6 +55,23 @@ async def update_llm_settings(s: LLMSettings):
     )
     save_llm_config(llm_client, settings)
     return {"status": "ok", "configured": llm_client.is_configured()}
+
+
+@router.delete("/settings/llm")
+async def disconnect_llm_settings():
+    tenant_id = current_tenant_id()
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="Tenant context is required")
+    delete_tenant_config(tenant_id, "llm")
+    llm_client.evict(tenant_id)
+    inherited = bool(settings.llm_api_key and settings.llm_base_url)
+    return {
+        "status": "ok",
+        "configured": llm_client.is_configured(),
+        "provider": llm_client.provider,
+        "model": llm_client.model,
+        "inherited": inherited,
+    }
 
 
 @router.post("/settings/llm/test")

@@ -29,8 +29,12 @@ export default function App({ currentUser }) {
     }
   }, [])
 
-  // Fetch data from backend on first mount
+  // Scope browser state before fetching tenant-owned data.
   useEffect(() => {
+    useTabStore.getState().setOwner(currentUser.tenant_id)
+    useAgentStore.getState().setOwner(currentUser.tenant_id)
+    useChatStore.getState().setOwner(currentUser.tenant_id)
+    useCanvasStore.getState().setOwner(currentUser.tenant_id)
     useChatStore.getState().fetchConversations().then(() => {
       // 对话加载完成后，清理指向不存在对话的幽灵标签
       const convIds = useChatStore.getState().conversations.map((c) => c.id)
@@ -38,7 +42,7 @@ export default function App({ currentUser }) {
     })
     useAgentStore.getState().fetchAgents()
     useCanvasStore.getState().fetchDAGFromBackend()
-  }, [])
+  }, [currentUser.tenant_id])
 
   return (
     <div className="app-layout">

@@ -52,10 +52,10 @@ def orchestration_mocks(mock_ws_manager, monkeypatch):
         yield "Default mock response"
 
     monkeypatch.setattr(
-        "app.core.llm_client.llm_client.is_configured", lambda self=None: True
+        "app.core.llm_client.llm_client._default.is_configured", lambda: True
     )
     monkeypatch.setattr(
-        "app.core.llm_client.llm_client.chat_stream", _default_stream
+        "app.core.llm_client.llm_client._default.chat_stream", _default_stream
     )
 
     # ---- 3. Harness interceptor (local import inside run_user_message_flow) ----
@@ -161,7 +161,7 @@ async def test_pm_assigns_agents(mock_ws_manager, orchestration_mocks, monkeypat
         yield "[assign:agent_frontend]"
         yield "\n前端任务已分配"
 
-    monkeypatch.setattr("app.core.llm_client.llm_client.chat_stream", _pm_stream)
+    monkeypatch.setattr("app.core.llm_client.llm_client._default.chat_stream", _pm_stream)
 
     from app.services.agent_orchestrator import run_user_message_flow
 
@@ -190,7 +190,7 @@ async def test_stop_generation(mock_ws_manager, orchestration_mocks, monkeypatch
             yield f"chunk_{i} "
             await asyncio.sleep(0.01)  # 1 s total if uninterrupted
 
-    monkeypatch.setattr("app.core.llm_client.llm_client.chat_stream", _slow_stream)
+    monkeypatch.setattr("app.core.llm_client.llm_client._default.chat_stream", _slow_stream)
 
     from app.services.agent_orchestrator import _stop_events, run_user_message_flow
 
@@ -218,7 +218,7 @@ async def test_error_recovery(mock_ws_manager, orchestration_mocks, monkeypatch)
         raise RuntimeError("LLM connection failed")
         yield  # pragma: no cover - makes this function an async generator
 
-    monkeypatch.setattr("app.core.llm_client.llm_client.chat_stream", _error_stream)
+    monkeypatch.setattr("app.core.llm_client.llm_client._default.chat_stream", _error_stream)
 
     from app.services.agent_orchestrator import run_user_message_flow
 
@@ -244,7 +244,7 @@ async def test_generating_status_broadcast(
     async def _fake_stream(messages, system="", **kwargs):
         yield "测试回复内容"
 
-    monkeypatch.setattr("app.core.llm_client.llm_client.chat_stream", _fake_stream)
+    monkeypatch.setattr("app.core.llm_client.llm_client._default.chat_stream", _fake_stream)
 
     from app.services.agent_orchestrator import run_user_message_flow
 
@@ -266,7 +266,7 @@ async def test_message_saved_to_db(mock_ws_manager, orchestration_mocks, monkeyp
     async def _fake_stream(messages, system="", **kwargs):
         yield "这是一段测试回复"
 
-    monkeypatch.setattr("app.core.llm_client.llm_client.chat_stream", _fake_stream)
+    monkeypatch.setattr("app.core.llm_client.llm_client._default.chat_stream", _fake_stream)
 
     from app.services.agent_orchestrator import run_user_message_flow
 
@@ -287,7 +287,7 @@ async def test_target_agent_flow(mock_ws_manager, orchestration_mocks, monkeypat
     async def _fake_stream(messages, system="", **kwargs):
         yield "前端组件开发完成"
 
-    monkeypatch.setattr("app.core.llm_client.llm_client.chat_stream", _fake_stream)
+    monkeypatch.setattr("app.core.llm_client.llm_client._default.chat_stream", _fake_stream)
 
     from app.agents.frontend import FrontendAgent
     from app.services.agent_orchestrator import run_target_agent_flow
@@ -324,7 +324,7 @@ async def test_pm_routes_to_assigned_agents(
         yield "[assign:agent_frontend]"
         yield "\n前端任务已分配"
 
-    monkeypatch.setattr("app.core.llm_client.llm_client.chat_stream", _fake_stream)
+    monkeypatch.setattr("app.core.llm_client.llm_client._default.chat_stream", _fake_stream)
 
     from app.services.agent_orchestrator import run_user_message_flow
 

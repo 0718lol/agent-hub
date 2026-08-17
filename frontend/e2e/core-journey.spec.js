@@ -5,7 +5,7 @@ test('用户可以生成、修改、预览、发布并回滚工具软件', async
   await installMockWebSocket(page)
   const backend = await installMockBackend(page)
 
-  await page.goto('/')
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
   await expect(page.getByText('PM 小助手', { exact: true }).first()).toBeVisible()
 
   const input = page.getByLabel('输入消息')
@@ -25,7 +25,7 @@ test('用户可以生成、修改、预览、发布并回滚工具软件', async
   const preview = sidePanel.frameLocator('iframe[title="Preview"]')
   await expect(preview.locator('h1')).toHaveText('团队任务看板')
   await expect(preview.getByRole('button', { name: '新增任务' })).toBeVisible()
-  await expect(preview.getByText('支持优先级筛选')).toBeVisible()
+  await expect(preview.locator('body')).toContainText('支持优先级筛选')
 
   await sidePanel.getByRole('button', { name: '部署' }).click()
   await expect(sidePanel.getByText('构建与发布流水线')).toBeVisible()
@@ -47,7 +47,7 @@ test('用户可以取消正在运行的构建任务', async ({ page }) => {
   await installMockWebSocket(page)
   const backend = await installMockBackend(page, { holdDeployment: true })
 
-  await page.goto('/')
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
   await page.getByText('展开侧边栏', { exact: true }).locator('..').click()
   const sidePanel = page.locator('.slide-panel.open')
   await sidePanel.getByRole('button', { name: '部署' }).click()

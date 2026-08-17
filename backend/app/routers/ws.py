@@ -9,7 +9,12 @@ from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save
 from app.core.concurrency import generation_admission
 from app.core.crud import create_conversation
 from app.core.logging_config import get_logger
-from app.core.tenancy import scope_conversation_id, set_current_tenant, websocket_user_id
+from app.core.tenancy import (
+    reset_current_tenant,
+    scope_conversation_id,
+    set_current_tenant,
+    websocket_user_id,
+)
 from app.core.websocket import manager
 from app.routers.harness_handler import handle_verdict
 from app.services.agent_orchestrator import (
@@ -58,17 +63,35 @@ def create_tracked_task(coro, name: str | None = None) -> asyncio.Task:
     return task
 
 
+async def _protocol_error(conversation_id: str, text: str) -> None:
+    await manager.broadcast(conversation_id, {
+        "type": "error",
+        "conversation_id": conversation_id,
+        "content": {"text": text},
+    })
+
+
 @router.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
-    public_conversation_id = conversation_id
     user_id = websocket_user_id(websocket)
     if not user_id:
         await websocket.accept()
         await websocket.close(code=4001, reason="Unauthorized connection attempt")
         return
 
-    # Context is copied into generation background tasks created by this socket.
-    set_current_tenant(user_id)
+    token = set_current_tenant(user_id)
+    try:
+        await _serve_authenticated_websocket(websocket, conversation_id, user_id)
+    finally:
+        reset_current_tenant(token)
+
+
+async def _serve_authenticated_websocket(
+    websocket: WebSocket,
+    public_conversation_id: str,
+    user_id: str,
+) -> None:
+    conversation_id = public_conversation_id
 
     try:
         conversation_id = scope_conversation_id(user_id, public_conversation_id)
@@ -96,17 +119,29 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             try:
                 msg = json.loads(data)
             except json.JSONDecodeError:
-                await manager.broadcast(conversation_id, {
-                    "type": "error", "conversation_id": conversation_id,
-                    "content": {"text": "Invalid JSON message"},
-                })
+                await _protocol_error(conversation_id, "Invalid JSON message")
+                continue
+            if not isinstance(msg, dict):
+                await _protocol_error(conversation_id, "Message must be a JSON object")
                 continue
 
             msg_type = msg.get("type", "message")
-            sender = msg.get("sender", "user")
+            if not isinstance(msg_type, str):
+                await _protocol_error(conversation_id, "Message type must be a string")
+                continue
             content = msg.get("content", {})
+            if not isinstance(content, dict):
+                await _protocol_error(conversation_id, "Message content must be an object")
+                continue
             text = content.get("text", "")
+            if not isinstance(text, str):
+                await _protocol_error(conversation_id, "Message text must be a string")
+                continue
             target_agent = content.get("target_agent")
+            if target_agent is not None and not isinstance(target_agent, str):
+                await _protocol_error(conversation_id, "target_agent must be a string")
+                continue
+            sender = "user"
 
             logger.debug(f"conv={conversation_id} type={msg_type} sender={sender} target_agent={target_agent} text={text[:60]}")
 
@@ -221,6 +256,12 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                 )
 
     except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("WebSocket handler failed for conversation %s", conversation_id)
+        with contextlib.suppress(Exception):
+            await websocket.close(code=1011, reason="Internal server error")
+    finally:
         manager.disconnect(websocket, conversation_id)
         # A browser refresh or brief network loss must not abort generation.
         # The explicit "stop" message remains the only user cancellation path.

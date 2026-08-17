@@ -175,8 +175,16 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
   }
 
   const handleKbDelete = async (docId) => {
-    setSaving(true)
-    try { await fetch(`/api/knowledge/${docId}`, { method: 'DELETE' }); fetchKnowledgeDocs() } catch {}
+    setSaving(true); setMsg('')
+    try {
+      const resp = await fetch(`/api/knowledge/__default__/files/${docId}`, { method: 'DELETE' })
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(data.detail || '删除失败')
+      await fetchKnowledgeDocs()
+      setMsg('知识库文档已删除')
+    } catch (error) {
+      setMsg(`删除失败：${error.message}`)
+    }
     setSaving(false)
   }
 
@@ -356,11 +364,13 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
   const handleDisconnect = async () => {
     setSaving(true)
     try {
-      await fetch('/api/settings/llm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'openai', api_key: '', base_url: '', model: '' }) })
-      setConfigured(false); setActiveProvider(''); setActiveModel('')
+      const resp = await fetch('/api/settings/llm', { method: 'DELETE' })
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(data.detail || '断开失败')
+      setConfigured(Boolean(data.configured)); setActiveProvider(data.provider || ''); setActiveModel(data.model || '')
       setProvider('openai'); setBaseUrl(''); setModel(''); setApiKey('')
-      setMsg('已断开 LLM 连接，Agent 将使用 Mock 回复')
-    } catch { setMsg('断开失败') }
+      setMsg(data.inherited ? '已移除个人配置，当前使用系统默认 LLM' : '已断开 LLM 连接，Agent 将使用 Mock 回复')
+    } catch (error) { setMsg(`断开失败：${error.message}`) }
     setSaving(false)
   }
 

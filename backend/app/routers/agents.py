@@ -84,6 +84,7 @@ async def create_custom_agent(body: CustomAgentCreate, request: Request):
     agent_id = f"agent_custom_{uuid.uuid4().hex[:8]}"
     config = {
         "agent_id": agent_id,
+        "custom": True,
         "name": body.name,
         "avatar": body.avatar,
         "role": body.role,
@@ -107,6 +108,7 @@ async def update_custom_agent(agent_id: str, body: CustomAgentCreate, request: R
         raise HTTPException(status_code=404, detail="Agent not found")
     config = {
         "agent_id": agent_id,
+        "custom": True,
         "name": body.name,
         "avatar": body.avatar,
         "role": body.role,
@@ -184,6 +186,7 @@ async def import_custom_agent(body: AgentImportRequest, request: Request):
     # Register the agent
     config = {
         "agent_id": agent_id,
+        "custom": True,
         "name": agent_data.get("name"),
         "avatar": agent_data.get("avatar", "🤖"),
         "role": agent_data.get("role", "Imported Agent"),

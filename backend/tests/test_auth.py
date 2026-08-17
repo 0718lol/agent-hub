@@ -1,11 +1,21 @@
 """Tests for local accounts, signed sessions, and production security policy."""
 
 import pytest
+from fastapi import HTTPException, Request
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.core.auth import SESSION_TTL_SECONDS, create_session_token, verify_session_token
 from app.core.config import Settings
+
+
+@pytest.fixture(autouse=True)
+def clear_auth_rate_limits():
+    from app.routers import auth
+
+    auth._auth_attempts.clear()
+    yield
+    auth._auth_attempts.clear()
 
 
 def test_signed_session_roundtrip_and_expiry():
@@ -77,3 +87,71 @@ async def test_login_rejects_wrong_secret(monkeypatch):
             json={"username": "test-user", "password": "wrong-password"},
         )
     assert response.status_code == 401
+
+
+def _request_from(address: str) -> Request:
+    return Request({"type": "http", "method": "POST", "path": "/", "headers": [], "client": (address, 1)})
+
+
+@pytest.mark.asyncio
+async def test_login_rate_limit_cannot_be_bypassed_by_rotating_usernames(monkeypatch):
+    from app.routers import auth
+
+    monkeypatch.setattr(auth, "_MAX_LOGIN_ATTEMPTS_PER_IP", 3)
+    request = _request_from("203.0.113.10")
+    for username in ("one", "two", "three"):
+        await auth._record_auth_attempt(request, username)
+
+    with pytest.raises(HTTPException) as exc:
+        await auth._record_auth_attempt(request, "four")
+    assert exc.value.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_auth_rate_limit_expires_and_cleans_all_buckets(monkeypatch):
+    from app.routers import auth
+
+    now = 100.0
+    monkeypatch.setattr(auth.time, "monotonic", lambda: now)
+    monkeypatch.setattr(auth, "_MAX_LOGIN_ATTEMPTS", 1)
+    request = _request_from("203.0.113.11")
+    identity_key = await auth._record_auth_attempt(request, "someone")
+    with pytest.raises(HTTPException):
+        await auth._record_auth_attempt(request, "someone")
+
+    now += auth._LOGIN_WINDOW_SECONDS + 1
+    await auth._record_auth_attempt(request, "someone")
+    assert identity_key in auth._auth_attempts
+    assert all(bucket.stamps == [now] for bucket in auth._auth_attempts.values())
+
+
+@pytest.mark.asyncio
+async def test_registration_is_rate_limited_per_ip(monkeypatch):
+    from app.routers import auth
+
+    monkeypatch.setattr(auth, "_MAX_REGISTRATIONS_PER_IP", 2)
+    request = _request_from("203.0.113.12")
+    await auth._record_auth_attempt(request)
+    await auth._record_auth_attempt(request)
+    with pytest.raises(HTTPException) as exc:
+        await auth._record_auth_attempt(request)
+    assert exc.value.status_code == 429
+
+
+def test_environment_admin_bootstrap_is_idempotent(monkeypatch):
+    from app.core.accounts import bootstrap_admin_from_env, get_account_by_username
+
+    monkeypatch.setenv("AGENTHUB_BOOTSTRAP_ADMIN_USERNAME", "first-admin")
+    monkeypatch.setenv("AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD", "strong-password")
+    assert bootstrap_admin_from_env() is True
+    assert bootstrap_admin_from_env() is False
+    assert get_account_by_username("first-admin").is_admin is True
+
+
+def test_environment_admin_bootstrap_requires_both_values(monkeypatch):
+    from app.core.accounts import bootstrap_admin_from_env
+
+    monkeypatch.setenv("AGENTHUB_BOOTSTRAP_ADMIN_USERNAME", "first-admin")
+    monkeypatch.delenv("AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
+    with pytest.raises(RuntimeError, match="must be set together"):
+        bootstrap_admin_from_env()

@@ -123,21 +123,36 @@ export default function EvalDashboard() {
 
   const startBenchmark = async () => {
     setBenchRunning(true)
+    setBenchStatus(null)
     try {
-      await fetch('/api/benchmark/run', { method: 'POST' })
+      const startResponse = await fetch('/api/benchmark/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const startData = await startResponse.json().catch(() => ({}))
+      if (!startResponse.ok) throw new Error(startData.detail || '基准测试启动失败')
       pollRef.current = setInterval(async () => {
-        const resp = await fetch('/api/benchmark/status')
-        const status = await resp.json()
-        setBenchStatus(status)
-        if (status.status === 'completed' || status.status === 'idle') {
+        try {
+          const resp = await fetch('/api/benchmark/status')
+          const status = await resp.json()
+          setBenchStatus(status)
+          if (['completed', 'error', 'idle'].includes(status.status)) {
+            clearInterval(pollRef.current)
+            pollRef.current = null
+            setBenchRunning(false)
+            fetchMetrics()
+            fetchArtifacts()
+          }
+        } catch (error) {
           clearInterval(pollRef.current)
           pollRef.current = null
+          setBenchStatus({ status: 'error', error: error.message })
           setBenchRunning(false)
-          fetchMetrics()
-          fetchArtifacts()
         }
       }, 2000)
-    } catch {
+    } catch (error) {
+      setBenchStatus({ status: 'error', error: error.message })
       setBenchRunning(false)
     }
   }
@@ -176,6 +191,11 @@ export default function EvalDashboard() {
           {benchRunning ? `⏳ 运行中 ${benchStatus?.progress || 0}/${benchStatus?.total || 0}` : '🚀 一键 Benchmark'}
         </button>
       </div>
+      {benchStatus?.status === 'error' && (
+        <div role="alert" style={{ marginBottom: 12, color: 'var(--red)', fontSize: 12 }}>
+          {benchStatus.error || '基准测试运行失败'}
+        </div>
+      )}
 
       {/* Overview cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
@@ -617,4 +637,3 @@ function ScoreBar({ score }) {
 
 const thStyle = { padding: '8px 12px', textAlign: 'left', fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }
 const tdStyle = { padding: '8px 12px', color: 'var(--text-primary)' }
-

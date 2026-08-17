@@ -124,7 +124,7 @@ export default function SidebarAgentSection({
                             <div className="conv-status conv-status-idle">{agent.role}</div>
                           </div>
                           <span className="online-dot" style={{ background: isAgentRunning ? 'var(--green)' : 'var(--red, #ef4444)' }} title={isAgentRunning ? '运行中' : '已停止'} />
-                          {agent.agent_id.startsWith('agent_custom_') ? (
+                          {agent.custom ? (
                             <>
                               <button
                                 className="agent-row-delete"

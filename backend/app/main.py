@@ -39,6 +39,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from starlette.background import BackgroundTask
 
+from app.core.accounts import bootstrap_admin_from_env
 from app.core.config import settings
 from app.core.config_persistence import load_llm_config, save_llm_config
 from app.core.database import init_db
@@ -253,6 +254,7 @@ if FRONTEND_AVATARS.is_dir():
 
 # ---- Initialize database ----
 init_db()
+bootstrap_admin_from_env()
 
 # ---- Load LLM config at startup ----
 load_llm_config(llm_client, settings)

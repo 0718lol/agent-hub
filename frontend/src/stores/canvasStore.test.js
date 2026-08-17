@@ -4,6 +4,7 @@ import { useCanvasStore } from './canvasStore'
 describe('canvasStore', () => {
   beforeEach(() => {
     useCanvasStore.setState({
+      _ownerId: null,
       activeTab: 'dag',
       slidePanelOpen: false,
       slidePanelContent: 'code',
@@ -34,6 +35,23 @@ describe('canvasStore', () => {
         { from: 'user', to: 'agent_pm' },
       ],
     })
+  })
+
+  it('should clear generated work when account changes', () => {
+    useCanvasStore.setState({
+      _ownerId: 'tenant-a',
+      previewHtml: '<p>private</p>',
+      generatedCode: { language: 'html', code: 'private' },
+      deployLogs: ['private log'],
+      slidePanelOpen: true,
+    })
+    useCanvasStore.getState().setOwner('tenant-b')
+    const state = useCanvasStore.getState()
+    expect(state._ownerId).toBe('tenant-b')
+    expect(state.previewHtml).toBeNull()
+    expect(state.generatedCode).toBeNull()
+    expect(state.deployLogs).toEqual([])
+    expect(state.slidePanelOpen).toBe(false)
   })
 
   // ---------- setActiveTab ----------

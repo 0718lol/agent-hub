@@ -15,17 +15,42 @@ const PRESET_AGENTS = [
   { agent_id: 'agent_designer', name: '设计顾问', role: 'UI/UX 设计 · 交互体验', status: 'idle', agent_type: 'self' },
   { agent_id: 'agent_builder', name: 'Agent 工坊', role: '对话式创建自定义 Agent', status: 'idle', agent_type: 'self' },
 ]
+const DELETED_PRESETS_KEY = 'agent-hub-deleted-presets'
 
-function loadDeletedPresets() {
+function deletedPresetsKey(ownerId) {
+  return `${DELETED_PRESETS_KEY}:${ownerId}`
+}
+
+function loadDeletedPresets(ownerId) {
   try {
-    return JSON.parse(localStorage.getItem('agent-hub-deleted-presets') || '[]')
+    const key = deletedPresetsKey(ownerId)
+    let raw = localStorage.getItem(key)
+    if (!raw) {
+      raw = localStorage.getItem(DELETED_PRESETS_KEY)
+      if (raw) {
+        localStorage.setItem(key, raw)
+        localStorage.removeItem(DELETED_PRESETS_KEY)
+      }
+    }
+    return JSON.parse(raw || '[]')
   } catch (_e) { return [] }
 }
 
 export const useAgentStore = create((set, get) => ({
   agents: PRESET_AGENTS,
-  deletedPresetIds: loadDeletedPresets(),
+  deletedPresetIds: [],
   adapterStatus: {},  // { agent_id: { configured: bool, error: string } }
+  _ownerId: null,
+
+  setOwner: (ownerId) => {
+    if (!ownerId || get()._ownerId === ownerId) return
+    set({
+      agents: PRESET_AGENTS,
+      deletedPresetIds: loadDeletedPresets(ownerId),
+      adapterStatus: {},
+      _ownerId: ownerId,
+    })
+  },
 
   setAgentStatus: (agentId, status) =>
     set((state) => ({
@@ -38,11 +63,13 @@ export const useAgentStore = create((set, get) => ({
 
   // 加载后端自定义 Agent
   loadCustomAgents: async () => {
+    const ownerId = get()._ownerId
     try {
       const resp = await fetch('/api/agents/custom')
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
       set((state) => {
+        if (state._ownerId !== ownerId) return {}
         const existingIds = new Set(state.agents.map((a) => a.agent_id))
         const newcomers = data.filter((a) => !existingIds.has(a.agent_id))
         if (newcomers.length === 0) return {}
@@ -88,9 +115,11 @@ export const useAgentStore = create((set, get) => ({
   //  预设 Agent → 标记为已删除（本地隐藏，localStorage 记录）
   //  自定义 Agent → 从列表移除 + 调后端 DELETE
   removeAgent: async (agentId) => {
-    const isCustom = agentId.startsWith('agent_custom_')
+    const agent = get().agents.find((item) => item.agent_id === agentId)
+    const isCustom = Boolean(agent?.custom)
     if (isCustom) {
-      try { await fetch(`/api/agents/custom/${agentId}`, { method: 'DELETE' }) } catch (_e) { /* ignore */ }
+      const response = await fetch(`/api/agents/custom/${agentId}`, { method: 'DELETE' })
+      if (!response.ok) return false
     }
 
     // 关闭该 Agent 相关的所有标签
@@ -109,8 +138,11 @@ export const useAgentStore = create((set, get) => ({
         return { agents: state.agents.filter((a) => a.agent_id !== agentId) }
       }
       const newDeleted = [...new Set([...state.deletedPresetIds, agentId])]
-      try { localStorage.setItem('agent-hub-deleted-presets', JSON.stringify(newDeleted)) } catch (_e) { /* ignore */ }
+      try {
+        if (state._ownerId) localStorage.setItem(deletedPresetsKey(state._ownerId), JSON.stringify(newDeleted))
+      } catch (_e) { /* ignore */ }
       return { deletedPresetIds: newDeleted }
     })
+    return true
   },
 }))

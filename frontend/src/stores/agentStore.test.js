@@ -3,12 +3,14 @@ import { useAgentStore } from './agentStore'
 
 describe('agentStore', () => {
   beforeEach(() => {
+    localStorage.clear()
     useAgentStore.setState({
       agents: [
         { agent_id: 'agent_pm', name: 'PM 小助手', role: '产品经理', status: 'idle' },
         { agent_id: 'agent_frontend', name: '前端工程师', role: '前端开发', status: 'idle' },
       ],
       deletedPresetIds: [],
+      _ownerId: null,
     })
     vi.restoreAllMocks()
   })
@@ -43,7 +45,7 @@ describe('agentStore', () => {
   // ---------- addCustomAgent ----------
 
   it('should add custom agent to agents list', () => {
-    const agent = { agent_id: 'agent_custom_new', name: 'Custom Agent', role: 'Custom Role' }
+    const agent = { agent_id: 'agent_custom_new', name: 'Custom Agent', role: 'Custom Role', custom: true }
     useAgentStore.getState().addCustomAgent(agent)
     const added = useAgentStore.getState().agents.find(a => a.agent_id === 'agent_custom_new')
     expect(added).toBeDefined()
@@ -110,11 +112,18 @@ describe('agentStore', () => {
   // ---------- removeAgent (custom) ----------
 
   it('should remove custom agent from list', async () => {
-    useAgentStore.getState().addCustomAgent({ agent_id: 'agent_custom_remove_me', name: 'ToRemove' })
-    expect(useAgentStore.getState().agents.find(a => a.agent_id === 'agent_custom_remove_me')).toBeDefined()
+    useAgentStore.getState().addCustomAgent({ agent_id: 'agent_imported_remove_me', name: 'ToRemove', custom: true })
+    expect(useAgentStore.getState().agents.find(a => a.agent_id === 'agent_imported_remove_me')).toBeDefined()
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: true })
-    await useAgentStore.getState().removeAgent('agent_custom_remove_me')
-    expect(useAgentStore.getState().agents.find(a => a.agent_id === 'agent_custom_remove_me')).toBeUndefined()
+    await useAgentStore.getState().removeAgent('agent_imported_remove_me')
+    expect(useAgentStore.getState().agents.find(a => a.agent_id === 'agent_imported_remove_me')).toBeUndefined()
+  })
+
+  it('should keep custom agent when backend deletion fails', async () => {
+    useAgentStore.getState().addCustomAgent({ agent_id: 'imported-agent', name: 'KeepMe', custom: true })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false })
+    expect(await useAgentStore.getState().removeAgent('imported-agent')).toBe(false)
+    expect(useAgentStore.getState().agents.find(a => a.agent_id === 'imported-agent')).toBeDefined()
   })
 
   // ---------- removeAgent (preset) ----------
@@ -126,5 +135,15 @@ describe('agentStore', () => {
     await useAgentStore.getState().removeAgent('agent_pm')
     expect(useAgentStore.getState().deletedPresetIds).toContain('agent_pm')
     setItemSpy.mockRestore()
+  })
+
+  it('should isolate deleted presets by tenant', () => {
+    localStorage.setItem('agent-hub-deleted-presets:tenant-a', JSON.stringify(['agent_pm']))
+    localStorage.setItem('agent-hub-deleted-presets:tenant-b', JSON.stringify(['agent_frontend']))
+
+    useAgentStore.getState().setOwner('tenant-a')
+    expect(useAgentStore.getState().deletedPresetIds).toEqual(['agent_pm'])
+    useAgentStore.getState().setOwner('tenant-b')
+    expect(useAgentStore.getState().deletedPresetIds).toEqual(['agent_frontend'])
   })
 })

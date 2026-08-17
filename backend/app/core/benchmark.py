@@ -113,6 +113,7 @@ class BenchmarkRun:
     summary: dict = field(default_factory=dict)
     progress: int = 0
     total: int = 0
+    error: str = ""
 
     def finish(self):
         self.end_time = time.time()
@@ -131,6 +132,11 @@ class BenchmarkRun:
                 "best_improvement_case": max(self.results, key=lambda r: r.improvement).case_name,
             }
 
+    def fail(self, error: str) -> None:
+        self.end_time = time.time()
+        self.status = "error"
+        self.error = error[:500]
+
     def to_dict(self) -> dict:
         return {
             "run_id": self.run_id,
@@ -140,15 +146,8 @@ class BenchmarkRun:
             "duration_s": round(time.time() - self.start_time, 1) if self.status == "running" else round(self.end_time - self.start_time, 1),
             "results": [r.to_dict() for r in self.results],
             "summary": self.summary,
+            "error": self.error,
         }
-
-
-# Global benchmark state
-_current_run: BenchmarkRun | None = None
-
-
-def get_current_run() -> BenchmarkRun | None:
-    return _current_run
 
 
 async def run_benchmark(
@@ -156,6 +155,7 @@ async def run_benchmark(
     quality_gate: Any,
     on_progress: Callable | None = None,
     cases: list[BenchmarkCase] | None = None,
+    run: BenchmarkRun | None = None,
 ) -> BenchmarkRun:
     """
     Run the benchmark suite.
@@ -169,11 +169,9 @@ async def run_benchmark(
     Returns:
         BenchmarkRun with all results
     """
-    global _current_run
-
     test_cases = cases or BENCHMARK_CASES
-    run = BenchmarkRun(total=len(test_cases))
-    _current_run = run
+    run = run or BenchmarkRun(total=len(test_cases))
+    run.total = len(test_cases)
 
     for i, case in enumerate(test_cases):
         agent = agents.get(case.agent_id)
@@ -196,7 +194,7 @@ async def run_benchmark(
             result.normal_duration_ms = int((time.perf_counter() - start) * 1000)
 
             # Score normal output
-            normal_eval = await quality_gate.evaluate(
+            normal_eval = quality_gate.evaluate(
                 result.normal_output,
                 agent_id=case.agent_id,
             )
@@ -204,13 +202,9 @@ async def run_benchmark(
 
             # ---- Best-of-N generation ----
             start = time.perf_counter()
-            # Temporarily set best_of_n
-            old_bon = quality_gate.best_of_n
-            quality_gate.best_of_n = 3
             bon_output, bon_report, _ = await quality_gate.best_of_n_generate(
-                agent, case.prompt, agent_id=case.agent_id,
+                agent, case.prompt, agent_id=case.agent_id, n=3,
             )
-            quality_gate.best_of_n = old_bon
 
             result.bon_output = bon_output
             result.bon_duration_ms = int((time.perf_counter() - start) * 1000)

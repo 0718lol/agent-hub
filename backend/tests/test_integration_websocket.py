@@ -299,6 +299,33 @@ async def test_invalid_json_handled_gracefully(ws_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload,error_text",
+    [
+        ([], "JSON object"),
+        ({"type": "message", "content": None}, "content must be an object"),
+        ({"type": "message", "content": {"text": 123}}, "text must be a string"),
+    ],
+)
+async def test_invalid_message_shape_keeps_socket_usable(ws_app, payload, error_text):
+    async with ASGIWebSocketTransport(app=ws_app) as transport:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            headers={"x-api-secret": "test-secret"},
+        ) as client:
+            async with aconnect_ws("ws://testserver/ws/conv_bad_shape", client) as ws:
+                await ws.send_text(json.dumps(payload))
+                error = await _receive_json(ws)
+                assert error["type"] == "error"
+                assert error_text in error["content"]["text"]
+
+                await ws.send_text(json.dumps({"type": "read"}))
+                receipt = await _receive_json(ws)
+                assert receipt["type"] == "read"
+
+
+@pytest.mark.asyncio
 async def test_short_user_message_delivered(ws_app):
     """A single-character user message can carry intent and must be delivered."""
     async with ASGIWebSocketTransport(app=ws_app) as transport:

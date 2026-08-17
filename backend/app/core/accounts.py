@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
+import os
 import re
 import secrets
 import unicodedata
@@ -15,6 +17,8 @@ from sqlmodel import Session, select
 
 import app.core._engine as _engine_mod
 from app.core.models import Tenant, User
+
+logger = logging.getLogger("accounts")
 
 _USERNAME_PATTERN = re.compile(r"^[\w.-]{2,32}$", re.UNICODE)
 _PASSWORD_MIN_LENGTH = 8
@@ -158,6 +162,38 @@ def get_account_by_username(username: str) -> AccountIdentity | None:
             select(User).where(User.username_normalized == normalized)
         ).first()
         return _identity(user) if user else None
+
+
+def ensure_admin_account(username: str, password: str) -> bool:
+    """Create an administrator once without changing an existing account."""
+    existing = get_account_by_username(username)
+    if existing:
+        if not existing.is_admin:
+            raise AccountError("同名普通账户已存在，拒绝自动提升权限")
+        return False
+    create_account(username, password, is_admin=True)
+    return True
+
+
+def bootstrap_admin_from_env() -> bool | None:
+    """Optionally create the first administrator from one-shot deployment secrets."""
+    username = os.environ.get("AGENTHUB_BOOTSTRAP_ADMIN_USERNAME", "").strip()
+    password = os.environ.get("AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD", "")
+    if not username and not password:
+        return None
+    if not username or not password:
+        raise RuntimeError(
+            "AGENTHUB_BOOTSTRAP_ADMIN_USERNAME and AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD must be set together"
+        )
+    try:
+        created = ensure_admin_account(username, password)
+    except AccountError as exc:
+        raise RuntimeError(f"Administrator bootstrap failed: {exc}") from exc
+    if created:
+        logger.info("Bootstrap administrator created for username %s", username)
+    else:
+        logger.info("Bootstrap administrator already exists for username %s", username)
+    return created
 
 
 def update_password(user_id: str, current_password: str, new_password: str) -> None:

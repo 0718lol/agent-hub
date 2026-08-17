@@ -45,6 +45,7 @@ vi.mock("./LLMTab", () => ({
         <span>Provider: {props.provider}</span>
         <span>Model: {props.model}</span>
         {props.configured && <span>Configured</span>}
+        {props.configured && <button onClick={props.handleDisconnect}>Disconnect</button>}
       </div>
     )
   },
@@ -69,8 +70,8 @@ vi.mock("./CronTasksTab", () => ({
 }))
 
 vi.mock("./OtherTab", () => ({
-  default: function MockOtherTab() {
-    return <div data-testid="other-tab">Other Tab Mock</div>
+  default: function MockOtherTab(props) {
+    return <div data-testid="other-tab"><button onClick={() => props.handleKbDelete("doc-1")}>Delete document</button></div>
   },
 }))
 
@@ -289,5 +290,31 @@ describe("SettingsPanel", () => {
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith("/api/prompt/layers")
     })
+  })
+
+  it("disconnects LLM with DELETE", async () => {
+    global.fetch = vi.fn((url, options) => {
+      if (url === "/api/settings/llm" && options?.method === "DELETE") {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ configured: false, inherited: false }) })
+      }
+      if (url === "/api/settings/llm") {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ configured: true, provider: "openai", model: "gpt-test" }) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok" }) })
+    })
+    render(<SettingsPanel onClose={mockOnClose} />)
+    await waitFor(() => expect(screen.getByText("Disconnect")).toBeInTheDocument())
+    fireEvent.click(screen.getByText("Disconnect"))
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/settings/llm", { method: "DELETE" }))
+  })
+
+  it("deletes a default knowledge document with the file endpoint", async () => {
+    render(<SettingsPanel onClose={mockOnClose} />)
+    fireEvent.click(screen.getByText("其他"))
+    fireEvent.click(screen.getByText("Delete document"))
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/knowledge/__default__/files/doc-1",
+      { method: "DELETE" },
+    ))
   })
 })

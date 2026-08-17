@@ -98,23 +98,45 @@ function getDefaultEdges() {
   ]
 }
 
+function topologyStorageKey(ownerId) {
+  return `agent-hub-topology:${ownerId}`
+}
+
+function loadTopology(ownerId) {
+  if (!ownerId) return null
+  try {
+    const key = topologyStorageKey(ownerId)
+    let raw = localStorage.getItem(key)
+    if (!raw) {
+      raw = localStorage.getItem('agent-hub-topology')
+      if (raw) {
+        localStorage.setItem(key, raw)
+        localStorage.removeItem('agent-hub-topology')
+      }
+    }
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
 // ---- 组件 ----
 export default function AgentFlow({ compact = false }) {
   const agents = useAgentStore((s) => s.agents)
+  const ownerId = useAgentStore((s) => s._ownerId)
   const dagStatus = useCanvasStore((s) => s.dagNodes)
   const [editMode, setEditMode] = useState(false)
   const [showNodeMenu, setShowNodeMenu] = useState(false)
 
-  const savedTopology = useMemo(() => {
-    try {
-      const raw = localStorage.getItem('agent-hub-topology')
-      if (raw) return JSON.parse(raw)
-    } catch {}
-    return null
-  }, [])
+  const savedTopology = useMemo(() => loadTopology(ownerId), [ownerId])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(savedTopology?.nodes || getDefaultNodes())
   const [edges, setEdges, onEdgesChange] = useEdgesState(savedTopology?.edges || getDefaultEdges())
+
+  useEffect(() => {
+    setNodes(savedTopology?.nodes || getDefaultNodes())
+    setEdges(savedTopology?.edges || getDefaultEdges())
+  }, [ownerId])
 
   // 同步 dagNodes 状态
   useEffect(() => {
@@ -138,15 +160,15 @@ export default function AgentFlow({ compact = false }) {
 
   // 保存
   const handleSave = useCallback(() => {
-    localStorage.setItem('agent-hub-topology', JSON.stringify({ nodes, edges }))
-  }, [nodes, edges])
+    if (ownerId) localStorage.setItem(topologyStorageKey(ownerId), JSON.stringify({ nodes, edges }))
+  }, [nodes, edges, ownerId])
 
   // 重置
   const handleReset = useCallback(() => {
     setNodes(getDefaultNodes())
     setEdges(getDefaultEdges())
-    localStorage.removeItem('agent-hub-topology')
-  }, [])
+    if (ownerId) localStorage.removeItem(topologyStorageKey(ownerId))
+  }, [ownerId])
 
   // 添加节点
   const handleAddNode = useCallback((agentId) => {

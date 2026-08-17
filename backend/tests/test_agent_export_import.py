@@ -68,6 +68,7 @@ class TestImportAgent:
             data = resp.json()
             assert data["status"] == "imported"
             assert data["agent"]["name"] == "Imported Agent"
+            assert data["agent"]["custom"] is True
 
     def test_import_duplicate_name(self, client):
         with patch('app.routers.agents.async_get_custom_agents', new_callable=AsyncMock) as mock_list, \

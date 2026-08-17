@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useTabStore } from './tabStore'
 
 function generateConvName(text) {
   if (!text || !text.trim()) return null
@@ -48,12 +49,28 @@ async function patchConversation(conversationId, updates) {
 export const useChatStore = create((set, get) => ({
   conversations: FALLBACK_CONVERSATIONS,
   activeConversationId: 'conv_pm',
+  _ownerId: null,
   typingAgents: {},
   thinkingAgents: {},
   generatingConvs: new Set(),
   allRead: {},
   pinnedMessages: {},
   hasOlderMessages: {},
+
+  setOwner: (ownerId) => {
+    if (!ownerId || get()._ownerId === ownerId) return
+    set({
+      conversations: FALLBACK_CONVERSATIONS,
+      activeConversationId: 'conv_pm',
+      typingAgents: {},
+      thinkingAgents: {},
+      generatingConvs: new Set(),
+      allRead: {},
+      pinnedMessages: {},
+      hasOlderMessages: {},
+      _ownerId: ownerId,
+    })
+  },
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
 
@@ -85,6 +102,7 @@ export const useChatStore = create((set, get) => ({
     set((state) => ({ conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, name: newName } : item) }))
     try {
       await patchConversation(conversationId, { name: newName })
+      useTabStore.getState().updateTabTitle(conversationId, newName)
     } catch (error) {
       set((state) => ({ conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, name: previous } : item) }))
       console.error('Failed to rename conversation:', error)
@@ -298,17 +316,20 @@ export const useChatStore = create((set, get) => ({
   getActiveConversation: () => get().conversations.find((item) => item.id === get().activeConversationId),
 
   fetchConversations: async () => {
+    const ownerId = get()._ownerId
     try {
       const response = await fetch('/api/conversations')
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const data = await response.json()
       const list = Array.isArray(data) ? data : (data.conversations || [])
+      if (get()._ownerId !== ownerId) return
       if (list.length > 0) {
         set({ conversations: list.map(mapConversation), activeConversationId: list[0]?.id || 'conv_pm' })
       } else {
         set({ conversations: [], activeConversationId: 'conv_pm' })
       }
     } catch (error) {
+      if (get()._ownerId !== ownerId) return
       console.warn('Failed to fetch conversations from backend, using fallback:', error)
       set({ conversations: FALLBACK_CONVERSATIONS, activeConversationId: 'conv_pm' })
     }

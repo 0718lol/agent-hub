@@ -12,6 +12,7 @@ from app.core.async_wrappers import (
     async_search_messages,
 )
 from app.core.database import (
+    DEFAULT_CONVERSATION_IDS,
     async_clear_messages_cached,
     async_get_conversations_cached,
     async_get_messages_cached,
@@ -58,7 +59,7 @@ async def _tenant_conversations(user_id: str) -> list[dict]:
     all_conversations = await async_get_conversations()
     tenant_rows = [row for row in all_conversations if belongs_to_user(row["id"], user_id)]
     if not tenant_rows:
-        templates = [row for row in all_conversations if not row["id"].startswith("tenant__")]
+        templates = [row for row in all_conversations if row["id"] in DEFAULT_CONVERSATION_IDS]
         for template in templates:
             await asyncio.to_thread(
                 create_conversation,

@@ -12,6 +12,8 @@ from app.core.async_wrappers import (
     async_update_cron_task_status,
 )
 from app.core.crud.cron import claim_cron_task
+from app.core.database import get_conversations
+from app.services.agent_registry import agent_registry
 
 router = APIRouter(tags=["cron"])
 from app.core.tenancy import belongs_to_user, public_conversation_id, request_user_id, scope_conversation_id
@@ -42,11 +44,19 @@ async def list_cron_tasks(request: Request, conversation_id: str | None = None):
 
 @router.post("/cron")
 async def create_cron_task_endpoint(body: CronTaskCreate, request: Request):
+    tenant_id = request_user_id(request)
+    scoped_conversation_id = scope_conversation_id(tenant_id, body.conversation_id)
+    conversations = await asyncio.to_thread(get_conversations)
+    if not any(row["id"] == scoped_conversation_id for row in conversations):
+        raise HTTPException(status_code=404, detail="会话不存在")
+    if await agent_registry.get_agent(body.agent_id, tenant_id) is None:
+        raise HTTPException(status_code=404, detail="Agent 不存在")
+
     task_id = f"cron_{uuid.uuid4().hex[:8]}"
     next_run = (datetime.now(UTC) + timedelta(seconds=body.interval_seconds)).strftime("%Y-%m-%d %H:%M:%S")
     await async_save_cron_task(
         task_id=task_id,
-        conversation_id=scope_conversation_id(request_user_id(request), body.conversation_id),
+        conversation_id=scoped_conversation_id,
         agent_id=body.agent_id,
         task_prompt=body.task_prompt,
         interval_seconds=body.interval_seconds,

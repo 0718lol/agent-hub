@@ -45,3 +45,16 @@ async def test_mcp_process_fails_pending_request_when_stdout_closes():
     await listener
     assert server.pending_requests == {}
     assert not server._running
+
+
+@pytest.mark.asyncio
+async def test_mcp_process_times_out_when_server_never_responds():
+    server = MCPServerProcess("hanging", "echo", [])
+    server.process = SimpleNamespace(stdout=asyncio.StreamReader(), stdin=_FakeStdin(), stderr=None)
+    server._running = True
+    server.rpc_timeout = 0.01
+
+    with pytest.raises(TimeoutError, match="tools/list"):
+        await server.list_tools()
+
+    assert server.pending_requests == {}
