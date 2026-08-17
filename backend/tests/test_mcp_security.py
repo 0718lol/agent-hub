@@ -78,6 +78,16 @@ def test_empty_command_rejected(mcp_app):
     assert "not allowed" in data.get("message", "").lower() or resp.status_code != 200
 
 
+def test_malformed_command_returns_validation_error(mcp_app):
+    """Unbalanced shell quotes must be reported as invalid input, not a server error."""
+    resp = mcp_app.post("/api/mcp/servers", json={
+        "name": "test", "command": "npx 'unterminated", "args": []
+    })
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Invalid command syntax"
+
+
 def test_long_arg_rejected(mcp_app):
     """Very long args should be rejected."""
     resp = mcp_app.post("/api/mcp/servers", json={

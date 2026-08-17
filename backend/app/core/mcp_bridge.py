@@ -82,17 +82,20 @@ class MCPServerProcess:
 
     async def stop(self):
         """Gracefully terminate the MCP Server process."""
-        if not self._running:
+        if not self._running and not self.process:
+            self._fail_pending("MCP Server connection terminated.")
             return
         self._running = False
         logger.info(f"Stopping MCP Server process [{self.name}]...")
+
+        self._fail_pending("MCP Server connection terminated.")
 
         if self.listen_task:
             self.listen_task.cancel()
         if self.error_task:
             self.error_task.cancel()
 
-        if self.process:
+        if self.process and self.process.returncode is None:
             try:
                 self.process.terminate()
                 await asyncio.wait_for(self.process.wait(), timeout=2.0)
@@ -105,11 +108,15 @@ class MCPServerProcess:
             except Exception as e:
                 logger.debug(f"Exception during terminating MCP Server process [{self.name}]: {e}")
 
-        for fut in self.pending_requests.values():
-            if not fut.done():
-                fut.set_exception(RuntimeError("MCP Server connection terminated."))
-        self.pending_requests.clear()
         logger.info(f"MCP Server process [{self.name}] stopped.")
+
+    def _fail_pending(self, message: str) -> None:
+        """Resolve all outstanding RPCs when the process can no longer answer."""
+        pending = list(self.pending_requests.values())
+        self.pending_requests.clear()
+        for fut in pending:
+            if not fut.done():
+                fut.set_exception(RuntimeError(message))
 
     async def list_tools(self) -> list[dict[str, Any]]:
         """Request the list of available tools from this MCP Server."""
@@ -173,6 +180,8 @@ class MCPServerProcess:
             try:
                 line = await self.process.stdout.readline()
                 if not line:
+                    self._running = False
+                    self._fail_pending("MCP Server process closed its stdout.")
                     break
                 line_str = line.decode("utf-8").strip()
                 if not line_str:

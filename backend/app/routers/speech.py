@@ -35,6 +35,18 @@ def _load_stt_config():
 
 
 def _save_stt_config():
+    from app.core.tenancy import current_tenant_id
+    from app.core.tenant_config import set_tenant_json
+
+    tenant_id = current_tenant_id()
+    if tenant_id:
+        set_tenant_json(tenant_id, "stt", {
+            "api_key": encrypt_key(stt_client.api_key),
+            "base_url": stt_client.base_url,
+            "model": stt_client.model,
+            "language": stt_client.language,
+        }, encrypted=True)
+        return
     try:
         os.makedirs(os.path.dirname(STT_CONFIG_PATH), exist_ok=True)
         obfuscated_api_key = encrypt_key(stt_client.api_key)

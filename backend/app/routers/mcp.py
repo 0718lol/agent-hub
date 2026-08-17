@@ -1,7 +1,7 @@
 import re
 import shlex
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.core.mcp_bridge import mcp_bridge_manager
@@ -38,7 +38,10 @@ async def list_mcp_servers(request: Request):
 @router.post("/mcp/servers")
 async def register_mcp_server(body: MCPServerRegister, request: Request):
     """Dynamically launch and connect to a new stdio JSON-RPC MCP server."""
-    parts = shlex.split(body.command) if body.command.strip() else []
+    try:
+        parts = shlex.split(body.command) if body.command.strip() else []
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid command syntax") from exc
     cmd_base = parts[0] if parts else ""
     if cmd_base not in ALLOWED_MCP_COMMANDS:
         return {"status": "error", "message": f"Command '{cmd_base}' not allowed. Allowed: {ALLOWED_MCP_COMMANDS}"}

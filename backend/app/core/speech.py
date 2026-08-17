@@ -92,4 +92,44 @@ class STTClient:
             return result.get("text", "")
 
 
-stt_client = STTClient()
+class TenantAwareSTTClient:
+    """Resolve speech settings per active tenant while retaining a local default."""
+
+    def __init__(self):
+        self._default = STTClient()
+        self._clients: dict[str, STTClient] = {}
+
+    def _client(self) -> STTClient:
+        from app.core.config import deobfuscate_key
+        from app.core.tenancy import current_tenant_id
+        from app.core.tenant_config import get_tenant_json
+
+        tenant_id = current_tenant_id()
+        if not tenant_id:
+            return self._default
+        existing = self._clients.get(tenant_id)
+        if existing is not None:
+            return existing
+
+        config = get_tenant_json(tenant_id, "stt", {}, encrypted=True) or {}
+        client = STTClient()
+        client.configure(
+            api_key=deobfuscate_key(config.get("api_key", "")) or self._default.api_key,
+            base_url=config.get("base_url", "") or self._default.base_url,
+            model=config.get("model", "") or self._default.model,
+            language=config.get("language", "") or self._default.language,
+        )
+        self._clients[tenant_id] = client
+        return client
+
+    def configure(self, api_key: str, base_url: str, model: str = "whisper-1", language: str = "zh"):
+        self._client().configure(api_key, base_url, model, language)
+
+    def __getattr__(self, name):
+        return getattr(self._client(), name)
+
+    def evict(self, tenant_id: str) -> None:
+        self._clients.pop(tenant_id, None)
+
+
+stt_client = TenantAwareSTTClient()
