@@ -29,6 +29,12 @@ class BaseAgent:
                            history: list | None = None, conversation_id: str | None = None) -> AsyncGenerator[str, None]:
         if llm_client.is_configured() and self.system_prompt:
             messages = self._build_messages(message, context, history)
+            if conversation_id:
+                from app.core.event_stream import MessageEvent, event_stream_manager
+                event_stream_manager.append_event(
+                    conversation_id,
+                    MessageEvent(sender="user", content=message),
+                )
             # Structured layered prompt injection
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
             prompt_context = {"task_type": task_type, "conversation_id": conversation_id}
@@ -100,7 +106,21 @@ class BaseAgent:
                         conversation_id,
                         ObservationEvent(tool_name=tool_name, success=result.success, output=obs_output, images=obs_images)
                     )
-                    messages = event_stream_manager.compile_to_messages(conversation_id)
+                    messages.append({"role": "assistant", "content": accumulated})
+                    observation = (
+                        f"[工具结果: {tool_name}]\n"
+                        f"{json.dumps(obs_output, ensure_ascii=False, indent=2)}\n\n"
+                        "请基于以上工具结果继续回复用户。"
+                    )
+                    if obs_images:
+                        observation_content = [{"type": "text", "text": observation}]
+                        observation_content.extend({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{image}"},
+                        } for image in obs_images if image)
+                        messages.append({"role": "user", "content": observation_content})
+                    else:
+                        messages.append({"role": "user", "content": observation})
                 else:
                     messages.append({"role": "assistant", "content": accumulated})
                     messages.append({"role": "user", "content": f"[工具结果: {tool_name}]\n{json.dumps(result.data if result.success else {'error': result.error}, ensure_ascii=False, indent=2)}\n\n请基于以上工具结果继续回复用户。"})

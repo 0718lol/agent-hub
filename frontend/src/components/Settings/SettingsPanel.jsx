@@ -282,6 +282,7 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
       setConfigured(d.configured)
       setMsg(d.configured ? '配置成功！Agent 现在会使用真实 LLM 回复' : '请填写完整信息')
       if (d.configured) { setActiveProvider(provider); setActiveModel(model); if (provider !== 'ollama') setApiKey('') }
+      window.dispatchEvent(new Event('agenthub:readiness-refresh'))
     } catch { setMsg('保存失败，请检查后端是否运行') }
     setSaving(false)
   }
@@ -370,6 +371,7 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
       setConfigured(Boolean(data.configured)); setActiveProvider(data.provider || ''); setActiveModel(data.model || '')
       setProvider('openai'); setBaseUrl(''); setModel(''); setApiKey('')
       setMsg(data.inherited ? '已移除个人配置，当前使用系统默认 LLM' : '已断开 LLM 连接，Agent 将使用 Mock 回复')
+      window.dispatchEvent(new Event('agenthub:readiness-refresh'))
     } catch (error) { setMsg(`断开失败：${error.message}`) }
     setSaving(false)
   }

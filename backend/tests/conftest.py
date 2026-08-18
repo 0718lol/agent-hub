@@ -25,10 +25,17 @@ def setup_database():
     """Auto-create all tables before each test, drop after."""
     from sqlmodel import SQLModel
 
+    import app.core.models  # noqa: F401 - register every table before create_all
     from app.core._engine import engine
+    from app.core.tenancy import reset_current_tenant, set_current_tenant
+
+    tenant_token = set_current_tenant(None)
     SQLModel.metadata.create_all(engine)
-    yield
-    SQLModel.metadata.drop_all(engine)
+    try:
+        yield
+    finally:
+        SQLModel.metadata.drop_all(engine)
+        reset_current_tenant(tenant_token)
 
 
 @pytest.fixture

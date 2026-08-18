@@ -71,13 +71,22 @@ def orchestration_mocks(mock_ws_manager, monkeypatch):
         "app.services.agent_orchestrator.get_messages", MagicMock(return_value=[])
     )
     monkeypatch.setattr(
+        "app.services.agent_orchestrator.async_get_messages_cached", AsyncMock(return_value=[])
+    )
+    monkeypatch.setattr(
         "app.services.agent_orchestrator.save_message", MagicMock()
+    )
+    monkeypatch.setattr(
+        "app.services.agent_orchestrator.async_save_message_cached", AsyncMock()
     )
     monkeypatch.setattr(
         "app.services.agent_orchestrator.save_artifact", MagicMock()
     )
     monkeypatch.setattr(
         "app.services.agent_orchestrator.update_latest_artifact_quality", MagicMock()
+    )
+    monkeypatch.setattr(
+        "app.core.event_stream.event_stream_manager.append_event", MagicMock()
     )
 
     # state_graph.run cleanup calls delete_hil_checkpoint

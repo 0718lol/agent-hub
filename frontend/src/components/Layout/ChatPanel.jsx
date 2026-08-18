@@ -17,7 +17,7 @@ import IconAvatar from '../IconAvatar'
 
 const AgentFlow = lazy(() => import('../Canvas/AgentFlow'))
 
-export default function ChatPanel({ onToggleSidebar }) {
+export default function ChatPanel({ onToggleSidebar, readiness }) {
   const openTabs = useTabStore((s) => s.openTabs)
   const activeTabId = useTabStore((s) => s.activeTabId)
   const activeTab = openTabs.find((t) => t.id === activeTabId)
@@ -122,6 +122,18 @@ export default function ChatPanel({ onToggleSidebar }) {
       if (data.type === 'code') {
         useCanvasStore.getState().setGeneratedCode(data.language, data.code)
         if (data.language === 'html') useCanvasStore.getState().setPreviewHtml(data.code)
+        if (data.artifact_id) {
+          const current = useChatStore.getState().conversations.find((item) => item.id === activeId)?.goal || {}
+          useChatStore.getState().updateConversation(activeId, {
+            goal: {
+              ...current,
+              stage: 'validating',
+              latestDeliverable: data.artifact_name || current.latestDeliverable,
+              latestArtifactId: data.artifact_id,
+              nextAction: '审阅并验证最新产物',
+            },
+          })
+        }
         return
       }
       if (data.type === 'preview') { useCanvasStore.getState().setPreviewHtml(data.html); return }
@@ -311,6 +323,7 @@ export default function ChatPanel({ onToggleSidebar }) {
         dagOpen={dagPopup}
         onClearHistory={handleClearHistory}
         onToggleOffice={() => window.dispatchEvent(new Event('agenthub:toggle-office'))}
+        readiness={readiness}
       />
 
       <TabBar />
@@ -322,7 +335,7 @@ export default function ChatPanel({ onToggleSidebar }) {
             className="chat-panel-tab-content"
             style={tab.id !== activeTabId ? { display: 'none' } : undefined}
           >
-            <ChatPanelContent convId={tab.convId} isActive={tab.id === activeTabId} />
+            <ChatPanelContent convId={tab.convId} isActive={tab.id === activeTabId} readiness={readiness} />
           </div>
         ))}
       </div>

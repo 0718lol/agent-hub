@@ -1,6 +1,6 @@
 """Conversation and message CRUD endpoints."""
 import asyncio
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -53,6 +53,29 @@ class ConversationReorderRequest(BaseModel):
 
 class MessagePinRequest(BaseModel):
     pinned: bool
+
+
+GoalStage = Literal["not_started", "planning", "building", "validating", "ready", "blocked"]
+
+
+class ConversationGoalUpdateRequest(BaseModel):
+    objective: str | None = Field(default=None, max_length=2000)
+    stage: GoalStage | None = None
+    latest_deliverable: str | None = Field(default=None, max_length=500)
+    latest_artifact_id: int | None = Field(default=None, ge=1)
+    pending_decision: str | None = Field(default=None, max_length=1000)
+    next_action: str | None = Field(default=None, max_length=1000)
+
+
+def _goal_snapshot(row: dict) -> dict:
+    return {
+        "objective": row.get("goal_objective"),
+        "stage": row.get("goal_stage") or "not_started",
+        "latest_deliverable": row.get("goal_latest_deliverable"),
+        "latest_artifact_id": row.get("goal_latest_artifact_id"),
+        "pending_decision": row.get("goal_pending_decision"),
+        "next_action": row.get("goal_next_action"),
+    }
 
 
 async def _tenant_conversations(user_id: str) -> list[dict]:
@@ -110,6 +133,34 @@ async def update_conv(conversation_id: str, payload: ConversationUpdateRequest, 
     if not updated:
         raise HTTPException(status_code=404, detail="会话不存在")
     return {"status": "ok"}
+
+
+@router.get("/conversations/{conversation_id}/goal")
+async def get_conversation_goal(conversation_id: str, request: Request):
+    scoped_id = _scoped_id(request, conversation_id)
+    rows = await async_get_conversations()
+    row = next((item for item in rows if item["id"] == scoped_id), None)
+    if row is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return _goal_snapshot(row)
+
+
+@router.patch("/conversations/{conversation_id}/goal")
+async def update_conversation_goal(
+    conversation_id: str,
+    payload: ConversationGoalUpdateRequest,
+    request: Request,
+):
+    values = payload.model_dump(exclude_unset=True)
+    if values.get("stage") is None:
+        values.pop("stage", None)
+    updates = {f"goal_{key}": value.strip() if isinstance(value, str) else value for key, value in values.items()}
+    updated = await asyncio.to_thread(update_conversation, _scoped_id(request, conversation_id), updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    rows = await async_get_conversations()
+    row = next((item for item in rows if item["id"] == _scoped_id(request, conversation_id)), updates)
+    return {"status": "ok", "goal": _goal_snapshot(row)}
 
 
 @router.put("/conversations/order")

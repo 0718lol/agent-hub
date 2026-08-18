@@ -107,6 +107,35 @@ describe('chatStore', () => {
     expect(conv.avatar).toBe('🤖')
   })
 
+  it('should map durable goal snapshots from the API', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{
+        id: 'conv_goal', type: 'single', name: 'Goal',
+        goal_objective: 'Ship a dashboard', goal_stage: 'building',
+        goal_latest_deliverable: 'index.html', goal_latest_artifact_id: 42,
+        goal_pending_decision: null, goal_next_action: 'Run tests',
+      }]),
+    })
+    await useChatStore.getState().fetchConversations()
+    const goal = useChatStore.getState().conversations[0].goal
+    expect(goal).toEqual({
+      objective: 'Ship a dashboard', stage: 'building',
+      latestDeliverable: 'index.html', latestArtifactId: 42,
+      pendingDecision: null, nextAction: 'Run tests',
+    })
+  })
+
+  it('should initialize a goal only from the first user task', () => {
+    useChatStore.getState().addConversation({ id: 'conv_goal', name: 'Goal', messages: [], goal: { objective: null } })
+    useChatStore.getState().initializeGoal('conv_goal', 'First durable objective')
+    useChatStore.getState().initializeGoal('conv_goal', 'Must not replace the first objective')
+    const goal = useChatStore.getState().conversations.find((item) => item.id === 'conv_goal').goal
+    expect(goal.objective).toBe('First durable objective')
+    expect(goal.stage).toBe('planning')
+    expect(fetch).toHaveBeenCalledWith('/api/conversations/conv_goal/goal', expect.objectContaining({ method: 'PATCH' }))
+  })
+
   // ---------- setActiveConversation ----------
 
   it('should set active conversation id', () => {

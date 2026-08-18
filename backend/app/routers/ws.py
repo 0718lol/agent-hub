@@ -7,7 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save_message
 from app.core.concurrency import generation_admission
-from app.core.crud import create_conversation
+from app.core.crud import create_conversation, initialize_conversation_goal
 from app.core.logging_config import get_logger
 from app.core.tenancy import (
     reset_current_tenant,
@@ -224,6 +224,8 @@ async def _serve_authenticated_websocket(
                         "content": {"text": reason},
                     })
                     continue
+
+                await asyncio.to_thread(initialize_conversation_goal, conversation_id, stripped)
 
             await async_save_message(conversation_id, sender, content, streaming=False)
 

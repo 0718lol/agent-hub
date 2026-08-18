@@ -321,6 +321,19 @@ async def health():
     }
 
 
+@app.get("/api/readiness")
+async def readiness():
+    """Return tenant-aware product capability states without exposing configuration secrets."""
+    payload = await health()
+    capabilities = payload["capabilities"]
+    payload["readiness"] = {
+        "service": "online" if payload["status"] == "ok" else "offline",
+        "model": "connected" if capabilities.get("llm_chat") else "demo",
+        "build_services": "ready" if capabilities.get("deployment_queue") else "limited",
+    }
+    return payload
+
+
 # ---- Persistent deployment queue ----
 from app.core.tenancy import request_user_id, scope_conversation_id
 from app.services.deployment import DEPLOY_TARGETS

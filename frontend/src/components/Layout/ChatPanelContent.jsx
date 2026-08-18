@@ -9,6 +9,7 @@ import InlineDeployCard from '../Chat/InlineDeployCard'
 import DeployProgressCard from '../Chat/DeployProgressCard'
 import IconAvatar from '../IconAvatar'
 import { wsClient } from '../../utils/websocket'
+import GoalSnapshot from '../Chat/GoalSnapshot'
 
 // 全局消息加载缓存：已加载过的 convId 不重复请求（上限 200 防止内存膨胀）
 const LOADED_CONVS_MAX = 200
@@ -17,9 +18,10 @@ const loadedConvs = new Set()
 // 全局滚动位置缓存
 const scrollPositions = {}
 
-const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
+const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, readiness }) {
   const conv = useChatStore((s) => s.conversations.find((c) => c.id === convId))
   const addMessage = useChatStore((s) => s.addMessage)
+  const initializeGoal = useChatStore((s) => s.initializeGoal)
   const loadMessages = useChatStore((s) => s.loadMessages)
   const loadOlderMessages = useChatStore((s) => s.loadOlderMessages)
   const hasOlderMessages = useChatStore((s) => s.hasOlderMessages[convId])
@@ -138,6 +140,7 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
 
   const handleSend = useCallback((text, mentionedAgents, attachments = []) => {
     if (isGenerating) return
+    initializeGoal(convId, text)
     const msgId = `user-${Date.now()}`
     const content = { text }
     if (attachments.length > 0) content.attachments = attachments
@@ -154,7 +157,7 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
       useChatStore.getState().setGenerating(convId, false)
       generationTimeoutRef.current = null
     }, 60000)
-  }, [convId, isGenerating, isGroup, conv?.agentId, addMessage])
+  }, [convId, isGenerating, isGroup, conv?.agentId, addMessage, initializeGoal])
 
   const handleStop = useCallback(() => {
     wsClient.send({ type: 'stop', conversation_id: convId })
@@ -181,6 +184,7 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive }) {
 
   return (
     <div className="chat-panel-content">
+      <GoalSnapshot conversationId={convId} readiness={readiness} isFirstTask={conv.messages.length === 0} />
       <div className="chat-messages" ref={messagesRef}>
         {hasOlderMessages && (
           <button

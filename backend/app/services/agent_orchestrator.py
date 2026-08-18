@@ -583,8 +583,6 @@ async def stream_agent_reply(
                     lang = code_match.group(1) or "html"
                     code = code_match.group(2).strip()
 
-                    await asyncio.to_thread(save_artifact, conversation_id, agent.agent_id, lang, code)
-
                     # Auto-debug: run Python code in sandbox, fix errors automatically
                     if lang == "python" and agent.agent_id in ("agent_frontend", "agent_backend", "agent_tester"):
                         try:
@@ -595,12 +593,22 @@ async def stream_agent_reply(
                         except Exception as _de:
                             logger.debug(f"Auto-debug skipped: {_de}")
 
+                    artifact = await asyncio.to_thread(
+                        save_artifact,
+                        conversation_id,
+                        agent.agent_id,
+                        lang,
+                        code,
+                    )
+
                     await manager.broadcast(conversation_id, {
                         "type": "code",
                         "conversation_id": conversation_id,
                         "agent_id": agent.agent_id,
                         "language": lang,
                         "code": code,
+                        "artifact_id": artifact["id"],
+                        "artifact_name": artifact["name"],
                     })
                     if lang.lower() in ("html", "htm", ""):
                         await manager.broadcast(conversation_id, {

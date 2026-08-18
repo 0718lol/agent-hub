@@ -51,7 +51,18 @@ def get_conversations():
 
 @db_write_transaction
 def update_conversation(conversation_id: str, updates: dict) -> bool:
-    allowed = {"name", "pinned", "archived", "sort_order"}
+    allowed = {
+        "name",
+        "pinned",
+        "archived",
+        "sort_order",
+        "goal_objective",
+        "goal_stage",
+        "goal_latest_deliverable",
+        "goal_latest_artifact_id",
+        "goal_pending_decision",
+        "goal_next_action",
+    }
     with Session(_engine_mod.engine) as session:
         conversation = session.get(Conversation, conversation_id)
         if conversation is None:
@@ -59,6 +70,27 @@ def update_conversation(conversation_id: str, updates: dict) -> bool:
         for key, value in updates.items():
             if key in allowed:
                 setattr(conversation, key, value)
+        conversation.updated_at = datetime.now(UTC).isoformat()
+        session.add(conversation)
+        session.commit()
+        return True
+
+
+@db_write_transaction
+def initialize_conversation_goal(conversation_id: str, objective: str) -> bool:
+    """Set the first durable objective without overwriting an existing goal."""
+    objective = objective.strip()
+    if not objective:
+        return False
+    with Session(_engine_mod.engine) as session:
+        conversation = session.get(Conversation, conversation_id)
+        if conversation is None:
+            return False
+        if conversation.goal_objective:
+            return True
+        conversation.goal_objective = objective[:2000]
+        conversation.goal_stage = "planning"
+        conversation.goal_next_action = "等待 Agent 分析并执行"
         conversation.updated_at = datetime.now(UTC).isoformat()
         session.add(conversation)
         session.commit()

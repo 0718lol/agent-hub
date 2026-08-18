@@ -21,6 +21,14 @@ function mapConversation(c) {
     pinned: Boolean(c.pinned),
     archived: Boolean(c.archived),
     sortOrder: c.sort_order ?? 0,
+    goal: {
+      objective: c.goal_objective || null,
+      stage: c.goal_stage || 'not_started',
+      latestDeliverable: c.goal_latest_deliverable || null,
+      latestArtifactId: c.goal_latest_artifact_id || null,
+      pendingDecision: c.goal_pending_decision || null,
+      nextAction: c.goal_next_action || null,
+    },
     unread: false,
     updatedAt: c.updated_at || c.created_at ? new Date(c.updated_at || c.created_at).getTime() : Date.now(),
   }
@@ -312,6 +320,47 @@ export const useChatStore = create((set, get) => ({
   updateConversation: (conversationId, updates) => set((state) => ({
     conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, ...updates } : item),
   })),
+
+  updateGoal: async (conversationId, updates) => {
+    const previous = get().conversations.find((item) => item.id === conversationId)?.goal || {}
+    const goal = { ...previous, ...updates }
+    set((state) => ({
+      conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, goal } : item),
+    }))
+    const payload = {
+      objective: goal.objective || null,
+      stage: goal.stage || 'not_started',
+      latest_deliverable: goal.latestDeliverable || null,
+      latest_artifact_id: goal.latestArtifactId || null,
+      pending_decision: goal.pendingDecision || null,
+      next_action: goal.nextAction || null,
+    }
+    try {
+      const response = await fetch(`/api/conversations/${conversationId}/goal`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return true
+    } catch (error) {
+      set((state) => ({
+        conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, goal: previous } : item),
+      }))
+      console.error('Failed to update conversation goal:', error)
+      return false
+    }
+  },
+
+  initializeGoal: (conversationId, objective) => {
+    const conversation = get().conversations.find((item) => item.id === conversationId)
+    if (conversation?.goal?.objective || !objective?.trim()) return
+    get().updateGoal(conversationId, {
+      objective: objective.trim().slice(0, 2000),
+      stage: 'planning',
+      nextAction: '等待 Agent 分析并执行',
+    })
+  },
 
   getActiveConversation: () => get().conversations.find((item) => item.id === get().activeConversationId),
 

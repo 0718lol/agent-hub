@@ -8,12 +8,14 @@ import { useChatStore } from './stores/chatStore'
 import { useAgentStore } from './stores/agentStore'
 import { useCanvasStore } from './stores/canvasStore'
 import { useTabStore } from './stores/tabStore'
+import { useReadiness } from './hooks/useReadiness'
 
 const VirtualOffice = lazy(() => import('./components/VirtualOffice/VirtualOffice'))
 
 export default function App({ currentUser }) {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [officeOpen, setOfficeOpen] = useState(false)
+  const readiness = useReadiness()
 
   useEffect(() => {
     const onOpen = () => setOfficeOpen(true)
@@ -52,7 +54,7 @@ export default function App({ currentUser }) {
         onClick={() => setMobileSidebarOpen(false)}
       />
       <Sidebar currentUser={currentUser} mobileOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
-      <ChatPanel onToggleSidebar={() => setMobileSidebarOpen((v) => !v)} />
+      <ChatPanel readiness={readiness} onToggleSidebar={() => setMobileSidebarOpen((v) => !v)} />
       <SlidePanel />
       <DesktopPet />
       {officeOpen && (

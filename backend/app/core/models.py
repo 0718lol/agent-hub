@@ -42,6 +42,12 @@ class Conversation(SQLModel, table=True):
     pinned: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default=false()))
     archived: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default=false()))
     sort_order: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
+    goal_objective: str | None = None
+    goal_stage: str = Field(default="not_started")
+    goal_latest_deliverable: str | None = None
+    goal_latest_artifact_id: int | None = None
+    goal_pending_decision: str | None = None
+    goal_next_action: str | None = None
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str | None = Field(default=None)
 

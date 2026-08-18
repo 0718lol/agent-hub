@@ -24,6 +24,7 @@ from app.core.crud.artifacts import (
 from app.core.crud.conversations import (
     create_conversation,
     get_conversations,
+    initialize_conversation_goal,
     reorder_conversations,
     update_conversation,
 )
@@ -85,6 +86,7 @@ __all__ = [
     # Conversations
     "create_conversation",
     "get_conversations",
+    "initialize_conversation_goal",
     "reorder_conversations",
     "update_conversation",
     # Messages

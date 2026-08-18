@@ -53,6 +53,16 @@ export default function Sidebar({ currentUser, mobileOpen = false, onClose = () 
   // 启动时加载适配器状态
   useEffect(() => { fetchAdapterStatus() }, [])
 
+  useEffect(() => {
+    const openSettings = (event) => {
+      setSettingsTab(event.detail?.tab || 'llm')
+      setSettingsEditAgent(event.detail?.agentId || null)
+      setShowSettings(true)
+    }
+    window.addEventListener('open-settings', openSettings)
+    return () => window.removeEventListener('open-settings', openSettings)
+  }, [])
+
   // PM 不可删除的 ID
   const PM_ID = 'agent_pm'
 

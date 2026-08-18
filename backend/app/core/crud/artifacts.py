@@ -5,12 +5,13 @@ Handles saving, retrieving, and grouping code artifacts produced by
 agents during conversations.
 """
 import re
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
 import app.core._engine as _engine_mod
 from app.core.crud.utils import db_write_transaction
-from app.core.models import Artifact
+from app.core.models import Artifact, Conversation
 
 
 @db_write_transaction
@@ -62,7 +63,17 @@ def save_artifact(conversation_id: str, agent_id: str, language: str,
         session.add(art)
         session.commit()
         session.refresh(art)
-        return art.model_dump()
+        artifact_data = art.model_dump()
+        conversation = session.get(Conversation, conversation_id)
+        if conversation is not None:
+            conversation.goal_latest_deliverable = art.name
+            conversation.goal_latest_artifact_id = art.id
+            conversation.goal_stage = "validating"
+            conversation.goal_next_action = "审阅并验证最新产物"
+            conversation.updated_at = datetime.now(UTC).isoformat()
+            session.add(conversation)
+            session.commit()
+        return artifact_data
 
 
 def get_artifacts(conversation_id: str | None = None,
