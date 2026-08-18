@@ -1,5 +1,5 @@
 # Runtime image for untrusted Agent Python, JavaScript and shell commands.
-FROM node:20-bookworm-slim AS node-runtime
+FROM node:24-bookworm-slim AS node-runtime
 
 FROM python:3.12-slim-bookworm
 

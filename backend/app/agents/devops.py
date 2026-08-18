@@ -29,7 +29,7 @@ class DevopsAgent(BaseAgent):
         return (
             "部署配置已生成 ⚠️ 请注意以下事项：\n\n"
             "```dockerfile\n"
-            "FROM node:18-alpine AS builder\n"
+            "FROM node:24-alpine AS builder\n"
             "WORKDIR /app\n"
             "COPY package*.json ./\n"
             "RUN npm ci\n"

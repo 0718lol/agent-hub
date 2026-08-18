@@ -346,11 +346,11 @@ class SystemMCPServer:
                 try:
                     if enable_docker and docker_available:
                         # Select suitable image
-                        image = "node:20-slim"
+                        image = "node:24-slim"
                         if "python" in cmd or ".py" in cmd:
                             image = "python:3.12-slim"
                         elif "npm" in cmd or "node" in cmd or "vite" in cmd:
-                            image = "node:20-slim"
+                            image = "node:24-slim"
 
                         docker_cmd = [
                             "docker", "run", "--rm",

@@ -11,8 +11,8 @@ jobs:
     name: Backend Lint (Ruff)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v3
+      - uses: actions/checkout@v7
+      - uses: astral-sh/ruff-action@v4.1.0
         with:
           src: "backend/"
 
@@ -20,8 +20,8 @@ jobs:
     name: Backend Tests (pytest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -36,8 +36,8 @@ jobs:
     name: Runtime Sandbox (real Docker)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Build runtime sandbox image
@@ -53,10 +53,10 @@ jobs:
     name: Frontend Lint (ESLint)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: ".nvmrc"
       - name: Install and lint
         run: |
           cd frontend
@@ -67,15 +67,33 @@ jobs:
     name: Frontend Tests (Vitest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: ".nvmrc"
       - name: Install and test
         run: |
           cd frontend
           npm ci --legacy-peer-deps
           npm run test
+
+  frontend-container:
+    name: Frontend Container (Node 24)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build production image
+        run: docker build -t agenthub-frontend:local frontend
+      - name: Run Nginx smoke test
+        run: |
+          docker run --rm -d --name agenthub-frontend-smoke -p 8080:80 agenthub-frontend:local
+          trap 'docker rm -f agenthub-frontend-smoke >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 20); do
+            curl --fail --silent http://127.0.0.1:8080/ >/dev/null && exit 0
+            sleep 1
+          done
+          docker logs agenthub-frontend-smoke
+          exit 1
 
   frontend-e2e:
     name: Frontend E2E (Playwright)
@@ -91,13 +109,13 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: ".nvmrc"
       - name: Install dependencies
         run: |
           cd backend
@@ -137,8 +155,8 @@ jobs:
     name: Security Scan (Bandit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install bandit

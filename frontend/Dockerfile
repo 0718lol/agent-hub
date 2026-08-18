@@ -1,11 +1,11 @@
 # ---- Frontend Dockerfile ----
 # Stage 1: Build
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm ci --legacy-peer-deps
 
 COPY . .
 RUN npm run build
