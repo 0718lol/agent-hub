@@ -77,6 +77,10 @@ def create_adapter(tenant_id: str, agent_id: str, config_dict: dict, save: bool 
         logger.error(f"Unknown adapter type: {adapter_type}")
         return False
 
+    runtime_extra = dict(config_dict.get("extra", {}))
+    if adapter_type == "codex":
+        runtime_extra["_tenant_id"] = tenant_id
+
     config = AdapterConfig(
         adapter_type=adapter_type,
         api_key=config_dict.get("api_key", ""),
@@ -85,7 +89,7 @@ def create_adapter(tenant_id: str, agent_id: str, config_dict: dict, save: bool 
         timeout=config_dict.get("timeout", 60),
         max_retries=config_dict.get("max_retries", 2),
         tool_mode=config_dict.get("tool_mode", "agent"),
-        extra=config_dict.get("extra", {}),
+        extra=runtime_extra,
         display_name=config_dict.get("display_name", ""),
         display_avatar=config_dict.get("display_avatar", ""),
         display_desc=config_dict.get("display_desc", ""),
@@ -201,6 +205,13 @@ async def test_adapter(agent_id: str, req: AdapterTestRequest, request: Request)
         return {"error": err}
 
     try:
+        connection_test = getattr(adapter, "test_connection", None)
+        if callable(connection_test):
+            success, detail = await connection_test()
+            if success:
+                return {"status": "ok", "response": detail[:500]}
+            return {"status": "error", "error": detail[:500]}
+
         response = ""
         async for chunk in adapter.stream_reply(req.message):
             response += chunk

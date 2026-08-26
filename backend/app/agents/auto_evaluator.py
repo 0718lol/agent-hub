@@ -13,6 +13,63 @@ import json
 import re
 from typing import Any
 
+
+def _parse_scoring_json(response_text: str) -> dict:
+    """Extract a complete JSON object containing the scoring contract."""
+    text = response_text.strip()
+    if not text:
+        raise ValueError("评分模型返回空内容")
+
+    try:
+        candidates = [json.loads(text)]
+    except json.JSONDecodeError:
+        candidates = []
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"\{", text):
+            try:
+                candidate, _ = decoder.raw_decode(text[match.start():])
+            except json.JSONDecodeError:
+                continue
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        if isinstance(candidate, dict) and {
+            "total_score", "dimensions"
+        }.issubset(candidate):
+            return candidate
+
+    raise ValueError(f"无法从响应中提取评分 JSON: {text[:200]}")
+
+
+def _normalize_scoring_result(result: dict) -> dict:
+    dims = result.get("dimensions")
+    if not isinstance(dims, dict):
+        raise ValueError("评分 dimensions 必须是 JSON 对象")
+
+    limits = {"logic": 40, "robustness": 30, "architecture": 30}
+    normalized_dims = {}
+    for name, limit in limits.items():
+        value = dims.get(name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"评分维度 {name} 必须是数字")
+        normalized_dims[name] = max(0, min(limit, int(value)))
+
+    total_score = result.get("total_score")
+    if isinstance(total_score, bool) or not isinstance(total_score, (int, float)):
+        raise ValueError("total_score 必须是数字")
+
+    feedback = result.get("feedback", "")
+    if not isinstance(feedback, str):
+        feedback = str(feedback)
+
+    return {
+        "status": "ok",
+        "total_score": max(0, min(100, int(total_score))),
+        "dimensions": normalized_dims,
+        "feedback": feedback,
+        "error": None,
+    }
+
 # ============================================================
 # 任务 1：代码提取
 # ============================================================
@@ -115,14 +172,8 @@ async def llm_as_a_judge_scoring(task: str, solution: str, llm_client: Any) -> d
             "dimensions": {"logic": int, "robustness": int, "architecture": int},
             "feedback": str
         }
-        异常时返回默认中位分
+        异常时明确返回 status=error，不伪造质量分。
     """
-    default_result = {
-        "total_score": 50,
-        "dimensions": {"logic": 20, "robustness": 15, "architecture": 15},
-        "feedback": "LLM 评分失败，返回默认中位分",
-    }
-
     try:
         user_prompt = (
             f"## 用户任务\n{task}\n\n"
@@ -132,42 +183,26 @@ async def llm_as_a_judge_scoring(task: str, solution: str, llm_client: Any) -> d
 
         # 流式收集完整响应
         response_text = ""
-        async for chunk in llm_client.chat_stream(messages, system=JUDGE_SYSTEM_PROMPT):
+        async for chunk in llm_client.chat_stream(
+            messages,
+            system=JUDGE_SYSTEM_PROMPT,
+            enabled_tools=[],
+            response_format={"type": "json_object"},
+        ):
             response_text += chunk
 
-        response_text = response_text.strip()
-
-        # 解析 JSON
-        try:
-            result = json.loads(response_text)
-        except json.JSONDecodeError:
-            # 正则容错提取
-            json_match = re.search(
-                r'\{[\s\S]*?"total_score"\s*:\s*\d+[\s\S]*?\}',
-                response_text
-            )
-            if json_match:
-                result = json.loads(json_match.group())
-            else:
-                raise ValueError(f"无法从响应中提取评分 JSON: {response_text[:200]}") from None
-
-        # 校验必要字段
-        if "total_score" not in result or "dimensions" not in result:
-            raise ValueError(f"返回缺少必要字段: {result}")
-
-        # 确保各维度分值在合理范围内
-        dims = result["dimensions"]
-        dims["logic"] = max(0, min(40, dims.get("logic", 0)))
-        dims["robustness"] = max(0, min(30, dims.get("robustness", 0)))
-        dims["architecture"] = max(0, min(30, dims.get("architecture", 0)))
-        result["total_score"] = max(0, min(100, result.get("total_score", 0)))
-
-        return result
+        return _normalize_scoring_result(_parse_scoring_json(response_text))
 
     except Exception as e:
-        print(f"[AutoEvaluator] LLM 评分异常: {type(e).__name__}: {str(e)[:100]}")
-        default_result["feedback"] = f"LLM 评分异常: {str(e)[:100]}"
-        return default_result
+        error = f"{type(e).__name__}: {str(e)[:160]}"
+        print(f"[AutoEvaluator] LLM 评分异常: {error}")
+        return {
+            "status": "error",
+            "total_score": None,
+            "dimensions": {},
+            "feedback": "质量评分服务暂不可用，未将其计为代码失败",
+            "error": error,
+        }
 
 
 # ============================================================
@@ -190,7 +225,7 @@ async def execute_automated_evaluation(
     Returns:
         {
             "evaluation_passed": bool,       # 总分 >= 60 为通过
-            "total_score": int,              # 最终总分
+            "total_score": int | None,       # 评审不可用时不伪造分数
             "dimensions": {"logic": ..., "robustness": ..., "architecture": ...},
             "static_check": {"passed": bool, "error": str|None, "penalty": int},
             "llm_feedback": str,
@@ -210,24 +245,31 @@ async def execute_automated_evaluation(
     # Step 3: LLM 深度打分
     llm_result = await llm_as_a_judge_scoring(task, raw_output, llm_client)
 
-    # Step 4: 合并评分（静态检查扣分 + LLM 打分）
+    # Step 4: 合并评分。评审服务异常时只依据确定性的静态检查放行或拦截。
+    evaluator_available = llm_result["status"] == "ok"
     base_score = llm_result["total_score"]
     penalty = syntax_result["penalty"]
-    final_score = max(0, base_score - penalty)
+    final_score = max(0, base_score - penalty) if evaluator_available else None
 
     # 生成综合评语
     summary_parts = []
     if not syntax_result["passed"]:
         summary_parts.append(f"语法检查未通过: {syntax_result['error']}")
-    if llm_result.get("feedback"):
+    if evaluator_available and llm_result.get("feedback"):
         summary_parts.append(f"LLM 审查: {llm_result['feedback']}")
+    elif not evaluator_available:
+        summary_parts.append("质量评分服务暂不可用；未发现的代码问题不会据此判定")
 
     summary = " | ".join(summary_parts) if summary_parts else "代码质量良好"
 
     return {
-        "evaluation_passed": final_score >= 60,
+        "evaluation_passed": syntax_result["passed"] and (
+            not evaluator_available or final_score >= 60
+        ),
         "total_score": final_score,
         "dimensions": llm_result["dimensions"],
+        "evaluator_status": llm_result["status"],
+        "evaluator_error": llm_result.get("error"),
         "static_check": {
             "passed": syntax_result["passed"],
             "error": syntax_result["error"],

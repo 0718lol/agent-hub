@@ -17,15 +17,15 @@ const CONFIG_PROMPTS = {
     action: '配置 Anthropic API Key',
   },
   codex: {
-    title: 'Codex 需要配置 API Key',
+    title: 'Codex 需要连接本机 CLI',
     icon: '🟢',
-    description: 'Codex 由 OpenAI 提供，需要有效的 API Key 和 Organization ID。',
+    description: 'Agent Hub 会调用这台电脑上已登录的 Codex，并为每个对话保持独立会话。',
     steps: [
-      '前往 platform.openai.com 注册账号',
-      '在 API Keys 页面创建新的 Key',
-      '在设置中填入 OpenAI API Key',
+      '确认本机 Codex CLI 已安装并登录',
+      '在设置中选择项目目录和工作区权限',
+      '连接后即可从对话中调用 Codex',
     ],
-    action: '配置 OpenAI API Key',
+    action: '连接 Codex 本机 CLI',
   },
 }
 

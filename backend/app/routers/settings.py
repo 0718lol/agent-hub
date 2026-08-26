@@ -23,6 +23,7 @@ class LLMSettings(BaseModel):
     model: str = ""
     temperature: float = None
     max_tokens: int = None
+    thinking_enabled: bool | None = None
 
 
 class HILSettings(BaseModel):
@@ -39,12 +40,16 @@ async def get_llm_settings():
         "model": llm_client.model,
         "temperature": llm_client.temperature,
         "max_tokens": llm_client.max_tokens,
+        "thinking_enabled": llm_client.thinking_enabled,
         "configured": llm_client.is_configured(),
     }
 
 
 @router.post("/settings/llm")
 async def update_llm_settings(s: LLMSettings):
+    thinking_enabled = s.thinking_enabled
+    if thinking_enabled is None and "deepseek-v4-flash" in s.model.lower():
+        thinking_enabled = False
     llm_client.configure(
         provider=s.provider,
         api_key=s.api_key if s.api_key else llm_client.api_key,
@@ -52,6 +57,7 @@ async def update_llm_settings(s: LLMSettings):
         model=s.model,
         temperature=s.temperature,
         max_tokens=s.max_tokens,
+        thinking_enabled=thinking_enabled,
     )
     save_llm_config(llm_client, settings)
     return {"status": "ok", "configured": llm_client.is_configured()}

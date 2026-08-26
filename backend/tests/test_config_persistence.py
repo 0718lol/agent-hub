@@ -55,6 +55,7 @@ def test_llm_config_save_and_load(temp_config_dir, monkeypatch):
     mock_client.model = "gpt-4"
     mock_client.temperature = 0.7
     mock_client.max_tokens = 4096
+    mock_client.thinking_enabled = False
 
     settings = Settings()
 
@@ -67,6 +68,7 @@ def test_llm_config_save_and_load(temp_config_dir, monkeypatch):
         saved = json.load(f)
     assert saved["api_key"] != "sk-test-key-12345"
     assert saved["api_key"].startswith("fnt::") or saved["api_key"] == ""
+    assert saved["thinking_enabled"] is False
 
     # Load config back
     mock_client2 = MagicMock()
@@ -74,3 +76,4 @@ def test_llm_config_save_and_load(temp_config_dir, monkeypatch):
     load_llm_config(mock_client2, settings)
     # The configure method should have been called
     assert mock_client2.configure.called
+    assert mock_client2.configure.call_args.kwargs["thinking_enabled"] is False

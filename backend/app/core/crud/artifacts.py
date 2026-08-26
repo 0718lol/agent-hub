@@ -93,13 +93,14 @@ def get_artifacts(conversation_id: str | None = None,
 
 @db_write_transaction
 def update_latest_artifact_quality(conversation_id: str, agent_id: str,
-                                    score: int, sandbox_status: str,
+                                    score: int | None, sandbox_status: str,
                                     sandbox_output: str | None = None):
     with Session(_engine_mod.engine) as session:
         statement = select(Artifact).where(
             Artifact.conversation_id == conversation_id,
             Artifact.agent_id == agent_id,
             Artifact.quality_score.is_(None),
+            Artifact.sandbox_status == "untested",
         )
         results = session.exec(statement).all()
         for art in results:

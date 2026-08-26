@@ -5,6 +5,7 @@ Extracted from main.py to keep the app factory focused on HTTP routes
 and middleware while this module owns the real-time agent coordination logic.
 """
 import asyncio
+import html
 import json
 import logging
 import re
@@ -47,6 +48,58 @@ logger = logging.getLogger("agent_orchestrator")
 
 # Shared state: stop events per conversation
 _stop_events: dict[str, asyncio.Event] = {}
+
+
+def _terminal_model_error(text: str) -> bool:
+    """Return whether a stream contains a non-retryable model/tool error."""
+    lowered = text.lower()
+    return any(marker in lowered for marker in (
+        "[llm 终端错误",
+        "[llm 调用出错",
+        "llm api error",
+        "this model does not support image",
+        "[agent 回复出错",
+    ))
+
+
+def _image_capability_error(text: str) -> bool:
+    lowered = text.lower()
+    return "this model does not support image" in lowered or "不支持图片" in text
+
+
+def _html_fallback_for_visual_task(user_text: str) -> str:
+    """Create a dependency-free HTML deliverable when image generation is unavailable."""
+    title = html.escape(user_text.strip()[:80] or "视觉海报")
+    return f'''<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center;
+      padding: 24px; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      background: #10131f; color: #fff; }}
+    .poster {{ width: min(680px, 100%); min-height: 520px; padding: 48px;
+      display: flex; flex-direction: column; justify-content: space-between;
+      border: 1px solid rgba(255,255,255,.16); border-radius: 20px;
+      background: radial-gradient(circle at 82% 18%, #ffb45c 0, transparent 28%),
+        linear-gradient(145deg, #38236b, #151a35 68%, #10131f);
+      box-shadow: 0 24px 80px rgba(0,0,0,.45); }}
+    .eyebrow {{ color: #ffd166; letter-spacing: .18em; font-size: 13px; font-weight: 700; }}
+    h1 {{ max-width: 560px; margin: 22px 0 0; font-size: clamp(36px, 8vw, 76px); line-height: 1.05; }}
+    .note {{ max-width: 500px; color: #e7e8f2; font-size: 17px; line-height: 1.7; }}
+    .footer {{ display: flex; justify-content: space-between; gap: 16px; align-items: end; color: #c6c8d8; font-size: 13px; }}
+    .badge {{ padding: 8px 12px; border: 1px solid rgba(255,255,255,.24); border-radius: 999px; color: #fff; }}
+  </style>
+</head>
+<body><main class="poster">
+  <div><div class="eyebrow">AGENTHUB · HTML VISUAL FALLBACK</div><h1>{title}</h1></div>
+  <p class="note">当前模型不支持图片生成或截图审查，已自动切换为可运行的 HTML 方案。你可以继续让 Agent 修改版式、文案和配色。</p>
+  <div class="footer"><span>无外部图片依赖 · 可直接预览</span><span class="badge">HTML / CSS</span></div>
+</main></body>
+</html>'''
 
 def parse_create_agent_tag(buffer: str) -> tuple[dict | None, str]:
     """Parse a [create_agent:{json}] tag from the buffer.
@@ -134,6 +187,27 @@ def get_agents(user_id: str | None = None) -> dict:
             avatar=config.get("display_avatar") or "🤖",
             role=config.get("display_desc") or adapter.description,
         )
+
+    # PM 小助手 is the default entry point for a new task. When the tenant
+    # has connected the local Codex adapter, route PM through that adapter so
+    # selecting PM actually uses Codex instead of silently falling back to the
+    # generic LLM client. Keep the PM system prompt to preserve [assign:...]
+    # orchestration tags and the existing workflow.
+    codex = adapter_registry.get(user_id, "codex")
+    if codex is not None and agents.get("agent_pm") is not None:
+        from app.adapters.adapter_agent import AdapterAgent
+
+        pm = agents["agent_pm"]
+        agents["agent_pm"] = AdapterAgent(
+            agent_id="agent_pm",
+            name=pm.name,
+            adapter=codex,
+            avatar=pm.avatar,
+            role=pm.role,
+            style=pm.style,
+            system_prompt=pm.system_prompt,
+        )
+        logger.info("Routing agent_pm through local Codex adapter for tenant %s", user_id)
     return agents
 # ============================================================
 # Custom Agent helpers
@@ -387,6 +461,7 @@ async def stream_agent_reply(
     last_thinking_broadcast = ""
     last_stream_broadcast = 0.0
     assigned_agents = []
+    terminal_error = False
 
     effective_text = user_text
 
@@ -635,6 +710,53 @@ async def stream_agent_reply(
         # Final text
         full_text = buffer.strip()
 
+        # Model/tool capability failures must end the turn explicitly. For
+        # visual requests, preserve progress by publishing a runnable HTML
+        # artifact instead of leaving the UI in a perpetual generating state.
+        terminal_error = _terminal_model_error(raw_text)
+        if terminal_error:
+            has_html_output = bool(re.search(
+                r'<!DOCTYPE\s+html|<html[\s>]|<body[\s>]', raw_text, re.IGNORECASE
+            ))
+            visual_agent = agent.agent_id in ("agent_frontend", "agent_designer")
+            visual_request = bool(re.search(
+                r'图片|海报|插画|视觉|页面|网页|前端|html|image|poster|screenshot',
+                effective_text, re.IGNORECASE,
+            ))
+            if _image_capability_error(raw_text) and (visual_agent or visual_request):
+                if has_html_output:
+                    full_text = (
+                        "截图或图片验证不可用，但 HTML 已成功生成并保留在右侧预览面板。"
+                        "任务已结束；你可以继续要求我修改 HTML/CSS。"
+                    )
+                    raw_text = full_text
+                else:
+                    fallback_html = _html_fallback_for_visual_task(user_text)
+                    artifact = await asyncio.to_thread(
+                        save_artifact, conversation_id, agent.agent_id, "html", fallback_html
+                    )
+                    await manager.broadcast(conversation_id, {
+                        "type": "code", "conversation_id": conversation_id,
+                        "agent_id": agent.agent_id, "language": "html",
+                        "code": fallback_html, "artifact_id": artifact["id"],
+                        "artifact_name": artifact["name"],
+                    })
+                    await manager.broadcast(conversation_id, {
+                        "type": "preview", "conversation_id": conversation_id,
+                        "agent_id": agent.agent_id, "html": fallback_html,
+                    })
+                    full_text = (
+                        "当前模型不支持图片生成或截图审查，已自动切换为可运行的 HTML 方案。"
+                        "任务已结束，HTML 已放到右侧预览面板；你可以继续要求我修改版式、文案或配色。"
+                    )
+                    raw_text = full_text
+            else:
+                full_text = (
+                    "本次任务未完成：当前模型或工具不支持所需的图片能力。"
+                    "任务已结束，没有继续重试。请切换支持图片的模型，或让我改用 HTML/CSS 方案。"
+                )
+                raw_text = full_text
+
         # Bare HTML fallback
         if full_text and "```" not in raw_text and re.search(
             r'<!DOCTYPE\s+html|<html[\s>]|<body[\s>]', full_text, re.IGNORECASE
@@ -678,8 +800,8 @@ async def stream_agent_reply(
     if not raw_text:
         raw_text = full_text
 
-    # ---- Format validation layer (skip for external agents) ----
-    if not stopped and not _is_external and full_text and full_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）"):
+    # ---- Format validation layer (skip for terminal model/tool errors) ----
+    if not terminal_error and not stopped and not _is_external and full_text and full_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）"):
         is_valid, reason = validate_agent_output(full_text, agent.agent_id)
         if not is_valid:
             logger.warning(f"Agent {agent.agent_id} format check failed: {reason}")
@@ -793,7 +915,7 @@ async def stream_agent_reply(
             logger.error(f"Error updating artifact quality metrics: {e_art}")
 
     # Don't persist LLM error responses
-    is_llm_error = ("[LLM Error" in raw_text) or ("[LLM 调用出错" in raw_text) or ("[Agent 回复出错" in raw_text)
+    is_llm_error = _terminal_model_error(raw_text)
     # Extract and store successful code as reusable skill
     if _skill_lib and not is_llm_error and raw_text:
         try:

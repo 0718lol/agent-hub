@@ -26,6 +26,11 @@ def browser_launch_options() -> dict:
         glob.glob("/opt/ms-playwright/chromium-*/chrome-linux*/chrome"),
         reverse=True,
     ))
+    candidates.extend([
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    ])
     executable = next((path for path in candidates if path and os.path.isfile(path)), None)
     options = {
         "headless": True,

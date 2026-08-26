@@ -118,10 +118,12 @@ export type ServerWSMessage =
   | { type: 'candidates_report'; conversation_id: string; agent_id: string; candidates: CandidateSummary[] }
 
 export interface QualityReport {
-  score: number
-  passed: boolean
-  issues: string[]
-  suggestions: string[]
+  evaluation_passed: boolean
+  total_score: number | null
+  dimensions: Record<string, number>
+  summary: string
+  evaluator_status: 'ok' | 'error'
+  retry_round?: number
 }
 
 export interface CandidateSummary {

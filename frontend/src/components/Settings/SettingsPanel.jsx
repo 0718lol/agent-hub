@@ -11,6 +11,13 @@ import CronTasksTab from './CronTasksTab'
 import OtherTab from './OtherTab'
 import SecurityTab from './SecurityTab'
 
+const emptyAdapterForm = () => ({
+  api_key: '', api_url: '', model: '', tool_mode: 'agent',
+  bot_id: '', user_id: '', platform: 'opencode',
+  codex_path: '', workspace: '', sandbox: 'workspace-write',
+  display_name: '', display_avatar: '', display_desc: '',
+})
+
 export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
   const theme = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
@@ -396,7 +403,7 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
   const [adapterLoading, setAdapterLoading] = useState(false)
   const [adapterMsg, setAdapterMsg] = useState('')
   const [adapterEditing, setAdapterEditing] = useState(null)
-  const [adapterForm, setAdapterForm] = useState({ api_key: '', api_url: '', model: '', tool_mode: 'agent', bot_id: '', user_id: '', platform: 'opencode', display_name: '', display_avatar: '', display_desc: '' })
+  const [adapterForm, setAdapterForm] = useState(emptyAdapterForm)
   const [testingAdapter, setTestingAdapter] = useState(null)
   const [proxyRunning, setProxyRunning] = useState(false)
   const [proxyLoading, setProxyLoading] = useState(false)
@@ -411,6 +418,8 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
           api_key: '', api_url: '', model: adapter.model || '', tool_mode: adapter.tool_mode || 'agent',
           bot_id: adapter.extra?.bot_id || '', user_id: adapter.extra?.user_id || '',
           platform: adapter.extra?.platform || 'opencode', display_name: adapter.display_name || '',
+          codex_path: adapter.extra?.codex_path || '', workspace: adapter.extra?.workspace || '',
+          sandbox: adapter.extra?.sandbox || 'workspace-write',
           display_avatar: adapter.display_avatar || '', display_desc: adapter.display_desc || '',
         })
       }
@@ -435,18 +444,17 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
     },
     codex: {
       name: 'Codex', icon: '/avatars/codex.svg',
-      description: 'OpenAI 兼容 Chat Completions API（支持 DeepSeek/Qwen 等国产模型）',
+      description: 'Codex 本机连接器 · 独立会话 · 工作区沙盒',
       fields: [
-        { key: 'api_key', label: 'API Key', placeholder: 'sk-...', type: 'password' },
-        { key: 'api_url', label: 'API 地址', placeholder: '请输入 API 地址', type: 'text' },
-        { key: 'model', label: '模型', placeholder: '请输入模型名称', type: 'text' },
-        { key: 'tool_mode', label: '工具模式', type: 'select', options: [
-          { value: 'agent', label: 'Agent 回复（调用 Agent API，需 Agent 平台 Key）' },
-          { value: 'text', label: 'LLM 回复（调用通用模型 API，需模型 Key）' },
-          { value: 'auto', label: '自动探测（根据模型判断）' },
+        { key: 'codex_path', label: 'Codex CLI 路径（可选）', placeholder: '自动检测 codex', type: 'text' },
+        { key: 'workspace', label: '项目目录（可选）', placeholder: '留空使用 Agent Hub 项目目录', type: 'text' },
+        { key: 'model', label: '模型（可选）', placeholder: '留空使用 Codex 当前模型', type: 'text' },
+        { key: 'sandbox', label: '工作区权限', type: 'select', options: [
+          { value: 'workspace-write', label: '可读写当前项目' },
+          { value: 'read-only', label: '只读当前项目' },
         ]},
       ],
-      helpUrl: 'https://platform.openai.com/api-keys',
+      helpUrl: '',
     },
     coze: {
       name: 'Coze', icon: null,
@@ -516,6 +524,11 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
     const extra = {}
     if (agentId === 'coze') { if (adapterForm.bot_id) extra.bot_id = adapterForm.bot_id; if (adapterForm.user_id) extra.user_id = adapterForm.user_id }
     if (agentId === 'self_deployed') { if (adapterForm.platform) extra.platform = adapterForm.platform }
+    if (agentId === 'codex') {
+      if (adapterForm.codex_path) extra.codex_path = adapterForm.codex_path
+      if (adapterForm.workspace) extra.workspace = adapterForm.workspace
+      extra.sandbox = adapterForm.sandbox || 'workspace-write'
+    }
     try {
       const resp = await fetch('/api/adapters', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -528,8 +541,8 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
       })
       const data = await resp.json()
       if (data.status === 'ok') {
-        setAdapterMsg(`${meta.name} 配置已保存`); setAdapterEditing(null)
-        setAdapterForm({ api_key: '', api_url: '', model: '', tool_mode: 'agent', bot_id: '', user_id: '', platform: 'opencode', display_name: '', display_avatar: '', display_desc: '' })
+        setAdapterMsg(agentId === 'codex' ? 'Codex 本机连接器已保存' : `${meta.name} 配置已保存`); setAdapterEditing(null)
+        setAdapterForm(emptyAdapterForm())
         fetchAdapters()
       } else { setAdapterMsg(`保存失败: ${data.error || '未知错误'}`) }
     } catch { setAdapterMsg('保存失败，请检查后端是否运行') }

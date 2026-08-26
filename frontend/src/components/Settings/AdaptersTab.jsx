@@ -11,7 +11,7 @@ export default function AdaptersTab({
   return (
     <>
       <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 20, background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', fontSize: 12, color: 'var(--accent)', lineHeight: 1.8 }}>
-        配置 API Key 即可启用外部 Agent。<br />
+        外部 Agent 可以通过平台 API 或本机 CLI 接入。<br />
         「Agent 回复」— 调用 Agent 平台 API（如 Claude Code、Coze），具备工具调用、多轮推理等完整能力，需 Agent 平台 Key。<br />
         「LLM 回复」— 调用通用大模型 API（如 DeepSeek、Qwen），仅做纯文本对话，需模型 Key。<br />
         「自动探测」— 根据模型名和地址自动判断。
@@ -57,7 +57,7 @@ export default function AdaptersTab({
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                 {isConfigured ? (
                   <span style={{ fontSize: 11, color: 'var(--green)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Check size={12} /> 已配置
+                    <Check size={12} /> {agentId === 'codex' ? '已连接' : '已配置'}
                   </span>
                 ) : (
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>未配置</span>
@@ -82,7 +82,7 @@ export default function AdaptersTab({
                   onClick={() => {
                     if (isEditing) {
                       setAdapterEditing(null)
-                      setAdapterForm({ api_key: '', api_url: '', model: '', tool_mode: 'agent', bot_id: '', user_id: '', platform: 'opencode', display_name: '', display_avatar: '', display_desc: '' })
+                      setAdapterForm({ api_key: '', api_url: '', model: '', tool_mode: 'agent', bot_id: '', user_id: '', platform: 'opencode', codex_path: '', workspace: '', sandbox: 'workspace-write', display_name: '', display_avatar: '', display_desc: '' })
                     } else {
                       setAdapterEditing(agentId)
                       setAdapterForm({
@@ -93,6 +93,9 @@ export default function AdaptersTab({
                         bot_id: adapter?.extra?.bot_id || '',
                         user_id: adapter?.extra?.user_id || '',
                         platform: adapter?.extra?.platform || 'opencode',
+                        codex_path: adapter?.extra?.codex_path || '',
+                        workspace: adapter?.extra?.workspace || '',
+                        sandbox: adapter?.extra?.sandbox || 'workspace-write',
                         display_name: adapter?.display_name || '',
                         display_avatar: adapter?.display_avatar || '',
                         display_desc: adapter?.display_desc || '',
@@ -107,7 +110,7 @@ export default function AdaptersTab({
                     cursor: 'pointer', fontWeight: 500,
                   }}
                 >
-                  {isEditing ? '取消' : isConfigured ? '修改' : '配置'}
+                  {isEditing ? '取消' : isConfigured ? '修改' : agentId === 'codex' ? '连接' : '配置'}
                 </button>
               </div>
             </div>
@@ -143,7 +146,7 @@ export default function AdaptersTab({
                     ) : (
                       <input
                         type={field.type}
-                        value={adapterForm[field.key]}
+                        value={adapterForm[field.key] || ''}
                         onChange={(e) => setAdapterForm({ ...adapterForm, [field.key]: e.target.value })}
                         placeholder={field.placeholder}
                         style={{
@@ -165,7 +168,7 @@ export default function AdaptersTab({
                       cursor: 'pointer', fontWeight: 600,
                     }}
                   >
-                    保存配置
+                    {agentId === 'codex' ? '连接 Codex' : '保存配置'}
                   </button>
                   {isConfigured && (
                     <button
@@ -180,10 +183,10 @@ export default function AdaptersTab({
                     >
                       {testingAdapter === agentId ? (
                         <><Loader size={12} style={{ animation: 'spin 1s linear infinite' }} /> 测试中...</>
-                      ) : '测试连接'}
+                      ) : agentId === 'codex' ? '检查连接' : '测试连接'}
                     </button>
                   )}
-                  <a
+                  {meta.helpUrl && <a
                     href={meta.helpUrl}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -194,8 +197,8 @@ export default function AdaptersTab({
                       textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4,
                     }}
                   >
-                    <ExternalLink size={12} /> 获取 Key
-                  </a>
+                    <ExternalLink size={12} /> {meta.helpLabel || '获取 Key'}
+                  </a>}
                   {meta.docUrl && (
                     <a
                       href={meta.docUrl}

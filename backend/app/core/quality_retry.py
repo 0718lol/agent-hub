@@ -41,6 +41,21 @@ def _has_code_block(text: str) -> bool:
     return bool(_CODE_BLOCK_RE.search(text))
 
 
+def _failure_description(report: dict) -> str:
+    sandbox_run = report.get("sandbox_run") or {}
+    static_check = report.get("static_check") or {}
+    if sandbox_run.get("passed") is False:
+        return "运行测试未通过"
+    if static_check.get("passed") is False:
+        return "静态语法检查未通过"
+    return "代码质量评审未通过"
+
+
+def _score_suffix(report: dict) -> str:
+    score = report.get("total_score")
+    return f"（{score}分）" if isinstance(score, (int, float)) else ""
+
+
 async def _evaluate_code_with_sandbox(task: str, output: str, llm_client: Any) -> dict:
     """
     1. 进行静态分析和 LLM 逻辑评审打分。
@@ -65,7 +80,8 @@ async def _evaluate_code_with_sandbox(task: str, output: str, llm_client: Any) -
             # 运行失败（有 Runtime 报错或超时）
             penalty = 35
             report["evaluation_passed"] = False
-            report["total_score"] = max(0, report["total_score"] - penalty)
+            if report["total_score"] is not None:
+                report["total_score"] = max(0, report["total_score"] - penalty)
             report["sandbox_run"] = {
                 "passed": False,
                 "status": sandbox_res.status,
@@ -116,7 +132,7 @@ async def evaluate_and_retry(
         {
             "final_output": str,           # 最终输出（可能是原始的或重试后的）
             "evaluation_passed": bool,     # 是否通过质量门禁
-            "total_score": int,            # 最终得分
+            "total_score": int | None,     # 评审不可用时为空
             "retried": bool,               # 是否触发了重试
             "retry_warning": bool,         # 重试后仍失败的警告标记
             "report": dict,                # 完整评估报告
@@ -172,11 +188,22 @@ async def evaluate_and_retry(
             "total_score": report["total_score"],
             "dimensions": report["dimensions"],
             "summary": report["summary"],
+            "evaluator_status": report.get("evaluator_status", "ok"),
         },
     })
 
     # 通过 → 直接放行
     if report["evaluation_passed"]:
+        if report.get("evaluator_status") == "error":
+            await manager.broadcast(conversation_id, {
+                "type": "message",
+                "conversation_id": conversation_id,
+                "sender": agent_id,
+                "content": {
+                    "text": "ℹ️ 静态检查已通过；质量评分服务本轮未返回有效结果，已保留产物，不会误判为代码失败。"
+                },
+                "stream": False,
+            })
         return {
             "final_output": raw_output,
             "evaluation_passed": True,
@@ -193,6 +220,8 @@ async def evaluate_and_retry(
 
     while retry_count < MAX_RETRIES and not current_report["evaluation_passed"]:
         retry_count += 1
+        failure_description = _failure_description(current_report)
+        score_suffix = _score_suffix(current_report)
 
         # 广播重试状态
         await manager.broadcast(conversation_id, {
@@ -200,7 +229,7 @@ async def evaluate_and_retry(
             "conversation_id": conversation_id,
             "sender": agent_id,
             "content": {
-                "text": f"⚠️ 质量与运行测试未通过（{current_report['total_score']}分），正在自动反思修正...（{retry_count}/{MAX_RETRIES}）"
+                "text": f"⚠️ {failure_description}{score_suffix}，正在自动反思修正...（{retry_count}/{MAX_RETRIES}）"
             },
             "stream": False,
         })
@@ -220,7 +249,7 @@ async def evaluate_and_retry(
 
         retry_prompt = (
             f"你的原始任务是: {task}\n\n"
-            f"【🚨 自动化质量测试未通过 — 你的代码只得了 {current_report['total_score']} 分（60分及格）】\n"
+            f"【🚨 {failure_description}{score_suffix}】\n"
             f"测试不通过的原因及运行时错误如下：\n{feedback_text}\n\n"
             f"请深入反思报错根源，修正你的代码，重新输出一份完美的、可直接运行的完整代码方案。"
         )
@@ -267,6 +296,7 @@ async def evaluate_and_retry(
                 "total_score": current_report["total_score"],
                 "dimensions": current_report["dimensions"],
                 "summary": current_report["summary"],
+                "evaluator_status": current_report.get("evaluator_status", "ok"),
                 "retry_round": retry_count,
             },
         })
@@ -275,6 +305,8 @@ async def evaluate_and_retry(
     retry_warning = not current_report["evaluation_passed"]
 
     if retry_warning:
+        failure_description = _failure_description(current_report)
+        score_suffix = _score_suffix(current_report)
         # 重试仍失败，广播警告
         await manager.broadcast(conversation_id, {
             "type": "message",
@@ -282,7 +314,7 @@ async def evaluate_and_retry(
             "sender": agent_id,
             "content": {
                 "text": (
-                    f"⚠️ 自动修复警示：该方案经过自动反思重试后，运行测试仍存在报错（{current_report['total_score']}分）。"
+                    f"⚠️ 自动修复警示：该方案经过自动反思重试后，{failure_description}{score_suffix}。"
                     f"以下代码已强制放行，交由人类决策审查。"
                 )
             },

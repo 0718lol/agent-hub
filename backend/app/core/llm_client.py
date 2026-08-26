@@ -298,7 +298,9 @@ class ResilienceManager:
             self.breakers[provider] = CircuitBreaker(provider)
         return self.breakers[provider]
 
-    async def execute_failover(self, client_instance, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
+    async def execute_failover(self, client_instance, messages: list[dict], system: str,
+                               enabled_tools: list[str] | None = None,
+                               response_format: dict | None = None) -> AsyncGenerator[str, None]:
         provider = client_instance.provider
         backup_cfg = get_backup_provider_config(provider)
 
@@ -313,7 +315,15 @@ class ResilienceManager:
                 backup_success = False
                 try:
                     output_chunks = []
-                    async for chunk in client_instance._stream_fallback_provider(backup_cfg, messages, system, enabled_tools):
+                    try:
+                        backup_gen = client_instance._stream_fallback_provider(
+                            backup_cfg, messages, system, enabled_tools, response_format
+                        )
+                    except TypeError:
+                        backup_gen = client_instance._stream_fallback_provider(
+                            backup_cfg, messages, system, enabled_tools
+                        )
+                    async for chunk in backup_gen:
                         if not chunk.startswith("\n[云端备份提供商"):
                             backup_success = True
                         output_chunks.append(chunk)
@@ -336,7 +346,9 @@ class ResilienceManager:
             yield failover_notice
 
             try:
-                ollama_gen = client_instance._openai_stream_fallback_ollama(messages, system, enabled_tools)
+                ollama_gen = client_instance._openai_stream_fallback_ollama(
+                    messages, system, enabled_tools, response_format
+                )
             except TypeError:
                 ollama_gen = client_instance._openai_stream_fallback_ollama(messages, system)
 
@@ -345,7 +357,9 @@ class ResilienceManager:
         else:
             yield "❌ [所有 LLM 服务（主模型、备份云服务、本地 Ollama）均不可用或已被熔断。请在冷却期过后重试。]"
 
-    async def execute_with_retry(self, client_instance, stream_func, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
+    async def execute_with_retry(self, client_instance, stream_func, messages: list[dict], system: str,
+                                 enabled_tools: list[str] | None = None,
+                                 response_format: dict | None = None) -> AsyncGenerator[str, None]:
         provider = client_instance.provider
         model = client_instance.model
         breaker = self.get_breaker(provider)
@@ -365,7 +379,9 @@ class ResilienceManager:
 
         # 1. Check Circuit Breaker
         if not await breaker.allow_request():
-            async for chunk in self.execute_failover(client_instance, messages, system, enabled_tools):
+            async for chunk in self.execute_failover(
+                client_instance, messages, system, enabled_tools, response_format
+            ):
                 output_chunks.append(chunk)
                 yield chunk
 
@@ -385,7 +401,7 @@ class ResilienceManager:
         for attempt in range(max_retries):
             try:
                 try:
-                    gen = stream_func(messages, system, enabled_tools)
+                    gen = stream_func(messages, system, enabled_tools, response_format)
                 except TypeError:
                     gen = stream_func(messages, system)
                 first_chunk = None
@@ -445,7 +461,9 @@ class ResilienceManager:
                     output_chunks.append(err_msg)
                     yield err_msg
 
-                    async for chunk in self.execute_failover(client_instance, messages, system, enabled_tools):
+                    async for chunk in self.execute_failover(
+                        client_instance, messages, system, enabled_tools, response_format
+                    ):
                         output_chunks.append(chunk)
                         yield chunk
 
@@ -478,9 +496,11 @@ class LLMClient:
         self.model: str = ""
         self.temperature: float = 0.5
         self.max_tokens: int = 8192
+        self.thinking_enabled: bool | None = None
 
     def configure(self, provider: str, api_key: str, base_url: str, model: str,
-                  temperature: float | None = None, max_tokens: int | None = None):
+                  temperature: float | None = None, max_tokens: int | None = None,
+                  thinking_enabled: bool | None = None):
         self.provider = provider
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -489,6 +509,7 @@ class LLMClient:
             self.temperature = temperature
         if max_tokens is not None:
             self.max_tokens = max_tokens
+        self.thinking_enabled = thinking_enabled
 
     def is_configured(self) -> bool:
         if self.provider == "opencode":
@@ -508,7 +529,9 @@ class LLMClient:
         except (ConnectionRefusedError, TimeoutError, OSError):
             return False
 
-    async def _openai_stream_fallback_ollama(self, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
+    async def _openai_stream_fallback_ollama(self, messages: list[dict], system: str,
+                                             enabled_tools: list[str] | None = None,
+                                             response_format: dict | None = None) -> AsyncGenerator[str, None]:
         original_provider = self.provider
         original_base_url = self.base_url
         original_model = self.model
@@ -520,7 +543,9 @@ class LLMClient:
         self.api_key = "ollama"
 
         try:
-            async for chunk in self._openai_stream(messages, system, enabled_tools):
+            async for chunk in self._openai_stream(
+                messages, system, enabled_tools, response_format
+            ):
                 yield chunk
         except Exception as e:
             yield f"\n[Ollama 本地降级重定向调用失败: {type(e).__name__}: {str(e)[:150]}]"
@@ -530,7 +555,9 @@ class LLMClient:
             self.model = original_model
             self.api_key = original_api_key
 
-    async def _stream_fallback_provider(self, backup_config: dict, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
+    async def _stream_fallback_provider(self, backup_config: dict, messages: list[dict], system: str,
+                                        enabled_tools: list[str] | None = None,
+                                        response_format: dict | None = None) -> AsyncGenerator[str, None]:
         original_provider = self.provider
         original_base_url = self.base_url
         original_model = self.model
@@ -546,10 +573,14 @@ class LLMClient:
         try:
             # Dynamically route stream based on fallback provider
             if self.provider == "anthropic":
-                async for chunk in self._anthropic_stream(messages, system, enabled_tools):
+                async for chunk in self._anthropic_stream(
+                    messages, system, enabled_tools, response_format
+                ):
                     yield chunk
             else:
-                async for chunk in self._openai_stream(messages, system, enabled_tools):
+                async for chunk in self._openai_stream(
+                    messages, system, enabled_tools, response_format
+                ):
                     yield chunk
         except Exception as e:
             yield f"\n[云端备份提供商 {self.provider} 降级调用失败: {type(e).__name__}: {str(e)[:150]}]"
@@ -561,26 +592,43 @@ class LLMClient:
             self.temperature = original_temp
             self.max_tokens = original_tokens
 
-    async def chat_stream(self, messages: list[dict], system: str = "", enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(self, messages: list[dict], system: str = "",
+                          enabled_tools: list[str] | None = None,
+                          response_format: dict | None = None) -> AsyncGenerator[str, None]:
         optimized_messages = ContextOptimizer.optimize_messages(messages)
 
         try:
             if self.provider == "opencode":
-                async for chunk in resilience_manager.execute_with_retry(self, self._opencode_stream, optimized_messages, system, enabled_tools):
+                async for chunk in resilience_manager.execute_with_retry(
+                    self, self._opencode_stream, optimized_messages, system,
+                    enabled_tools, response_format
+                ):
                     yield chunk
             elif self.provider == "claude_code":
-                async for chunk in resilience_manager.execute_with_retry(self, self._claude_code_stream, optimized_messages, system, enabled_tools):
+                async for chunk in resilience_manager.execute_with_retry(
+                    self, self._claude_code_stream, optimized_messages, system,
+                    enabled_tools, response_format
+                ):
                     yield chunk
             elif self.provider == "anthropic":
-                async for chunk in resilience_manager.execute_with_retry(self, self._anthropic_stream, optimized_messages, system, enabled_tools):
+                async for chunk in resilience_manager.execute_with_retry(
+                    self, self._anthropic_stream, optimized_messages, system,
+                    enabled_tools, response_format
+                ):
                     yield chunk
             elif self.provider == "ollama":
                 if not self.base_url:
                     self.base_url = "http://127.0.0.1:11434/v1"
-                async for chunk in resilience_manager.execute_with_retry(self, self._openai_stream, optimized_messages, system, enabled_tools):
+                async for chunk in resilience_manager.execute_with_retry(
+                    self, self._openai_stream, optimized_messages, system,
+                    enabled_tools, response_format
+                ):
                     yield chunk
             else:
-                async for chunk in resilience_manager.execute_with_retry(self, self._openai_stream, optimized_messages, system, enabled_tools):
+                async for chunk in resilience_manager.execute_with_retry(
+                    self, self._openai_stream, optimized_messages, system,
+                    enabled_tools, response_format
+                ):
                     yield chunk
         except Exception as e:
             yield f"\n[LLM 调用出错: {type(e).__name__}: {str(e)[:200]}]"
@@ -610,7 +658,9 @@ class LLMClient:
         except Exception:
             return []
 
-    async def _openai_stream(self, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
+    async def _openai_stream(self, messages: list[dict], system: str,
+                             enabled_tools: list[str] | None = None,
+                             response_format: dict | None = None) -> AsyncGenerator[str, None]:
         url = f"{self.base_url}/chat/completions"
         if not url.startswith("http"):
             url = f"https://{url}"
@@ -627,6 +677,17 @@ class LLMClient:
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
         }
+        if response_format:
+            payload["response_format"] = response_format
+
+        # DeepSeek V4 exposes thinking as an OpenAI-compatible request option.
+        # Keep it provider-specific so other OpenAI-compatible APIs are unchanged.
+        if "deepseek" in self.model.lower() or "api.deepseek.com" in self.base_url.lower():
+            thinking_enabled = self.thinking_enabled
+            if thinking_enabled is None and "deepseek-v4-flash" in self.model.lower():
+                thinking_enabled = False
+            if thinking_enabled is not None:
+                payload["thinking"] = {"type": "enabled" if thinking_enabled else "disabled"}
 
         # 🚀 Phase 3: Seamless standard Native Tool Calling conversion
         api_tools = self._get_api_tools(enabled_tools)
@@ -693,7 +754,9 @@ class LLMClient:
                 yield '[/tool_call]'
             active_tool_calls.clear()
 
-    async def _anthropic_stream(self, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
+    async def _anthropic_stream(self, messages: list[dict], system: str,
+                                enabled_tools: list[str] | None = None,
+                                response_format: dict | None = None) -> AsyncGenerator[str, None]:
         url = f"{self.base_url}/messages"
         if not url.startswith("http"):
             url = f"https://{url}"
@@ -778,7 +841,9 @@ class LLMClient:
                 yield '[/tool_call]'
             active_tool_calls.clear()
 
-    async def _claude_code_stream(self, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
+    async def _claude_code_stream(self, messages: list[dict], system: str,
+                                  enabled_tools: list[str] | None = None,
+                                  response_format: dict | None = None) -> AsyncGenerator[str, None]:
         from app.core.claude_code_client import claude_code_stream
         async for chunk in claude_code_stream(
             messages=messages,
@@ -788,7 +853,9 @@ class LLMClient:
         ):
             yield chunk
 
-    async def _opencode_stream(self, messages: list[dict], system: str, enabled_tools: list[str] | None = None) -> AsyncGenerator[str, None]:
+    async def _opencode_stream(self, messages: list[dict], system: str,
+                               enabled_tools: list[str] | None = None,
+                               response_format: dict | None = None) -> AsyncGenerator[str, None]:
         from app.core.opencode_client import opencode_stream
         async for chunk in opencode_stream(
             messages=messages,
@@ -826,6 +893,7 @@ class TenantAwareLLMClient:
             model=config.get("model") or settings.llm_model,
             temperature=config.get("temperature"),
             max_tokens=config.get("max_tokens"),
+            thinking_enabled=config.get("thinking_enabled"),
         )
         self._clients[tenant_id] = client
         return client
