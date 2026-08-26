@@ -1040,6 +1040,18 @@ body {
   background: var(--bg-secondary);
 }
 
+.header-icon-btn-danger {
+  color: var(--red, #ef4444);
+  background: color-mix(in srgb, var(--red, #ef4444) 12%, transparent);
+  border-color: color-mix(in srgb, var(--red, #ef4444) 28%, var(--border));
+}
+
+.header-icon-btn-danger:hover {
+  color: #fff;
+  background: var(--red, #ef4444);
+  border-color: var(--red, #ef4444);
+}
+
 /* Tooltip bubble */
 .icon-tooltip {
   position: absolute;
@@ -1118,6 +1130,15 @@ body {
 }
 .header-popup-item:hover {
   background: var(--bg-secondary);
+}
+
+.header-popup-item-danger {
+  color: var(--red, #ef4444);
+}
+
+.header-popup-item-danger:hover {
+  background: color-mix(in srgb, var(--red, #ef4444) 12%, var(--bg-secondary));
+  color: var(--red, #ef4444);
 }
 
 .more-popup {

@@ -261,6 +261,56 @@
   opacity: 0.8;
 }
 
+.artifactNotice {
+  margin: 8px 0;
+  padding: 8px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-md);
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.14);
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1.4;
+  max-width: 100%;
+}
+
+.artifactNoticeStreaming {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(99, 102, 241, 0.2);
+}
+
+.artifactNoticeDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12);
+  flex: 0 0 auto;
+  animation: artifactPulse 1.4s ease-in-out infinite;
+}
+
+.artifactNoticeText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.artifactNoticeTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+
+.artifactNoticeSub {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
 /* Options buttons */
 .optionsRow {
   display: flex;
@@ -356,4 +406,9 @@
 
 @keyframes blink {
   50% { opacity: 0; }
+}
+
+@keyframes artifactPulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.7; }
+  50% { transform: scale(1.12); opacity: 1; }
 }

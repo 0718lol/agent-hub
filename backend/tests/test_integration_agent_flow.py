@@ -85,6 +85,7 @@ def orchestration_mocks(mock_ws_manager, monkeypatch):
     monkeypatch.setattr(
         "app.services.agent_orchestrator.update_latest_artifact_quality", MagicMock()
     )
+    monkeypatch.setattr("app.services.agent_orchestrator._skill_lib", None)
     monkeypatch.setattr(
         "app.core.event_stream.event_stream_manager.append_event", MagicMock()
     )
@@ -321,6 +322,76 @@ async def test_target_agent_flow(mock_ws_manager, orchestration_mocks, monkeypat
         if m.get("type") == "task_status" and m.get("status") == "done"
     ]
     assert len(done_msgs) >= 1
+
+
+@pytest.mark.asyncio
+async def test_best_of_n_publishes_selected_code_to_canvas(
+    mock_ws_manager, orchestration_mocks, monkeypatch
+):
+    """The selected Best-of-N candidate must become an authoritative artifact."""
+    from app.agents.frontend import FrontendAgent
+    from app.services import agent_orchestrator
+
+    selected = "```html\n<!doctype html><html><body>Selected</body></html>\n```"
+    monkeypatch.setattr(agent_orchestrator.quality_gate, "enabled", True)
+    monkeypatch.setattr(agent_orchestrator.quality_gate, "best_of_n", 2)
+    monkeypatch.setattr(
+        agent_orchestrator.quality_gate,
+        "best_of_n_generate",
+        AsyncMock(return_value=(selected, {"total_score": 95}, [])),
+    )
+    save_artifact_mock = MagicMock(return_value={"id": 42, "name": "index.html"})
+    monkeypatch.setattr(agent_orchestrator, "save_artifact", save_artifact_mock)
+
+    await agent_orchestrator.run_target_agent_flow(
+        "test_conv_best_of_n",
+        FrontendAgent(),
+        "生成一个页面",
+    )
+
+    save_artifact_mock.assert_called_once_with(
+        "test_conv_best_of_n",
+        "agent_frontend",
+        "html",
+        "<!doctype html><html><body>Selected</body></html>",
+    )
+    code_events = _filter_messages(mock_ws_manager.messages, msg_type="code")
+    preview_events = _filter_messages(mock_ws_manager.messages, msg_type="preview")
+    assert code_events[-1]["artifact_id"] == 42
+    assert code_events[-1]["code"] == "<!doctype html><html><body>Selected</body></html>"
+    assert preview_events[-1]["html"] == code_events[-1]["code"]
+
+
+@pytest.mark.asyncio
+async def test_quality_retry_does_not_replace_final_code_artifact(
+    mock_ws_manager, orchestration_mocks, monkeypatch
+):
+    """The retired quality gate should not trigger a second publish."""
+    from app.agents.frontend import FrontendAgent
+    from app.services import agent_orchestrator
+
+    async def initial_stream(messages, system="", **kwargs):
+        yield "```html\n<!doctype html><html><body>Initial</body></html>\n```"
+
+    monkeypatch.setattr(
+        "app.core.llm_client.llm_client._default.chat_stream",
+        initial_stream,
+    )
+    save_artifact_mock = MagicMock(
+        return_value={"id": 1, "name": "index.html"}
+    )
+    monkeypatch.setattr(agent_orchestrator, "save_artifact", save_artifact_mock)
+
+    await agent_orchestrator.run_target_agent_flow(
+        "test_conv_quality_retry",
+        FrontendAgent(),
+        "生成一个页面",
+    )
+
+    assert save_artifact_mock.call_count == 1
+    code_events = _filter_messages(mock_ws_manager.messages, msg_type="code")
+    assert code_events[-1]["artifact_id"] == 1
+    assert "Initial" in code_events[-1]["code"]
 
 
 @pytest.mark.asyncio

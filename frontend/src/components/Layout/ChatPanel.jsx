@@ -13,6 +13,7 @@ import TabBar from './TabBar'
 import TaskBoard from '../Canvas/TaskBoard'
 import { wsClient } from '../../utils/websocket'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
+import { buildPromoPreviewHtml, extractPromoSubject } from '../Canvas/promoPreview'
 import IconAvatar from '../IconAvatar'
 
 const AgentFlow = lazy(() => import('../Canvas/AgentFlow'))
@@ -77,7 +78,9 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
       const text = msg.content?.text || ''
       const previewMatch = text.match(/\[preview:(\w+)\]/)
       if (previewMatch && PREVIEW_HTML[previewMatch[1]]) {
-        const code = PREVIEW_HTML[previewMatch[1]]
+        const code = previewMatch[1] === 'promo'
+          ? buildPromoPreviewHtml(extractPromoSubject(text))
+          : PREVIEW_HTML[previewMatch[1]]
         if (!foundCode) { setGeneratedCode('html', code); foundCode = true }
         if (!foundPreview) { useCanvasStore.getState().setPreviewHtml(code); foundPreview = true }
       }
@@ -87,6 +90,11 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
         const code = codeMatch[2]
         if (!foundCode) { setGeneratedCode(lang, code); foundCode = true }
         if (lang === 'html' && !foundPreview) { useCanvasStore.getState().setPreviewHtml(code); foundPreview = true }
+      }
+      const mockupMatch = text.match(/\[mockup:(\w+)\]/)
+      if (mockupMatch?.[1] === 'promo' && !foundPreview) {
+        useCanvasStore.getState().setPreviewHtml(buildPromoPreviewHtml(extractPromoSubject(text)))
+        foundPreview = true
       }
       if (foundCode && foundPreview) break
     }
@@ -121,7 +129,6 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
       if (data.type === 'thinking') { setThinking(activeId, data.agent_id, data.text); return }
       if (data.type === 'code') {
         useCanvasStore.getState().setGeneratedCode(data.language, data.code)
-        if (data.language === 'html') useCanvasStore.getState().setPreviewHtml(data.code)
         if (data.artifact_id) {
           const current = useChatStore.getState().conversations.find((item) => item.id === activeId)?.goal || {}
           useChatStore.getState().updateConversation(activeId, {

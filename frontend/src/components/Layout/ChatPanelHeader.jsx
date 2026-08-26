@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, memo } from 'react'
-import { Code2, GitBranch, LayoutList, Menu, Search, PanelRightClose, MoreHorizontal, Share2, Building2, Wrench, BookOpen } from 'lucide-react'
+import { Code2, GitBranch, LayoutList, Menu, Search, PanelRightClose, MoreHorizontal, Share2, Building2, Wrench, BookOpen, Trash2 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -130,6 +130,17 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
             {slidePanelOpen && slidePanelContent === 'code' ? '收起侧边栏' : '展开侧边栏'}
           </span>
         </button>
+        {onClearHistory && !isGroup && (
+          <button
+            className="header-icon-btn header-icon-btn-danger header-desktop-action"
+            onClick={onClearHistory}
+            aria-label="清空当前 Agent 聊天记录"
+            title="清空当前 Agent 聊天记录"
+          >
+            <Trash2 size={20} />
+            <span className="icon-tooltip">清空当前记录</span>
+          </button>
+        )}
         <div className="header-icon-btn-wrapper header-more-action" ref={moreRef}>
           <button
             className="header-icon-btn"
@@ -158,6 +169,15 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
                 <button className="header-popup-item" onClick={() => { onToggleOffice(); setMoreOpen(false) }}>
                   <Building2 size={16} />
                   <span>虚拟办公室</span>
+                </button>
+              )}
+              {onClearHistory && !isGroup && (
+                <button
+                  className="header-popup-item header-popup-item-danger"
+                  onClick={() => { onClearHistory(); setMoreOpen(false) }}
+                >
+                  <Trash2 size={16} />
+                  <span>清空当前 Agent 记录</span>
                 </button>
               )}
               <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />

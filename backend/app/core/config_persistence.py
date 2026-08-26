@@ -69,6 +69,7 @@ def save_llm_config(llm_client, settings):
             "temperature": llm_client.temperature,
             "max_tokens": llm_client.max_tokens,
             "thinking_enabled": getattr(llm_client, "thinking_enabled", None),
+            "thinking_mode": llm_client.thinking_mode,
         }, encrypted=True)
         return
     try:
@@ -89,6 +90,7 @@ def save_llm_config(llm_client, settings):
                 "temperature": llm_client.temperature,
                 "max_tokens": llm_client.max_tokens,
                 "thinking_enabled": getattr(llm_client, "thinking_enabled", None),
+                "thinking_mode": llm_client.thinking_mode,
             }, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Failed to save LLM config: {e}")
@@ -122,6 +124,7 @@ def load_llm_config(llm_client, settings):
             temperature=cfg.get("temperature"),
             max_tokens=cfg.get("max_tokens"),
             thinking_enabled=cfg.get("thinking_enabled"),
+            thinking_mode=cfg.get("thinking_mode"),
         )
     except Exception as e:
         logger.error(f"Failed to load LLM config: {e}")

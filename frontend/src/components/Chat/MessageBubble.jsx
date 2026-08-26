@@ -1,20 +1,25 @@
 import styles from './MessageBubble.module.css'
 import React, { useState, useEffect, useRef } from 'react'
-import { Copy, RefreshCw, Reply, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, Trash2, Share2 } from 'lucide-react'
+import { Copy, RefreshCw, Pin, Check, Wrench, Settings2, Globe, FileText, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, Trash2, Share2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useAgentStore } from '../../stores/agentStore'
 import { useChatStore } from '../../stores/chatStore'
-import { useCanvasStore } from '../../stores/canvasStore'
+import { isInternalNoiseMessage } from '../../utils/internalMessages'
 import MockupCard from './MockupCard'
 import ClarificationCard from './ClarificationCard'
 import AskUserCard from './AskUserCard'
 import FileAttachmentCard from './FileAttachmentCard'
 import IconAvatar from '../IconAvatar'
-import { PREVIEW_HTML } from '../Canvas/previewHtml'
+import { extractPromoSubject } from '../Canvas/promoPreview'
 import { wsClient } from '../../utils/websocket'
+
+const STREAMING_CODE_STAGES = [
+  '正在搭骨架',
+  '正在补样式',
+  '正在接预览',
+  '正在收尾检查',
+]
 
 const MD_COMPONENTS = {
   p: ({ children }) => <div style={{ margin: '0.2em 0', lineHeight: 1.55 }}>{children}</div>,
@@ -57,6 +62,39 @@ const TOOL_ICONS = {
   safe_python_executor: Wrench,
   run_stateful_command: Wrench,
   browser_action: Globe,
+}
+
+export function CodeHiddenNotice({ streaming = false }) {
+  const [stageIndex, setStageIndex] = useState(0)
+
+  useEffect(() => {
+    if (!streaming) {
+      setStageIndex(0)
+      return undefined
+    }
+
+    const timer = window.setInterval(() => {
+      setStageIndex((index) => (index + 1) % STREAMING_CODE_STAGES.length)
+    }, 1200)
+
+    return () => window.clearInterval(timer)
+  }, [streaming])
+
+  const label = streaming
+    ? `正在生成代码 · ${STREAMING_CODE_STAGES[stageIndex]}`
+    : '代码已生成'
+
+  return (
+    <div className={`${styles.artifactNotice} ${streaming ? styles.artifactNoticeStreaming : ''}`}>
+      <span className={styles.artifactNoticeDot} />
+      <div className={styles.artifactNoticeText}>
+        <span className={styles.artifactNoticeTitle}>{label}</span>
+        <span className={styles.artifactNoticeSub}>
+          {streaming ? '右侧预览和代码面板会同步更新' : '已同步到右侧预览和代码面板'}
+        </span>
+      </div>
+    </div>
+  )
 }
 
 // Dify-Style Collapsible Tool Call Component
@@ -182,13 +220,13 @@ function ToolResultBlock({ toolName, resultText }) {
 }
 
 export default function MessageBubble({ message, conversationId, isPinned, isLast }) {
+  if (isInternalNoiseMessage(message)) return null
+
   const agents = useAgentStore((s) => s.agents)
   const addMessage = useChatStore((s) => s.addMessage)
   const deleteMessage = useChatStore((s) => s.deleteMessage)
   const allRead = useChatStore((s) => s.allRead)
   const togglePinMessage = useChatStore((s) => s.togglePinMessage)
-  const setPreviewHtml = useCanvasStore((s) => s.setPreviewHtml)
-  const setGeneratedCode = useCanvasStore((s) => s.setGeneratedCode)
 
   const isUser = message.sender === 'user'
   const agent = agents.find((a) => a.agent_id === message.sender)
@@ -213,14 +251,6 @@ export default function MessageBubble({ message, conversationId, isPinned, isLas
       conversation_id: conversationId,
       sender: 'user',
       content: { text: '请重新生成', regenerate: true, original_message_id: message.id },
-    })
-  }
-
-  const handleReply = () => {
-    addMessage(conversationId, {
-      sender: 'user',
-      content: { text: `> ${text.slice(0, 80)}${text.length > 80 ? '...' : ''}\n\n` },
-      streaming: false,
     })
   }
 
@@ -292,24 +322,7 @@ export default function MessageBubble({ message, conversationId, isPinned, isLas
       const match = /language-(\w+)/.exec(className || '')
       const codeStr = String(children).replace(/\n$/, '')
       if (!inline && match) {
-        return (
-          <div className="code-block">
-            <div className="code-block-header">
-              <span>{match[1]}</span>
-              <button onClick={() => navigator.clipboard.writeText(codeStr)} aria-label={`复制 ${match[1]} 代码`}>
-                <Copy size={12} />
-              </button>
-            </div>
-            <SyntaxHighlighter
-              style={oneDark}
-              language={match[1]}
-              PreTag="div"
-              customStyle={{ margin: 0, borderRadius: '0 0 8px 8px', fontSize: 13, background: 'var(--code-bg)' }}
-            >
-              {codeStr}
-            </SyntaxHighlighter>
-          </div>
-        )
+        return <CodeHiddenNotice streaming={message.streaming} />
       }
       return <code className="markdown-inline-code" {...props}>{children}</code>
     },
@@ -321,22 +334,29 @@ export default function MessageBubble({ message, conversationId, isPinned, isLas
     },
   }
 
-  const renderMarkdown = (text) => (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-      {text}
-    </ReactMarkdown>
-  )
-
   const renderText = (t) => {
     let clean = t.replace(/\[thinking\][\s\S]*?\[\/thinking\]/g, '')
     clean = clean.replace(/\[assign:\w+\]/g, '')
+    clean = clean.replace(/```[\s\S]*?```/g, '\n[artifact_code]\n')
+    const openFenceIndex = clean.indexOf('```')
+    if (openFenceIndex >= 0) {
+      clean = `${clean.slice(0, openFenceIndex).trim()}\n[artifact_code]`
+    }
+    const bareHtmlIndex = clean.search(/<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]|<style[\s>]|<script[\s>]/i)
+    if (bareHtmlIndex >= 0) {
+      clean = `${clean.slice(0, bareHtmlIndex).trim()}\n[artifact_code]`
+    }
     clean = clean.trim()
 
     if (!clean) return null
 
-    const parts = clean.split(/(\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[ask_user:[^\]]+\]|\[options:[^\]]+\]|\[tool_call:[^\]]+\][\s\S]*?\[\/tool_call\]|\[工具结果: [^\]]+\][\s\S]*?请基于以上工具结果继续回复用户。|```[\s\S]*?```)/g)
+    const parts = clean.split(/(\[artifact_code\]|\[mockup:\w+\]|\[preview:\w+\]|\[clarify:[^\]]+\]|\[ask_user:[^\]]+\]|\[options:[^\]]+\]|\[tool_call:[^\]]+\][\s\S]*?\[\/tool_call\]|\[工具结果: [^\]]+\][\s\S]*?请基于以上工具结果继续回复用户。)/g)
     return parts.map((part, i) => {
       if (!part) return null
+
+      if (part === '[artifact_code]') {
+        return <CodeHiddenNotice key={i} streaming={message.streaming} />
+      }
 
       // Tool Call Match
       const toolCallMatch = part.match(/\[tool_call:([^\]]+)\]([\s\S]*?)\[\/tool_call\]/)
@@ -358,7 +378,7 @@ export default function MessageBubble({ message, conversationId, isPinned, isLas
       }
 
       const mockupMatch = part.match(/\[mockup:(\w+)\]/)
-      if (mockupMatch) return <MockupCard key={i} type={mockupMatch[1]} />
+      if (mockupMatch) return <MockupCard key={i} type={mockupMatch[1]} subject={extractPromoSubject(text)} />
 
       const previewMatch = part.match(/\[preview:(\w+)\]/)
       if (previewMatch) {
@@ -420,23 +440,6 @@ export default function MessageBubble({ message, conversationId, isPinned, isLas
                 {opt}
               </button>
             ))}
-          </div>
-        )
-      }
-
-      const codeMatch = part.match(/```(\w*)\n([\s\S]*?)```/)
-      if (codeMatch) {
-        const lang = codeMatch[1] || 'text'
-        const code = codeMatch[2]
-        return (
-          <div key={i} className="code-block">
-            <div className="code-block-header">
-              <span>{lang}</span>
-              <button onClick={() => navigator.clipboard.writeText(code)} aria-label={`复制 ${lang} 代码`}>
-                <Copy size={12} />
-              </button>
-            </div>
-            <pre><code>{code}</code></pre>
           </div>
         )
       }

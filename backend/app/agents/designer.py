@@ -1,3 +1,5 @@
+import re
+
 from .base import BaseAgent
 
 
@@ -17,8 +19,9 @@ class DesignerAgent(BaseAgent):
         "\n   - 【色彩艺术】：主色采用香浓巧克力褐（#4a2c11/#251206），辅色融合浪漫蜜桃粉/玫瑰红（#ff758c/#ef4444）与奶油甜香白（#fffdd0），佐以点睛的活力金黄（#fbbf24）。"
         "\n   - 【字形规范】：推荐使用圆润饱满、充满亲和力和夏日活力的粗体无衬线字形或手写艺术字体。"
         "\n   - 【版式与网格】：采用“中心英雄焦点”构图，上方排布冲击力强的创意文案，中心呈现高精度的巧克力雪糕咬口矢量图，底部搭载醒目的“立即尝鲜”黄金引导行动按钮（Call-to-Action）。"
+        "\n   - 【安全区】：底部标语、活动信息和 CTA 必须留足安全边距，窄预览下也要自动换行，不能被裁切或被装饰层遮挡。"
         "\n   - 【动态特效】：描绘液态牛奶飞溅与熔融巧克力丝带环绕的流感线条，拉满视觉层次。"
-        "\n   - 【原型输出】：必须在回复中输出原型标记 `[mockup:promo]` 以让前端渲染高精度的巧乐兹海报原型！"
+        "\n   - 【原型输出】：必须在回复中输出原型标记 `[mockup:promo]` 以让前端渲染高精度的海报原型！"
         "\n3. 回复风格必须展现出极其专业、充满时尚美学感和激情创意的设计师调性。绝对不要敷衍，要给出令人惊艳的方案描述。"
         "\n\n【ask_user 工具】当用户没指定设计风格、配色基调、版式方向等关键差异化选择时，不要硬猜，输出："
         "\n  [ask_user:简短问题?|风格A::一句话说明|*推荐项加星::说明|风格C::说明]"
@@ -48,14 +51,22 @@ class DesignerAgent(BaseAgent):
             return "promo"
         return "todo"
 
+    @staticmethod
+    def _extract_subject(message: str) -> str:
+        match = re.search(r"([^\s，。！？]{2,20}?)(?:宣传|海报|广告|落地页|页面|设计)", message)
+        if match:
+            return re.sub(r"^(这是|给我|帮我|请|麻烦|做|生成|设计|制作|来|整)(一张|一个|个)?", "", match.group(1).strip("的")) or "当前主题"
+        return "当前主题"
+
     def _mockup_reply(self, msg: str) -> str:
         mockup_type = self._detect_mockup_type(msg)
+        subject = self._extract_subject(msg)
         type_names = {
             "todo": "Todo 应用",
             "login": "登录页面",
             "dashboard": "数据仪表盘",
             "ecommerce": "商品列表页",
-            "promo": "巧乐兹宣传海报/营销落地页",
+            "promo": f"{subject}宣传海报/营销落地页",
         }
         name = type_names.get(mockup_type, "页面")
 

@@ -1,4 +1,6 @@
-import React from 'react'
+import React, { useEffect } from 'react'
+import { useCanvasStore } from '../../stores/canvasStore'
+import { buildPromoPreviewHtml } from '../Canvas/promoPreview'
 
 const MOCKUPS = {
   todo: {
@@ -43,10 +45,45 @@ const MOCKUPS = {
   },
 }
 
-export default function MockupCard({ type = 'todo' }) {
-  const mockup = MOCKUPS[type] || MOCKUPS.todo
+const DEFAULT_MOCKUP_SUBJECT = '当前主题'
+
+function buildPromoMockup(subject) {
+  return {
+    ...MOCKUPS.promo,
+    sections: MOCKUPS.promo.sections.map((section) => {
+      if (section.type === 'hero') {
+        return {
+          ...section,
+          label: `${subject} — 主题海报`,
+          sub: `${subject}主题海报 · 高对比视觉主视觉`,
+        }
+      }
+      if (section.type === 'cards') {
+        return {
+          ...section,
+          items: [`${subject} 亮点`, '视觉 节奏', '传播 钩子', '行动 按钮'],
+        }
+      }
+      if (section.type === 'button') {
+        return { ...section, label: '立即查看 →' }
+      }
+      return section
+    }),
+  }
+}
+
+export default function MockupCard({ type = 'todo', subject = '' }) {
+  const setPreviewHtml = useCanvasStore((s) => s.setPreviewHtml)
+  const resolvedSubject = subject || DEFAULT_MOCKUP_SUBJECT
+  const mockup = type === 'promo' ? buildPromoMockup(resolvedSubject) : MOCKUPS[type] || MOCKUPS.todo
   const width = 320
   const height = 360
+
+  useEffect(() => {
+    if (type === 'promo') {
+      setPreviewHtml(buildPromoPreviewHtml(resolvedSubject))
+    }
+  }, [resolvedSubject, setPreviewHtml, type])
 
   return (
     <div style={{
@@ -95,8 +132,8 @@ function renderSection(section, index, y, width) {
       )
 
     case 'hero':
-      const isQiaolezi = section.label.includes('巧乐兹')
-      if (isQiaolezi) {
+      const isPromo = section.label.includes('主题海报')
+      if (isPromo) {
         return (
           <g key={index}>
             <defs>
@@ -117,7 +154,7 @@ function renderSection(section, index, y, width) {
             <text x={padding + 12} y={y + 50} fill="#e2e8f0" fontSize="10" fontWeight="500">{section.sub}</text>
             <text x={padding + 12} y={y + 68} fill="#94a3b8" fontSize="8">设计顾问 💡 独家高保真视觉渲染</text>
 
-            {/* Right side Qiaolezi Ice Pop Graphic! */}
+              {/* Right-side visual accent */}
             <g transform={`translate(${width - padding - 65}, ${y + 5})`}>
               {/* Wooden Stick */}
               <rect x="22" y="55" width="10" height="20" rx="3" fill="url(#stickGrad)" />
@@ -141,7 +178,7 @@ function renderSection(section, index, y, width) {
 
               {/* Glossy Reflection Highlight */}
               <path d="M 14 12 L 14 44" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="2.5" strokeLinecap="round" />
-              {/* Qiaolezi iconic red ribbon splash swirl */}
+              {/* Subject ribbon splash swirl */}
               <path d="M 10 30 Q 22 25 32 38 Q 40 45 44 35" fill="none" stroke="#ef4444" strokeWidth="2" opacity="0.85" />
               <path d="M 12 33 Q 22 28 32 41 Q 40 48 44 38" fill="none" stroke="#fbbf24" strokeWidth="1.2" opacity="0.8" />
             </g>

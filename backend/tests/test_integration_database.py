@@ -196,6 +196,23 @@ class TestMessageSaveAndRetrieve:
         messages = get_messages("conv_clear")
         assert messages == []
 
+    def test_internal_noise_messages_are_filtered(self):
+        """内部重试噪音不应进入消息记录。"""
+        from app.core.crud import create_conversation, get_messages, save_message
+
+        create_conversation("conv_noise", "single", "噪音过滤测试", "\U0001f916")
+
+        save_message(
+            "conv_noise",
+            "system",
+            {"text": "⚠️ 输出格式不符合要求（format: missing expected content for agent_frontend），正在重新生成..."},
+        )
+        save_message("conv_noise", "agent_pm", {"text": "正常消息"})
+
+        messages = get_messages("conv_noise")
+        assert len(messages) == 1
+        assert messages[0]["content"] == {"text": "正常消息"}
+
     def test_streaming_flag(self):
         """streaming 字段正确序列化/反序列化。"""
         from app.core.crud import create_conversation, get_messages, save_message

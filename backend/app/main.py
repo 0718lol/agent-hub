@@ -287,9 +287,9 @@ async def health():
     try:
         from app.core.redis import redis_manager
         from app.services.deployment_queue import WORKER_HEARTBEAT_KEY
-        client = redis_manager.get_client()
-        if client:
-            await client.ping()
+        redis_ready = await asyncio.wait_for(redis_manager.check_connection(), timeout=2.0)
+        if redis_ready:
+            client = redis_manager.get_client()
             checks["redis"] = "ok"
             worker_ready = bool(await client.get(WORKER_HEARTBEAT_KEY))
             checks["deployment_worker"] = "ok" if worker_ready else "not_ready"
@@ -297,6 +297,9 @@ async def health():
         else:
             checks["redis"] = "not_configured"
             capabilities["deployment_queue"] = False
+    except TimeoutError:
+        checks["redis"] = "timeout"
+        capabilities["deployment_queue"] = False
     except Exception as e:
         checks["redis"] = f"unavailable: {str(e)[:100]}"
         capabilities["deployment_queue"] = False

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from collections.abc import AsyncGenerator
 
 from app.core.llm_client import llm_client
@@ -12,6 +13,21 @@ logger = logging.getLogger("base_agent")
 _MAX_HISTORY_CHARS = 12000
 # Maximum tool call rounds per reply (prevent infinite loops)
 _MAX_TOOL_ROUNDS = 5
+
+
+def _without_explicit_thinking(prompt: str) -> str:
+    """Remove prompt lines that request user-visible chain-of-thought tags."""
+    filtered = [
+        line for line in prompt.splitlines()
+        if "[thinking]" not in line
+        and "[/thinking]" not in line
+        and "【思维过程】" not in line
+        and "思考完毕后" not in line
+    ]
+    return "\n".join(filtered).strip() + (
+        "\n\n【输出约束】当前模型已关闭思考模式。"
+        "不要输出分析过程、思考标签或推理草稿，只输出最终结果。"
+    )
 
 
 class BaseAgent:
@@ -39,6 +55,8 @@ class BaseAgent:
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
             prompt_context = {"task_type": task_type, "conversation_id": conversation_id}
             full_prompt = prompt_engine.build(self, prompt_context)
+            if llm_client.thinking_mode == "disabled":
+                full_prompt = _without_explicit_thinking(full_prompt)
 
             # Inject tool descriptions into system prompt
             tools_prompt = self._get_tools_prompt()

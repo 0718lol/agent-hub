@@ -6,6 +6,7 @@ conversations.  Search uses FTS5 when available, with a LIKE fallback.
 """
 import json
 import logging
+import re
 from datetime import UTC, datetime
 
 from sqlmodel import Session, select
@@ -14,9 +15,54 @@ import app.core._engine as _engine_mod
 from app.core.crud.utils import _safe_json_loads, db_write_transaction
 from app.core.models import Conversation, Message
 
+_INTERNAL_NOISE_PATTERNS = (
+    re.compile(r"输出格式不符合要求", re.IGNORECASE),
+    re.compile(r"missing expected content", re.IGNORECASE),
+    re.compile(r"正在重新生成\.\.\."),
+)
+
+
+def _message_text(content) -> str:
+    if isinstance(content, dict):
+        text = content.get("text", "")
+        return text if isinstance(text, str) else ""
+    if isinstance(content, str):
+        return content
+    return ""
+
+
+def is_internal_noise_message(sender: str, content) -> bool:
+    text = _message_text(content)
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _INTERNAL_NOISE_PATTERNS)
+
+
+@db_write_transaction
+def purge_internal_noise_messages(conversation_id: str | None = None) -> int:
+    """Delete legacy internal retry/status noise from stored chat history."""
+    deleted = 0
+    with Session(_engine_mod.engine) as session:
+        statement = select(Message)
+        if conversation_id is not None:
+            statement = statement.where(Message.conversation_id == conversation_id)
+        results = session.exec(statement).all()
+        for msg in results:
+            try:
+                content = json.loads(msg.content)
+            except (json.JSONDecodeError, TypeError):
+                content = {"text": msg.content}
+            if is_internal_noise_message(msg.sender, content):
+                session.delete(msg)
+                deleted += 1
+        session.commit()
+    return deleted
+
 
 @db_write_transaction
 def save_message(conversation_id: str, sender: str, content: dict, streaming: bool = False):
+    if is_internal_noise_message(sender, content):
+        return
     with Session(_engine_mod.engine) as session:
         msg = Message(
             conversation_id=conversation_id,
@@ -48,6 +94,8 @@ def get_messages(conversation_id: str, limit: int = 100, before_id: int | None =
                 content = json.loads(msg.content)
             except (json.JSONDecodeError, TypeError):
                 content = {"text": msg.content}
+            if is_internal_noise_message(msg.sender, content):
+                continue
             messages.append({
                 "id": msg.id,
                 "conversation_id": msg.conversation_id,
@@ -117,6 +165,7 @@ def search_messages(
                     "rank": row[6],
                 }
                 for row in rows
+                if not is_internal_noise_message(row[2], _safe_json_loads(row[3]))
             ]
     except Exception as e:
         logging.getLogger("database").warning(
@@ -146,6 +195,7 @@ def search_messages(
                     "timestamp": msg.created_at,
                 }
                 for msg in results
+                if not is_internal_noise_message(msg.sender, _safe_json_loads(msg.content))
             ]
 
 

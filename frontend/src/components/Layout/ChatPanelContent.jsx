@@ -9,6 +9,7 @@ import InlineDeployCard from '../Chat/InlineDeployCard'
 import DeployProgressCard from '../Chat/DeployProgressCard'
 import IconAvatar from '../IconAvatar'
 import { wsClient } from '../../utils/websocket'
+import { isInternalNoiseMessage } from '../../utils/internalMessages'
 import GoalSnapshot from '../Chat/GoalSnapshot'
 
 // 全局消息加载缓存：已加载过的 convId 不重复请求（上限 200 防止内存膨胀）
@@ -24,6 +25,7 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
   const initializeGoal = useChatStore((s) => s.initializeGoal)
   const loadMessages = useChatStore((s) => s.loadMessages)
   const loadOlderMessages = useChatStore((s) => s.loadOlderMessages)
+  const pruneInternalMessages = useChatStore((s) => s.pruneInternalMessages)
   const hasOlderMessages = useChatStore((s) => s.hasOlderMessages[convId])
   const markRead = useChatStore((s) => s.markRead)
   const typingAgents = useChatStore((s) => s.typingAgents)
@@ -39,15 +41,6 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
   const isGenerating = generatingConvs.has(convId)
   const isGroup = conv?.type === 'group'
   const currentPinned = pinnedMessages[convId] || []
-
-  // 最后一条 AI 消息的 id（用于控制重新生成按钮只在最新 AI 消息上显示）
-  const lastAgentMsgId = useMemo(() => {
-    if (!conv?.messages) return null
-    for (let i = conv.messages.length - 1; i >= 0; i--) {
-      if (conv.messages[i].sender !== 'user') return conv.messages[i].id
-    }
-    return null
-  }, [conv?.messages])
 
   const messagesRef = useRef(null)
   const generationTimeoutRef = useRef(null)
@@ -96,6 +89,12 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
       markRead(convId)
     }
   }, [isActive, convId])
+
+  useEffect(() => {
+    if (convId && conv?.messages?.some((message) => isInternalNoiseMessage(message))) {
+      pruneInternalMessages(convId)
+    }
+  }, [convId, conv?.messages, pruneInternalMessages])
 
   // P1: 内部滚动位置管理 — 保存非活跃标签的滚动位置
   useEffect(() => {
@@ -178,13 +177,23 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
     )
   }
 
+  const visibleMessages = (conv.messages || []).filter((message) => !isInternalNoiseMessage(message))
+
+  // 最后一条 AI 消息的 id（用于控制重新生成按钮只在最新 AI 消息上显示）
+  const lastAgentMsgId = useMemo(() => {
+    for (let i = visibleMessages.length - 1; i >= 0; i--) {
+      if (visibleMessages[i].sender !== 'user') return visibleMessages[i].id
+    }
+    return null
+  }, [visibleMessages])
+
   const activeTypingAgent = typingAgentIds.length > 0
     ? agents.find((a) => a.agent_id === typingAgentIds[0])
     : null
 
   return (
     <div className="chat-panel-content">
-      <GoalSnapshot conversationId={convId} readiness={readiness} isFirstTask={conv.messages.length === 0} />
+      <GoalSnapshot conversationId={convId} readiness={readiness} isFirstTask={visibleMessages.length === 0} />
       <div className="chat-messages" ref={messagesRef}>
         {hasOlderMessages && (
           <button
@@ -206,12 +215,12 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
             {loadingOlder ? '加载中...' : '更早消息'}
           </button>
         )}
-        {conv.messages.length === 0 && (
+        {visibleMessages.length === 0 && (
           <div className="empty-state">
             <div className="text">发送消息开始对话</div>
           </div>
         )}
-        {conv.messages.map((msg) => (
+        {visibleMessages.map((msg) => (
           <MessageBubble
             key={msg.id}
             message={msg}
@@ -269,10 +278,10 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
       )}
 
       {/* Deploy progress card */}
-      {conv.messages.length > 0 && <DeployProgressCard />}
+      {visibleMessages.length > 0 && <DeployProgressCard />}
 
       {/* Deploy inline card */}
-      {conv.messages.length > 0 && <InlineDeployCard />}
+      {visibleMessages.length > 0 && <InlineDeployCard />}
 
       {/* Input */}
       <InputBar

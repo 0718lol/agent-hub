@@ -1,3 +1,5 @@
+import re
+
 from .base import BaseAgent
 
 
@@ -104,12 +106,13 @@ class PMAgent(BaseAgent):
     def _decompose_task(self, message: str) -> str:
         msg = message.lower()
         if any(kw in msg for key_list in [["海报", "宣传", "设计", "广告", "画", "图", "promo"]] for kw in key_list):
+            subject = self._extract_subject(message)
             return (
-                "好的，收到巧乐兹海报的设计需求！我已经为你规划好了海报的设计工作：\n\n"
+                f"好的，收到{subject}海报的设计需求！我已经为你规划好了海报的设计工作：\n\n"
                 "**任务拆解：**\n"
-                "1. 🎨 **视觉风格** — 确立巧克力浓郁与清凉夏日的视觉碰撞\n"
+                f"1. 🎨 **视觉风格** — 确立{subject}的核心视觉气质与传播氛围\n"
                 "2. 🖥️ **海报排版** — 规划主要视觉焦点、大字标题与行动按钮位置\n"
-                "3. ⚙️ **背景融合** — 配备高品质巧克力脆皮冰淇淋素材\n"
+                f"3. ⚙️ **背景融合** — 配备符合{subject}主题的高品质视觉素材\n"
                 "4. 🧪 **细节规范** — 配色微调与字体排版规范设计\n\n"
                 "现在把任务同时移交给设计顾问与前端开发顾问，马上为你输出精美宣传海报并生成前端代码！"
                 "[assign:agent_designer][assign:agent_frontend]"
@@ -128,3 +131,10 @@ class PMAgent(BaseAgent):
             "任务已分配，各 Agent 即将开始工作！"
             "[assign:agent_frontend][assign:agent_backend]"
         )
+
+    @staticmethod
+    def _extract_subject(message: str) -> str:
+        match = re.search(r"([^\s，。！？]{2,20}?)(?:宣传|海报|广告|落地页|页面|设计)", message)
+        if match:
+            return re.sub(r"^(这是|给我|帮我|请|麻烦|做|生成|设计|制作|来|整)(一张|一个|个)?", "", match.group(1).strip("的")) or "当前主题"
+        return "当前主题"

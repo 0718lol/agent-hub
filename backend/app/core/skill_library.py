@@ -9,6 +9,7 @@ How it works:
 3. Skills accumulate over time, agent gets better at similar tasks
 """
 import logging
+import os
 import re
 from datetime import datetime, timezone
 
@@ -36,13 +37,21 @@ class SkillLibrary:
         self._client = None
         self._collection = None
 
-        if HAS_CHROMADB:
+        # Chroma's default embedding function downloads a large model while
+        # creating the collection. Keep vector skills opt-in so app startup
+        # and the chat UI never wait on an external model download.
+        vector_enabled = os.environ.get("AGENTHUB_ENABLE_VECTOR_SKILLS", "").lower() in {
+            "1", "true", "yes", "on"
+        }
+        if HAS_CHROMADB and vector_enabled:
             try:
                 self._client = chromadb.Client()
                 self._collection = self._client.create_collection("agent_skills")
                 logger.info("Skill library initialized with ChromaDB vector search")
             except Exception as e:
                 logger.warning(f"ChromaDB init failed, using keyword search: {e}")
+        elif HAS_CHROMADB:
+            logger.info("Vector skill search disabled; using keyword search")
 
     def add_skill(
         self,

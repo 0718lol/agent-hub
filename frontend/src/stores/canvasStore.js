@@ -82,10 +82,18 @@ export const useCanvasStore = create((set) => ({
   generatedCode: null,
   previousCode: '',
   setGeneratedCode: (language, code) =>
-    set((state) => ({
-      previousCode: state.generatedCode?.code || '',
-      generatedCode: { language, code },
-    })),
+    set((state) => {
+      const normalizedLanguage = String(language || '').toLowerCase()
+      const next = {
+        previousCode: state.generatedCode?.code || '',
+        generatedCode: { language, code },
+      }
+      // Keep the code and preview panes on the same artifact.
+      if (normalizedLanguage === 'html' || normalizedLanguage === 'htm') {
+        next.previewHtml = code
+      }
+      return next
+    }),
 
   isDeploying: false,
   deployLogs: [],

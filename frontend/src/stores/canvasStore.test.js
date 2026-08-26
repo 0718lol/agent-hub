@@ -107,6 +107,15 @@ describe('canvasStore', () => {
     expect(state.generatedCode).toEqual({ language: 'javascript', code: 'console.log("hello")' })
   })
 
+  it('should sync HTML generated code to the live preview', () => {
+    useCanvasStore.getState().setPreviewHtml('<h1>旧预览</h1>')
+    useCanvasStore.getState().setGeneratedCode('HTML', '<h1>马龙打乒乓球</h1>')
+
+    const state = useCanvasStore.getState()
+    expect(state.generatedCode).toEqual({ language: 'HTML', code: '<h1>马龙打乒乓球</h1>' })
+    expect(state.previewHtml).toBe('<h1>马龙打乒乓球</h1>')
+  })
+
   it('should track previous code when setting new code', () => {
     useCanvasStore.getState().setGeneratedCode('javascript', 'first code')
     useCanvasStore.getState().setGeneratedCode('python', 'second code')

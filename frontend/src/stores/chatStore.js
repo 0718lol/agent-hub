@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useTabStore } from './tabStore'
+import { isInternalNoiseMessage } from '../utils/internalMessages'
 
 function generateConvName(text) {
   if (!text || !text.trim()) return null
@@ -194,11 +195,12 @@ export const useChatStore = create((set, get) => ({
     try {
       const response = await fetch(`/api/conversations/${conversationId}/messages`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const messages = await response.json()
+      const rawMessages = await response.json()
+      const messages = rawMessages.filter((message) => !isInternalNoiseMessage(message))
       set((state) => ({
         conversations: state.conversations.map((conversation) => conversation.id === conversationId ? { ...conversation, messages } : conversation),
         pinnedMessages: { ...state.pinnedMessages, [conversationId]: messages.filter((message) => message.pinned).map((message) => message.id) },
-        hasOlderMessages: { ...state.hasOlderMessages, [conversationId]: messages.length === 100 },
+        hasOlderMessages: { ...state.hasOlderMessages, [conversationId]: rawMessages.length === 100 },
       }))
     } catch (error) {
       console.error('Failed to load messages:', error)
@@ -212,7 +214,8 @@ export const useChatStore = create((set, get) => ({
     try {
       const response = await fetch(`/api/conversations/${conversationId}/messages?limit=100&before_id=${beforeId}`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const older = await response.json()
+      const rawOlder = await response.json()
+      const older = rawOlder.filter((message) => !isInternalNoiseMessage(message))
       set((state) => ({
         conversations: state.conversations.map((item) => item.id === conversationId
           ? { ...item, messages: [...older, ...item.messages.filter((message) => !older.some((old) => old.id === message.id))] }
@@ -221,7 +224,7 @@ export const useChatStore = create((set, get) => ({
           ...state.pinnedMessages,
           [conversationId]: [...new Set([...(state.pinnedMessages[conversationId] || []), ...older.filter((message) => message.pinned).map((message) => message.id)])],
         },
-        hasOlderMessages: { ...state.hasOlderMessages, [conversationId]: older.length === 100 },
+        hasOlderMessages: { ...state.hasOlderMessages, [conversationId]: rawOlder.length === 100 },
       }))
     } catch (error) {
       console.error('Failed to load older messages:', error)
@@ -229,6 +232,7 @@ export const useChatStore = create((set, get) => ({
   },
 
   addMessage: (conversationId, message) => {
+    if (isInternalNoiseMessage(message)) return
     const conversation = get().conversations.find((item) => item.id === conversationId)
     const autoName = message.sender === 'user' && conversation?.messages.length === 0
       ? generateConvName(message.content?.text || '')
@@ -255,6 +259,12 @@ export const useChatStore = create((set, get) => ({
     typingAgents: { ...state.typingAgents, [conversationId]: new Set() },
     thinkingAgents: { ...state.thinkingAgents, [conversationId]: {} },
     pinnedMessages: { ...state.pinnedMessages, [conversationId]: [] },
+  })),
+
+  pruneInternalMessages: (conversationId) => set((state) => ({
+    conversations: state.conversations.map((item) => item.id === conversationId
+      ? { ...item, messages: item.messages.filter((message) => !isInternalNoiseMessage(message)) }
+      : item),
   })),
 
   deleteMessage: async (conversationId, messageId) => {

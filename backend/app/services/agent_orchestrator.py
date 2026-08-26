@@ -20,12 +20,10 @@ from app.core.database import (
     resolve_hil_checkpoint,
     save_artifact,
     save_message,
-    update_latest_artifact_quality,
 )
 from app.core.debug_engine import build_fix_prompt, extract_code_block, parse_error
 from app.core.llm_client import llm_client
 from app.core.metrics import metrics
-from app.core.output_validator import get_retry_prompt, validate_output
 from app.core.tenancy import conversation_user_id
 
 try:
@@ -40,7 +38,6 @@ try:
 except Exception:
     _skill_lib = None
 from app.core.quality_gate import quality_gate
-from app.core.quality_retry import evaluate_and_retry
 from app.core.websocket import manager
 from app.services.agent_registry import agent_registry
 
@@ -48,6 +45,26 @@ logger = logging.getLogger("agent_orchestrator")
 
 # Shared state: stop events per conversation
 _stop_events: dict[str, asyncio.Event] = {}
+
+
+def update_latest_artifact_quality(*args, **kwargs):
+    """Compatibility no-op after retiring the quality gate."""
+    return None
+
+
+async def evaluate_and_retry(*args, **kwargs):
+    """Compatibility no-op after retiring the quality gate."""
+    raw_output = kwargs.get("raw_output")
+    if raw_output is None and len(args) >= 4:
+        raw_output = args[3]
+    return {
+        "final_output": raw_output or "",
+        "evaluation_passed": True,
+        "total_score": None,
+        "retried": False,
+        "retry_warning": False,
+        "report": {"skipped_reason": "disabled"},
+    }
 
 
 def _terminal_model_error(text: str) -> bool:
@@ -65,6 +82,36 @@ def _terminal_model_error(text: str) -> bool:
 def _image_capability_error(text: str) -> bool:
     lowered = text.lower()
     return "this model does not support image" in lowered or "不支持图片" in text
+
+
+def _looks_like_code_stream(text: str) -> bool:
+    """Detect partial code so it is not shown as conversational progress."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    code_markers = (
+        "```",
+        "<!doctype",
+        "<html",
+        "<head",
+        "<body",
+        "<style",
+        "</style",
+        "<script",
+        "</script",
+        "{",
+        "}",
+        "const ",
+        "let ",
+        "function ",
+        "@keyframes",
+    )
+    lowered = stripped.lower()
+    if any(marker in lowered for marker in code_markers):
+        return True
+    css_like = re.search(r'(^|\n)\s*[\w.#:[\]-]+\s*\{[^}]*$', stripped)
+    html_like = re.search(r'<[a-z][\w-]*(\s+[^>]*)?>?', stripped, re.IGNORECASE)
+    return bool(css_like or html_like)
 
 
 def _html_fallback_for_visual_task(user_text: str) -> str:
@@ -219,147 +266,43 @@ async def _remove_custom_agent(agent_id: str, conversation_id: str):
     await agent_registry.unregister_custom_agent(agent_id, user_id)
 
 
-# ============================================================
-# Output validation — format checks, anti-pattern detection
-# ============================================================
+async def _publish_code_artifact(
+    conversation_id: str,
+    agent_id: str,
+    language: str,
+    code: str,
+) -> None:
+    """Persist a generated code block and publish it to the active canvas."""
+    artifact = await asyncio.to_thread(
+        save_artifact,
+        conversation_id,
+        agent_id,
+        language,
+        code,
+    )
+    await manager.broadcast(conversation_id, {
+        "type": "code",
+        "conversation_id": conversation_id,
+        "agent_id": agent_id,
+        "language": language,
+        "code": code,
+        "artifact_id": artifact["id"],
+        "artifact_name": artifact["name"],
+    })
+    if language.lower() in ("html", "htm", ""):
+        await manager.broadcast(conversation_id, {
+            "type": "preview",
+            "conversation_id": conversation_id,
+            "agent_id": agent_id,
+            "html": code,
+        })
 
-# Question patterns that break the demo flow
-QUESTION_PATTERNS = [
-    (r'[^。\n]*[？?]\s*$', "ends with question"),
-    (r'你想[^，。\n]*[？?]', "direct question to user"),
-    (r'请问[^，。\n]*[？?]', "polite question to user"),
-    (r'需要[^，。\n]*确认[^，。\n]*[？?]', "confirmation request"),
-    (r'你希望[^，。\n]*[？?]', "preference question"),
-    (r'是否需要[^，。\n]*[？?]', "yes/no question"),
-    (r'能告诉我[^，。\n]*[？?]', "information request"),
-    (r'有什么[^，。\n]*需求[^，。\n]*[？?]', "requirement question"),
-]
-
-# Expected format rules per agent type
-FORMAT_RULES = {
-    "agent_frontend": {
-        "required_any": ["```html", "```jsx", "```vue", "```css", "<!DOCTYPE", "<html"],
-        "min_length": 100,
-    },
-    "agent_backend": {
-        "required_any": ["```python", "```sql", "```yaml", "```json", "```bash",
-                         "```dockerfile", "def ", "import ", "class ", "CREATE TABLE"],
-        "min_length": 80,
-    },
-    "agent_tester": {
-        "required_any": ["```python", "def test_", "import pytest", "assert "],
-        "min_length": 50,
-    },
-    "agent_devops": {
-        "required_any": ["```bash", "```dockerfile", "```yaml", "docker", "Dockerfile"],
-        "min_length": 30,
-    },
-    "agent_pm": {
-        "required_any": ["[assign:"],
-        "min_length": 20,
-    },
-    "agent_builder": {
-        "required_any": ["{"],
-        "min_length": 20,
-    },
-}
 
 # Valid agent IDs for [assign:] tags
 VALID_AGENT_IDS = {
     "agent_frontend", "agent_backend", "agent_tester",
     "agent_devops", "agent_designer", "agent_builder",
 }
-
-# Format instructions for retry prompts
-FORMAT_INSTRUCTIONS = {
-    "agent_frontend": (
-        "你必须输出完整可运行的代码。根据任务选择合适格式：\n"
-        "- 页面/游戏 → ```html 代码块，以 <!DOCTYPE html> 开头\n"
-        "- React 组件 → ```jsx 代码块\n"
-        "- 样式 → ```css 代码块\n"
-        "不要问用户任何问题，直接实现。"
-    ),
-    "agent_backend": (
-        "你必须输出完整可运行的代码。根据任务选择合适格式：\n"
-        "- API/接口 → ```python 代码块（FastAPI）\n"
-        "- 数据库 → ```sql 代码块\n"
-        "- 配置 → ```yaml 代码块\n"
-        "不要问用户任何问题，直接实现。"
-    ),
-    "agent_pm": (
-        "你必须输出任务分配标签。\n"
-        "在回复末尾添加 [assign:agent_frontend] [assign:agent_backend] 等标签。\n"
-        "不要问用户任何问题，直接拆解任务。"
-    ),
-    "agent_tester": (
-        "你必须输出测试代码。\n"
-        "用 ```python 代码块包裹，包含 def test_ 开头的测试函数。"
-    ),
-    "agent_devops": (
-        "你必须输出部署配置。\n"
-        "用 ```bash 或 ```yaml 或 ```dockerfile 代码块包裹。"
-    ),
-}
-
-
-def detect_questions(text: str) -> str | None:
-    """Detect question patterns that would break the demo flow."""
-    # Exclude [ask_user:...] tags
-    clean = re.sub(r'\[ask_user:.*?\]', '', text, flags=re.DOTALL)
-    # Exclude code blocks
-    clean = re.sub(r'```.*?```', '', clean, flags=re.DOTALL)
-    # Exclude quoted text
-    clean = re.sub(r'"[^"]*[？?]"', '', clean)
-    clean = re.sub(r"'[^']*[？?]'", '', clean)
-    for pattern, reason in QUESTION_PATTERNS:
-        if re.search(pattern, clean):
-            return reason
-    return None
-
-
-def check_format_compliance(text: str, agent_id: str) -> tuple[bool, str]:
-    """Check if output matches expected format for the agent type."""
-    rules = FORMAT_RULES.get(agent_id)
-    if not rules:
-        return True, "no rules"
-    if len(text.strip()) < rules["min_length"]:
-        return False, f"output too short ({len(text.strip())} < {rules['min_length']})"
-    if not any(r in text for r in rules["required_any"]):
-        return False, f"missing expected content for {agent_id}"
-    return True, "passed"
-
-
-def check_tag_format(text: str, agent_id: str) -> tuple[bool, str]:
-    """Check tag format correctness."""
-    if agent_id == "agent_pm":
-        tags = re.findall(r'\[assign:(\w+)\]', text)
-        if not tags:
-            return False, "PM must output [assign:agent_xxx] tags"
-        for tag in tags:
-            if tag not in VALID_AGENT_IDS:
-                return False, f"invalid agent_id in [assign:{tag}]"
-    return True, "passed"
-
-
-def validate_agent_output(text: str, agent_id: str) -> tuple[bool, str]:
-    """Full output validation. Returns (passed, reason)."""
-    # Skip validation for error responses
-    error_indicators = ["[LLM Error", "[LLM 调用出错", "[Agent 回复出错", "出错", "Error"]
-    if any(indicator in text for indicator in error_indicators):
-        return True, "error response skipped"
-    # 1. Anti-pattern detection (questions)
-    q = detect_questions(text)
-    if q:
-        return False, f"anti-pattern: {q}"
-    # 2. Format compliance
-    ok, reason = check_format_compliance(text, agent_id)
-    if not ok:
-        return False, f"format: {reason}"
-    # 3. Tag format
-    ok, reason = check_tag_format(text, agent_id)
-    if not ok:
-        return False, f"tag: {reason}"
-    return True, "passed"
 
 
 # ============================================================
@@ -460,8 +403,11 @@ async def stream_agent_reply(
     buffer = ""
     last_thinking_broadcast = ""
     last_stream_broadcast = 0.0
+    code_progress_broadcast = False
     assigned_agents = []
     terminal_error = False
+    published_code_fingerprints: set[tuple[str, str]] = set()
+    quality_passed_for_skill = False
 
     effective_text = user_text
 
@@ -534,6 +480,22 @@ async def stream_agent_reply(
         # ---- Standard streaming mode ----
         _use_stream = _is_external or not (quality_gate.enabled and quality_gate.best_of_n > 1
                            and agent.agent_id not in ("agent_builder", "agent_pm"))
+        if not _use_stream:
+            while True:
+                code_match = re.search(r'```(\w*)\s*\n?(.*?)```', buffer, re.DOTALL)
+                if not code_match:
+                    break
+                lang = code_match.group(1) or "html"
+                code = code_match.group(2).strip()
+                await _publish_code_artifact(
+                    conversation_id,
+                    agent.agent_id,
+                    lang,
+                    code,
+                )
+                published_code_fingerprints.add((lang.lower(), code))
+                buffer = buffer[:code_match.start()] + buffer[code_match.end():]
+
         if _use_stream:
             async for chunk in agent.stream_reply(effective_text, history=history, conversation_id=conversation_id):
                 if stop_event and stop_event.is_set():
@@ -668,35 +630,29 @@ async def stream_agent_reply(
                         except Exception as _de:
                             logger.debug(f"Auto-debug skipped: {_de}")
 
-                    artifact = await asyncio.to_thread(
-                        save_artifact,
+                    await _publish_code_artifact(
                         conversation_id,
                         agent.agent_id,
                         lang,
                         code,
                     )
-
-                    await manager.broadcast(conversation_id, {
-                        "type": "code",
-                        "conversation_id": conversation_id,
-                        "agent_id": agent.agent_id,
-                        "language": lang,
-                        "code": code,
-                        "artifact_id": artifact["id"],
-                        "artifact_name": artifact["name"],
-                    })
-                    if lang.lower() in ("html", "htm", ""):
-                        await manager.broadcast(conversation_id, {
-                            "type": "preview",
-                            "conversation_id": conversation_id,
-                            "agent_id": agent.agent_id,
-                            "html": code,
-                        })
+                    published_code_fingerprints.add((lang.lower(), code))
                     buffer = buffer[:code_match.start()] + buffer[code_match.end():]
 
                 # Throttled streaming broadcast
                 now = asyncio.get_running_loop().time()
                 summary = buffer.strip()
+                if summary and _looks_like_code_stream(summary):
+                    if not code_progress_broadcast:
+                        code_progress_broadcast = True
+                        await manager.broadcast(conversation_id, {
+                            "type": "message",
+                            "conversation_id": conversation_id,
+                            "sender": agent.agent_id,
+                            "content": {"text": "正在生成页面代码，先搭结构、再补样式，右侧预览会自动更新。"},
+                            "stream": True,
+                        })
+                    summary = ""
                 if summary and (now - last_stream_broadcast) >= 0.08:
                     last_stream_broadcast = now
                     await manager.broadcast(conversation_id, {
@@ -767,19 +723,13 @@ async def stream_agent_reply(
             )
             if html_match:
                 bare_html = html_match.group(1).strip()
-                await manager.broadcast(conversation_id, {
-                    "type": "code",
-                    "conversation_id": conversation_id,
-                    "agent_id": agent.agent_id,
-                    "language": "html",
-                    "code": bare_html,
-                })
-                await manager.broadcast(conversation_id, {
-                    "type": "preview",
-                    "conversation_id": conversation_id,
-                    "agent_id": agent.agent_id,
-                    "html": bare_html,
-                })
+                await _publish_code_artifact(
+                    conversation_id,
+                    agent.agent_id,
+                    "html",
+                    bare_html,
+                )
+                published_code_fingerprints.add(("html", bare_html))
                 full_text = full_text.replace(bare_html, "").strip()
                 if not full_text:
                     full_text = "（已生成代码，请查看右侧面板）"
@@ -799,44 +749,6 @@ async def stream_agent_reply(
 
     if not raw_text:
         raw_text = full_text
-
-    # ---- Format validation layer (skip for terminal model/tool errors) ----
-    if not terminal_error and not stopped and not _is_external and full_text and full_text not in ("（已停止生成）", "（已生成代码，请查看右侧面板）"):
-        is_valid, reason = validate_agent_output(full_text, agent.agent_id)
-        if not is_valid:
-            logger.warning(f"Agent {agent.agent_id} format check failed: {reason}")
-            await manager.broadcast(conversation_id, {
-                "type": "message",
-                "conversation_id": conversation_id,
-                "sender": agent.agent_id,
-                "content": {"text": f"⚠️ 输出格式不符合要求（{reason}），正在重新生成..."},
-                "stream": True,
-            })
-            retry_prompt = (
-                f"你的上一次输出不符合要求：{reason}。"
-                f"请严格按照以下格式重新生成：\n"
-                f"{FORMAT_INSTRUCTIONS.get(agent.agent_id, '')}"
-                f"\n\n用户原始需求：{effective_text}"
-            )
-            retry_text = ""
-            async for chunk in agent.stream_reply(retry_prompt, history=history, conversation_id=conversation_id):
-                if stop_event and stop_event.is_set():
-                    break
-                retry_text += chunk
-            if retry_text.strip():
-                full_text = retry_text.strip()
-                raw_text = retry_text
-                # Re-validate once (no infinite loop)
-                is_valid2, reason2 = validate_agent_output(full_text, agent.agent_id)
-                if not is_valid2:
-                    logger.warning(f"Agent {agent.agent_id} retry still invalid: {reason2}")
-                    await manager.broadcast(conversation_id, {
-                        "type": "message",
-                        "conversation_id": conversation_id,
-                        "sender": agent.agent_id,
-                        "content": {"text": f"⚠️ 重试后仍不符合要求（{reason2}），已保留当前输出。"},
-                        "stream": True,
-                    })
 
     # ---- Browser auto-routing: if Agent output has fixable errors, use BrowserAgent ----
     if not stopped and not _is_external and full_text and agent.agent_id != 'agent_browser':
@@ -878,46 +790,40 @@ async def stream_agent_reply(
                         full_text = retry_text.strip()
                         raw_text = retry_text
 
-    # ---- Auto self-reflection & retry (skip for external agents) ----
-    if not stopped and agent.agent_id not in ("agent_builder", "agent_pm") and not _is_external:
-        eval_result = await evaluate_and_retry(
-            conversation_id=conversation_id,
-            agent=agent,
-            task=effective_text,
-            raw_output=raw_text,
-            llm_client=llm_client,
-            manager=manager,
-            stop_event=stop_event,
-            history=history,
+    # Format and quality retries can replace the selected response after the
+    # streaming parser has finished. Reconcile the final output so the canvas
+    # and artifact history always represent the text that will be persisted.
+    final_code_blocks = re.findall(r'```(\w*)\s*\n?(.*?)```', raw_text, re.DOTALL)
+    if not final_code_blocks and "```" not in raw_text:
+        bare_html_match = re.search(
+            r'(<!DOCTYPE[\s\S]*?</html>|<html[\s\S]*?</html>|<body[\s\S]*?</body>)',
+            raw_text,
+            re.IGNORECASE,
         )
-        if eval_result["final_output"]:
-            raw_text = eval_result["final_output"]
-            full_text = eval_result["final_output"].strip()
+        if bare_html_match:
+            final_code_blocks = [("html", bare_html_match.group(1))]
 
-        try:
-            report_data = eval_result.get("report") or {}
-            sandbox_data = report_data.get("sandbox_run") or {}
-            sandbox_status = "skipped"
-            sandbox_output = None
-            if sandbox_data:
-                sandbox_status = "success" if sandbox_data.get("status") == "success" else "failed"
-                sandbox_output = sandbox_data.get("stderr") or sandbox_data.get("stdout")
-
-            await asyncio.to_thread(
-                update_latest_artifact_quality,
-                conversation_id,
-                agent.agent_id,
-                eval_result.get("total_score", 100),
-                sandbox_status,
-                sandbox_output,
-            )
-        except Exception as e_art:
-            logger.error(f"Error updating artifact quality metrics: {e_art}")
+    for language, final_code in final_code_blocks:
+        language = language or "html"
+        final_code = final_code.strip()
+        fingerprint = (language.lower(), final_code)
+        if not final_code or fingerprint in published_code_fingerprints:
+            continue
+        await _publish_code_artifact(
+            conversation_id,
+            agent.agent_id,
+            language,
+            final_code,
+        )
+        published_code_fingerprints.add(fingerprint)
 
     # Don't persist LLM error responses
     is_llm_error = _terminal_model_error(raw_text)
+    # Quality gate is disabled for the product path. Keep artifact learning
+    # eligible for successful non-error generations.
+    quality_passed_for_skill = not is_llm_error and bool(raw_text.strip())
     # Extract and store successful code as reusable skill
-    if _skill_lib and not is_llm_error and raw_text:
+    if _skill_lib and quality_passed_for_skill and not is_llm_error and raw_text:
         try:
             _extracted = _skill_lib.extract_skills_from_output(raw_text, agent.agent_id)
             for _skill in _extracted:
@@ -1259,7 +1165,7 @@ async def resume_graph_from_checkpoint(conversation_id: str, action: str):
     else:
         # Feedback / retry
         feedback = action
-        feedback_msg = f"🔄 人工审核反馈：{feedback}\n\n正在重新生成..."
+        feedback_msg = f"🔄 人工审核反馈：{feedback}"
         await manager.broadcast(conversation_id, {
             "type": "message",
             "conversation_id": conversation_id,

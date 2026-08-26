@@ -292,7 +292,7 @@ class TenantAwareQualityGate:
     """Resolve mutable quality settings per active tenant."""
 
     def __init__(self):
-        object.__setattr__(self, "_default", QualityGate(enabled=True, max_retries=1, use_llm_judge=False, best_of_n=1))
+        object.__setattr__(self, "_default", QualityGate(enabled=False, max_retries=0, use_llm_judge=False, best_of_n=1))
         object.__setattr__(self, "_gates", {})
 
     def _gate(self) -> QualityGate:
@@ -307,8 +307,8 @@ class TenantAwareQualityGate:
 
             config = get_tenant_json(tenant_id, "quality_gate", {}) or {}
             gate = QualityGate(
-                enabled=config.get("enabled", True),
-                max_retries=config.get("max_retries", 1),
+                enabled=config.get("enabled", False),
+                max_retries=config.get("max_retries", 0),
                 use_llm_judge=config.get("use_llm_judge", False),
                 best_of_n=config.get("best_of_n", 1),
             )

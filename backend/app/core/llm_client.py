@@ -497,10 +497,12 @@ class LLMClient:
         self.temperature: float = 0.5
         self.max_tokens: int = 8192
         self.thinking_enabled: bool | None = None
+        self.thinking_mode: str = "auto"
 
     def configure(self, provider: str, api_key: str, base_url: str, model: str,
                   temperature: float | None = None, max_tokens: int | None = None,
-                  thinking_enabled: bool | None = None):
+                  thinking_enabled: bool | None = None,
+                  thinking_mode: str | None = None):
         self.provider = provider
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -509,7 +511,18 @@ class LLMClient:
             self.temperature = temperature
         if max_tokens is not None:
             self.max_tokens = max_tokens
-        self.thinking_enabled = thinking_enabled
+        if thinking_mode in ("auto", "enabled", "disabled"):
+            self.thinking_mode = thinking_mode
+            self.thinking_enabled = {
+                "enabled": True,
+                "disabled": False,
+            }.get(thinking_mode, thinking_enabled)
+        elif thinking_enabled is not None:
+            self.thinking_enabled = thinking_enabled
+            self.thinking_mode = "enabled" if thinking_enabled else "disabled"
+        else:
+            self.thinking_enabled = None
+            self.thinking_mode = "auto"
 
     def is_configured(self) -> bool:
         if self.provider == "opencode":
@@ -682,7 +695,9 @@ class LLMClient:
 
         # DeepSeek V4 exposes thinking as an OpenAI-compatible request option.
         # Keep it provider-specific so other OpenAI-compatible APIs are unchanged.
-        if "deepseek" in self.model.lower() or "api.deepseek.com" in self.base_url.lower():
+        if self.thinking_mode in ("enabled", "disabled"):
+            payload["thinking"] = {"type": self.thinking_mode}
+        elif "deepseek" in self.model.lower() or "api.deepseek.com" in self.base_url.lower():
             thinking_enabled = self.thinking_enabled
             if thinking_enabled is None and "deepseek-v4-flash" in self.model.lower():
                 thinking_enabled = False
@@ -886,14 +901,16 @@ class TenantAwareLLMClient:
 
         config = get_tenant_json(tenant_id, "llm", {}, encrypted=True) or {}
         client = LLMClient()
+        inherited = self._default
         client.configure(
-            provider=config.get("provider") or settings.llm_provider,
-            api_key=deobfuscate_key(config.get("api_key", "")) or settings.llm_api_key,
-            base_url=config.get("base_url") or settings.llm_base_url,
-            model=config.get("model") or settings.llm_model,
-            temperature=config.get("temperature"),
-            max_tokens=config.get("max_tokens"),
-            thinking_enabled=config.get("thinking_enabled"),
+            provider=config.get("provider") or inherited.provider or settings.llm_provider,
+            api_key=deobfuscate_key(config.get("api_key", "")) or inherited.api_key or settings.llm_api_key,
+            base_url=config.get("base_url") or inherited.base_url or settings.llm_base_url,
+            model=config.get("model") or inherited.model or settings.llm_model,
+            temperature=config.get("temperature", inherited.temperature),
+            max_tokens=config.get("max_tokens", inherited.max_tokens),
+            thinking_enabled=config.get("thinking_enabled", inherited.thinking_enabled),
+            thinking_mode=config.get("thinking_mode", inherited.thinking_mode),
         )
         self._clients[tenant_id] = client
         return client

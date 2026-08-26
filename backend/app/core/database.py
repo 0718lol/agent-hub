@@ -88,6 +88,10 @@ def init_db() -> None:
         raise RuntimeError("Database migration failed; startup aborted") from exc
 
     populate_database_defaults()
+    try:
+        purge_internal_noise_messages()
+    except Exception as exc:
+        logger.warning("Internal noise cleanup skipped: %s", exc)
 
 
 def populate_database_defaults() -> None:

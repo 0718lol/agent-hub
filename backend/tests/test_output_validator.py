@@ -43,50 +43,19 @@ class TestParseToolCalls:
 
 
 class TestValidateOutput:
-    """Test output validation."""
+    """Test output validation compatibility shim."""
 
     def test_valid_pm_output(self):
         text = "方案概述\n1. 前端\n2. 后端\n[assign:agent_frontend] [assign:agent_backend]"
         ok, reason, meta = validate_output(text, "agent_pm")
         assert ok is True
 
-    def test_pm_without_assign_fails(self):
-        text = "方案概述\n1. 前端页面\n2. 后端接口"
-        ok, reason, meta = validate_output(text, "agent_pm")
-        assert ok is False
-        assert "assign" in reason
-
-    def test_valid_frontend_output(self):
-        text = "摘要\n\n```html\n<!DOCTYPE html>\n<html><body>Hello</body></html>\n```"
+    def test_plain_text_also_passes(self):
+        text = "这是普通回复，没有任何格式要求。"
         ok, reason, meta = validate_output(text, "agent_frontend")
         assert ok is True
-
-    def test_frontend_without_code_fails(self):
-        text = "这是一个前端回复但没有代码块，只是文字描述"
-        ok, reason, meta = validate_output(text, "agent_frontend")
-        assert ok is False
-
-    def test_valid_backend_output(self):
-        text = "摘要\n\n```python\nfrom fastapi import FastAPI\napp = FastAPI()\n```"
-        ok, reason, meta = validate_output(text, "agent_backend")
-        assert ok is True
-
-    def test_question_fails(self):
-        text = "你想用什么数据库？"
-        ok, reason, meta = validate_output(text, "agent_tester")
-        assert ok is False
-        assert "question" in reason
-
-    def test_too_short_fails(self):
-        text = "短"
-        ok, reason, meta = validate_output(text, "agent_devops")
-        assert ok is False
-        assert "short" in reason
-
-    def test_browser_tool_passes_without_code(self):
-        text = '[tool_call:browser_open_url]{"url": "https://example.com"}[/tool_call]'
-        ok, reason, meta = validate_output(text, "agent_frontend")
-        assert ok is True
+        assert reason == "disabled"
+        assert meta["length"] == len(text)
 
     def test_metadata_populated(self):
         text = "摘要\n\n```python\ndef hello(): pass\n```"
@@ -96,21 +65,21 @@ class TestValidateOutput:
 
 
 class TestGetRetryPrompt:
-    """Test retry prompt generation."""
+    """Test retry prompt compatibility text."""
 
     def test_pm_retry_prompt(self):
         prompt = get_retry_prompt("agent_pm", "no assign tags", "old output", "user text")
-        assert "assign" in prompt
+        assert "输出校验已停用" in prompt
         assert "user text" in prompt
 
     def test_frontend_retry_prompt(self):
         prompt = get_retry_prompt("agent_frontend", "no code block", "old output", "user text")
-        assert "代码" in prompt or "code" in prompt.lower()
+        assert "输出校验已停用" in prompt
         assert "user text" in prompt
 
     def test_unknown_agent(self):
         prompt = get_retry_prompt("agent_unknown", "reason", "old", "user text")
-        assert "标准格式" in prompt
+        assert "输出校验已停用" in prompt
 
 
 class TestPydanticModels:

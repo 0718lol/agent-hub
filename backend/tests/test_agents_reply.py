@@ -2,6 +2,25 @@
 import pytest
 
 
+def test_disabled_thinking_removes_visible_reasoning_instructions():
+    from app.agents.base import _without_explicit_thinking
+
+    prompt = (
+        "你是前端工程师。\n"
+        "【思维过程】：\n"
+        "- 先用 [thinking]分析需求[/thinking]。\n"
+        "- 思考完毕后再输出最终答案。\n"
+        "请输出完整 HTML。"
+    )
+
+    result = _without_explicit_thinking(prompt)
+
+    assert "[thinking]" not in result
+    assert "思维过程" not in result
+    assert "只输出最终结果" in result
+    assert "请输出完整 HTML" in result
+
+
 class TestPMAgentReply:
     def test_assigns_frontend_on_ui_keywords(self):
         """PM should assign frontend agent for UI-related requests."""

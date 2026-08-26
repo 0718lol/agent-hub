@@ -1,3 +1,5 @@
+import re
+
 from .base import BaseAgent
 
 PREVIEW_HTML = {
@@ -658,6 +660,16 @@ class FrontendAgent(BaseAgent):
         "\n   - 可以直接在 iframe 中渲染"
         "\n   - 页面要美观、完整、可交互"
         "\n   - 必须包含 <!DOCTYPE html> 和 <meta charset=\"utf-8\">"
+        "\n   - 业务轻应用必须先定义唯一的运行时状态源；表单提交、列表/明细、统计卡片和筛选都必须读写同一份状态，不得只更新提示文字"
+        "\n   - 创建、编辑、删除操作必须真正更新数据数组并立即重新渲染所有相关视图；提交后要清空表单但保留新记录"
+        "\n   - 需要持久化时使用 localStorage：初始化先读取、每次写操作后保存，再从保存后的状态刷新界面；读取失败要回退为空数据并保持可用"
+        "\n   - 生成完成前必须做最小交互自检：创建一条记录后确认它出现在列表/明细且统计同步，删除后确认三者同步；不能只检查页面能打开"
+        "\n   - JavaScript 必须先通过语法级检查；不要留下重复函数声明、未闭合括号、未定义事件处理器或依赖不存在 DOM 节点的初始化代码"
+        "\n   - 预览和最终产物必须使用同一份 HTML、同一份状态逻辑；不要为预览写一套假数据交互"
+        "\n   - 海报/宣传图中的标题、标语和底部信息必须预留安全区，窄预览下也要自动换行，不能被裁切或遮挡"
+        "\n   - 任何绝对定位装饰都不能压住主文案，主文案优先于装饰层"
+        "\n   - 不要用厚重黑色外框、黑色遮罩或伪元素覆盖文字；需要层次感时用浅透明线条和留白"
+        "\n   - 主标题、标语、人物姓名、活动口号必须放在最高层级并远离画面边缘至少 24px"
         "\n\n⚠️ 如果用户要求做游戏或交互式应用，必须遵守以下 iframe 兼容规则："
         "\n   - 使用 document.addEventListener('keydown'/'keyup', ...) 监听键盘（不要用 window.onkeydown）"
         "\n   - 在 <script> 末尾加上 window.focus(); document.addEventListener('click', () => window.focus());"
@@ -683,11 +695,13 @@ class FrontendAgent(BaseAgent):
         return self._code_reply()
 
     def _promo_reply(self, message: str) -> str:
+        subject = self._extract_subject(message)
+        preview = PREVIEW_HTML["promo"].replace("巧乐兹", subject)
         return (
-            "[thinking]分析需求：用户需要巧乐兹冰淇淋的营销宣传页面，需要品牌展示和产品推荐[/thinking]"
-            "[thinking]设计方案：深色背景+橙色渐变配色，突出巧克力甜蜜感，包含Hero区、卖点、商品、评价四个模块[/thinking]"
-            "巧乐兹宣传页搞定！🍦 给你写了个完整的营销落地页，右侧面板可以直接预览效果～\n\n"
-            "```html\n" + PREVIEW_HTML["promo"] + "\n```"
+            f"[thinking]分析需求：用户需要{subject}的营销宣传页面，需要品牌展示和产品推荐[/thinking]"
+            f"[thinking]设计方案：深色背景+橙色渐变配色，突出{subject}的主题感，包含Hero区、卖点、商品、评价四个模块[/thinking]"
+            f"{subject}宣传页搞定！🍦 给你写了个完整的营销落地页，右侧面板可以直接预览效果～\n\n"
+            "```html\n" + preview + "\n```"
         )
 
     def _login_reply(self) -> str:
@@ -705,6 +719,13 @@ class FrontendAgent(BaseAgent):
             "⚡ 雷霆战机搞定！🎮 完整的射击游戏来啦～ 方向键移动，空格射击，消灭敌机赚积分！\n\n"
             "```html\n" + PREVIEW_HTML["thunder"] + "\n```"
         )
+
+    @staticmethod
+    def _extract_subject(message: str) -> str:
+        match = re.search(r"([^\s，。！？]{2,20}?)(?:宣传|海报|广告|落地页|页面|设计)", message)
+        if match:
+            return re.sub(r"^(这是|给我|帮我|请|麻烦|做|生成|设计|制作|来|整)(一张|一个|个)?", "", match.group(1).strip("的")) or "当前主题"
+        return "当前主题"
 
     def _code_reply(self) -> str:
         return (
