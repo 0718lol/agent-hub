@@ -220,8 +220,6 @@ function ToolResultBlock({ toolName, resultText }) {
 }
 
 export default function MessageBubble({ message, conversationId, isPinned, isLast }) {
-  if (isInternalNoiseMessage(message)) return null
-
   const agents = useAgentStore((s) => s.agents)
   const addMessage = useChatStore((s) => s.addMessage)
   const deleteMessage = useChatStore((s) => s.deleteMessage)
@@ -234,6 +232,8 @@ export default function MessageBubble({ message, conversationId, isPinned, isLas
   const attachments = message.content?.attachments || []
   const isRead = allRead[conversationId]
   const [copied, setCopied] = useState(false)
+
+  if (isInternalNoiseMessage(message)) return null
 
   const timeStr = message.timestamp
     ? new Date(message.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })

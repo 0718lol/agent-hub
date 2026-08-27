@@ -166,6 +166,16 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
     }
   }, [convId])
 
+  const visibleMessages = (conv?.messages || []).filter((message) => !isInternalNoiseMessage(message))
+
+  // 最后一条 AI 消息的 id（用于控制重新生成按钮只在最新 AI 消息上显示）
+  const lastAgentMsgId = useMemo(() => {
+    for (let i = visibleMessages.length - 1; i >= 0; i--) {
+      if (visibleMessages[i].sender !== 'user') return visibleMessages[i].id
+    }
+    return null
+  }, [visibleMessages])
+
   if (!conv) {
     return (
       <div className="chat-panel-content">
@@ -176,16 +186,6 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
       </div>
     )
   }
-
-  const visibleMessages = (conv.messages || []).filter((message) => !isInternalNoiseMessage(message))
-
-  // 最后一条 AI 消息的 id（用于控制重新生成按钮只在最新 AI 消息上显示）
-  const lastAgentMsgId = useMemo(() => {
-    for (let i = visibleMessages.length - 1; i >= 0; i--) {
-      if (visibleMessages[i].sender !== 'user') return visibleMessages[i].id
-    }
-    return null
-  }, [visibleMessages])
 
   const activeTypingAgent = typingAgentIds.length > 0
     ? agents.find((a) => a.agent_id === typingAgentIds[0])
