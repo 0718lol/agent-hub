@@ -61,6 +61,7 @@ html,body{min-height:100%;overflow:auto!important}
     return source.replace('</head>', `${guardCss}</head>`)
   }
   return `${source}${guardCss}`
+}
 
 // Check if HTML is complete (has closing tags)
 function isCompleteHtml(html) {
@@ -71,6 +72,7 @@ function isCompleteHtml(html) {
 export default function WebPreview() {
   const previewHtml = useCanvasStore((s) => s.previewHtml)
   const streamingHtml = useCanvasStore((s) => s.streamingHtml)
+  const clearStreamingHtml = useCanvasStore((s) => s.clearStreamingHtml)
   const html = normalizePreviewHtml(
     (streamingHtml && isCompleteHtml(streamingHtml)) ? streamingHtml : previewHtml || PREVIEW_HTML.todo,
   )

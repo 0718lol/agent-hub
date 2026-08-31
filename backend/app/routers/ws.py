@@ -124,9 +124,6 @@ async def _serve_authenticated_websocket(
 
     heartbeat_task = asyncio.create_task(_heartbeat())
 
-    # Tasks spawned for ongoing generations on this connection, so we can
-    # await them at disconnect time. Stop is signalled via _stop_events.
-    bg_tasks: set[asyncio.Task] = set()
     try:
         while True:
             data = await websocket.receive_text()
