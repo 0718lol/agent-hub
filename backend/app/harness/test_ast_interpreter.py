@@ -163,10 +163,11 @@ print(out)
 """
             # Call tool
             tool = SafePythonExecutorTool()
-            res = await tool.execute({
-                "code": code,
-                "conversation_id": test_conv_id
-            })
+            with patch("app.core.config.settings.allow_unsandboxed_shell", True):
+                res = await tool.execute({
+                    "code": code,
+                    "conversation_id": test_conv_id
+                })
 
             # Verify outcome
             self.assertTrue(res.success, f"Tool execution failed: {res.error}")

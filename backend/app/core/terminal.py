@@ -6,7 +6,6 @@ import sys
 
 logger = logging.getLogger("core_terminal")
 
-
 def _decode_terminal_output(data: bytes) -> str:
     encodings = ["utf-8-sig"]
     preferred = locale.getpreferredencoding(False)
@@ -21,7 +20,10 @@ def _decode_terminal_output(data: bytes) -> str:
             continue
     return data.decode("utf-8", errors="backslashreplace")
 
+safe_decode = _decode_terminal_output
+
 class StatefulTerminal:
+
     """Represents a stateful, interactive shell terminal session (PowerShell on Windows, Bash/Sh on Linux)."""
 
     def __init__(self, conversation_id: str, cwd: str):
@@ -53,6 +55,18 @@ class StatefulTerminal:
             env=env,
             creationflags=0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW on Windows
         )
+        if sys.platform == "win32":
+            try:
+                # Force PowerShell to use UTF-8 encoding for input/output and output pipelines
+                init_cmd = (
+                    "[Console]::InputEncoding = [Console]::OutputEncoding = "
+                    "[System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8\r\n"
+                )
+                self.process.stdin.write(init_cmd.encode("utf-8"))
+                await self.process.stdin.drain()
+            except Exception as e:
+                logger.warning(f"Failed to set UTF-8 encoding on PowerShell startup: {e}")
+
 
     async def execute(self, command: str, timeout: float = 15.0) -> str:
         """Executes a command statefully and reads output until the sentinel prints or timeout expires."""

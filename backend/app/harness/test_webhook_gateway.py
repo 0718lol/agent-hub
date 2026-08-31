@@ -53,14 +53,16 @@ class TestWebhookGateway(unittest.IsolatedAsyncioTestCase):
 
         # Clean up test checkpoints
         from app.core.database import delete_hil_checkpoint
-        try:
-            delete_hil_checkpoint("webhook_conv_id")
-        except Exception as e:
-            _logger.warning(f"Failed to delete HIL checkpoint during teardown: {e}")
+        for cid in ("webhook_conv_id", "webhook_recovery_conv_id"):
+            try:
+                delete_hil_checkpoint(cid)
+            except Exception as e:
+                _logger.warning(f"Failed to delete HIL checkpoint for {cid} during teardown: {e}")
 
         # Clean up custom graph builders
         from app.main import _graph_builders
         _graph_builders.pop("webhook_conv_id", None)
+        _graph_builders.pop("webhook_recovery_conv_id", None)
 
     def test_webhook_registration(self):
         """1. Verify Slack and Telegram channel registration is saved properly."""
@@ -259,7 +261,7 @@ class TestWebhookGateway(unittest.IsolatedAsyncioTestCase):
 
     async def test_hil_recovery_after_mock_server_crash(self):
         """6. Verify HIL recovery after mock server crash (wiping memory futures dictionary)."""
-        conv_id = "webhook_conv_id"
+        conv_id = "webhook_recovery_conv_id"
         from app.main import _save_hil_settings
         _save_hil_settings({"human_input_mode": "ALWAYS", "cooldown_steps": 1})
 
@@ -317,7 +319,10 @@ class TestWebhookGateway(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(callback_res["success"])
 
         # Wait a moment for the recovered background graph task to launch and run
-        await asyncio.sleep(0.2)
+        for _ in range(30):
+            if "agent_designer" in execution_order:
+                break
+            await asyncio.sleep(0.1)
 
         # Verify designer has now executed because of resumption
         self.assertIn("agent_designer", execution_order)
@@ -336,15 +341,14 @@ class TestWebhookGateway(unittest.IsolatedAsyncioTestCase):
 
         client = TestClient(app)
 
-        # A. Slack tests without secret set: should pass through bypass
+        # A. Slack tests without secret set: should return 503
         with patch.dict(os.environ, {}, clear=True):
             resp = client.post(
                 "/api/webhook/callback/slack",
                 json={"actions": [{"value": json.dumps({"conversation_id": "test_conv", "action": "Approve"})}]}
             )
-            # The signature check is bypassed, but we get success: False because 'test_conv' isn't an active interaction
-            self.assertEqual(resp.status_code, 200)
-            self.assertFalse(resp.json()["success"])
+            self.assertEqual(resp.status_code, 503)
+            self.assertIn("Slack webhook not configured", resp.json()["detail"])
 
         # B. Slack tests with secret configured
         secret = "super_slack_secret"
@@ -390,14 +394,14 @@ class TestWebhookGateway(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(resp.status_code, 200)
             self.assertFalse(resp.json()["success"]) # Because of empty actions
 
-        # C. Telegram tests without secret set: should pass through bypass
+        # C. Telegram tests without secret set: should return 503
         with patch.dict(os.environ, {}, clear=True):
             resp = client.post(
                 "/api/webhook/callback/telegram",
                 json={"callback_query": {"data": json.dumps({"c_id": "test", "act": "Yes"})}}
             )
-            self.assertEqual(resp.status_code, 200)
-            self.assertFalse(resp.json()["success"]) # Bypassed but no interaction in memory
+            self.assertEqual(resp.status_code, 503)
+            self.assertIn("Telegram webhook not configured", resp.json()["detail"])
 
         # D. Telegram tests with secret configured
         tg_secret = "super_tg_secret"

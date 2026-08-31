@@ -48,6 +48,12 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户像在钉钉/飞�
 - 代码面板（语法高亮，Agent 生成的代码自动显示）
 - 网页预览（iframe 实时渲染 Agent 生成的 HTML）
 
+**代码热重载预览**
+- Agent 生成 HTML 代码后，预览面板实时刷新
+- 基于 postMessage 实现零闪烁更新
+- 300ms 防抖控制，防止频繁刷新
+- 完整 HTML 检测，避免乱码渲染
+
 **消息系统**
 - 代码卡片 — 语法高亮 + 一键复制
 - 原型卡片 — SVG 线框图
@@ -156,6 +162,11 @@ AgentHub 是一个 IM 风格的多 Agent 协作平台。用户像在钉钉/飞�
 - WebSocket 实时消息
 - 消息类型：message / typing / thinking / code / generating / task_status / read / stop
 - 流式输出 + 结构化标签解析（[thinking]、[assign]、[options]、[preview]）
+
+**Agent 协作协议（AHP）**
+- 定义了 Agent 之间的消息格式、任务分配、错误处理和安全规范
+- 支持 MCP（Agent↔工具）和 AHP（Agent↔Agent）双协议
+- 详细文档见 `docs/AHP_PROTOCOL.md`
 
 ## 快速启动
 

@@ -3,7 +3,19 @@ import os
 import sys
 
 
+def safe_decode(data: bytes) -> str:
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return data.decode("gb18030")
+        except UnicodeDecodeError:
+            return data.decode("utf-8", errors="replace")
+
 async def run_git_cmd(cwd: str, *args) -> tuple[int, str, str]:
+
     """Helper to safely run a git command asynchronously in the target sandboxed workspace."""
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -14,7 +26,8 @@ async def run_git_cmd(cwd: str, *args) -> tuple[int, str, str]:
             creationflags=0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW on Windows
         )
         stdout, stderr = await proc.communicate()
-        return proc.returncode, stdout.decode("utf-8", errors="replace").strip(), stderr.decode("utf-8", errors="replace").strip()
+        return proc.returncode, safe_decode(stdout).strip(), safe_decode(stderr).strip()
+
     except Exception as e:
         return -1, "", f"Failed to execute git command: {e}"
 

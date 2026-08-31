@@ -268,6 +268,8 @@ async def root():
     return {"name": "AgentHub API", "version": "1.0.0", "docs": "/docs"}
 
 
+
+
 @app.get("/api/health")
 async def health():
     checks = {}

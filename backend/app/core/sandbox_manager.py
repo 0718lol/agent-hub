@@ -29,11 +29,23 @@ from app.core.subprocess_security import limit_windows_process, safe_terminate_p
 
 logger = logging.getLogger("sandbox_manager")
 
+def safe_decode(data: bytes) -> str:
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return data.decode("gb18030")
+        except UnicodeDecodeError:
+            return data.decode("utf-8", errors="replace")
+
 # Unified max cap for characters of stdout/stderr read-backs
 MAX_OUTPUT_LIMIT = 5000
 CONTAINER_TMPFS_MOUNT = "/tmp:rw,nosuid,size=512m"  # nosec B108
 COMMAND_FILE = ".agenthub-command"
 COMMAND_PATH = f"{SANDBOX_WORKSPACE_PATH}/{COMMAND_FILE}"
+
 
 
 class BaseSandbox(ABC):
@@ -121,6 +133,7 @@ class SubprocessSandbox(BaseSandbox):
                         "PYTHONIOENCODING": "utf-8",
                     },
                 )
+
             else:
                 # Windows path: execute directly, then attach Windows Job Object constraints immediately after creation
                 proc = await asyncio.create_subprocess_exec(
@@ -136,6 +149,7 @@ class SubprocessSandbox(BaseSandbox):
                         "PYTHONIOENCODING": "utf-8",
                     },
                 )
+
                 limit_windows_process(proc.pid, settings.shell_memory_limit_mb * 1024 * 1024, cpu_limit_secs=timeout + 2)
 
             try:
@@ -146,8 +160,9 @@ class SubprocessSandbox(BaseSandbox):
                 )
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
-                stdout = stdout_bytes.decode("utf-8", errors="replace")
-                stderr = stderr_bytes.decode("utf-8", errors="replace")
+                stdout = safe_decode(stdout_bytes)
+                stderr = safe_decode(stderr_bytes)
+
 
                 truncated = False
                 if len(stdout) > MAX_OUTPUT_LIMIT:

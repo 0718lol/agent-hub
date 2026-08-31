@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from 'react'
+import React, { useRef, useCallback, useEffect, useState } from 'react'
 import { useCanvasStore } from '../../stores/canvasStore'
 import { PREVIEW_HTML } from './previewHtml'
 
@@ -61,12 +61,24 @@ html,body{min-height:100%;overflow:auto!important}
     return source.replace('</head>', `${guardCss}</head>`)
   }
   return `${source}${guardCss}`
+
+// Check if HTML is complete (has closing tags)
+function isCompleteHtml(html) {
+  if (!html) return false
+  return html.includes('</html>') || html.includes('</body>')
 }
 
 export default function WebPreview() {
   const previewHtml = useCanvasStore((s) => s.previewHtml)
-  const html = normalizePreviewHtml(previewHtml || PREVIEW_HTML.todo)
+  const streamingHtml = useCanvasStore((s) => s.streamingHtml)
+  const html = normalizePreviewHtml(
+    (streamingHtml && isCompleteHtml(streamingHtml)) ? streamingHtml : previewHtml || PREVIEW_HTML.todo,
+  )
+  // Priority: streamingHtml > previewHtml > default
   const iframeRef = useRef(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const debounceRef = useRef(null)
+  const lastHtmlRef = useRef('')
 
   // Click on iframe area to give it keyboard focus (critical for games)
   const handleFocus = useCallback(() => {
@@ -75,11 +87,62 @@ export default function WebPreview() {
     }
   }, [])
 
+  // Update iframe content via postMessage (no flicker)
+  useEffect(() => {
+    if (!iframeRef.current || !html) return
+
+    // Skip if content hasn't changed
+    if (html === lastHtmlRef.current) return
+    lastHtmlRef.current = html
+
+    // Debounce rapid updates (300ms)
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current)
+    }
+
+    setIsLoading(true)
+    debounceRef.current = setTimeout(() => {
+      try {
+        if (iframeRef.current && iframeRef.current.contentWindow) {
+          iframeRef.current.contentWindow.postMessage(
+            { type: 'update', html },
+            '*'
+          )
+        }
+      } catch (e) {
+        // If postMessage fails, fall back to srcdoc
+        console.warn('postMessage failed, using srcdoc fallback:', e)
+      }
+      setIsLoading(false)
+    }, 300)
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current)
+      }
+    }
+  }, [html])
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      clearStreamingHtml()
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current)
+      }
+    }
+  }, [clearStreamingHtml])
+
   return (
     <div className="web-preview">
       <div className="preview-url-bar">
         <span style={{ color: '#10b981', fontSize: 12 }}>●</span>
         <input value="http://localhost:3000/preview" readOnly />
+        {isLoading && (
+          <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 8 }}>
+            更新中...
+          </span>
+        )}
         <button
           onClick={handleFocus}
           style={{

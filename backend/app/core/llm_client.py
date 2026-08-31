@@ -552,7 +552,7 @@ class LLMClient:
 
         self.provider = "ollama"
         self.base_url = "http://127.0.0.1:11434/v1"
-        self.model = "qwen2.5-coder"
+        self.model = "qwen2.5-coder:7b"
         self.api_key = "ollama"
 
         try:

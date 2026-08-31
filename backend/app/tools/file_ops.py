@@ -1,4 +1,4 @@
-﻿"""File operations tool — sandboxed file read/write/list for agents."""
+"""File operations tool — sandboxed file read/write/list for agents."""
 
 import logging
 import os
@@ -10,7 +10,8 @@ from .registry import AgentTool, ToolResult, register_tool
 logger = logging.getLogger("tool_file_ops")
 
 # Sandbox root directory (per-conversation isolation)
-_SANDBOX_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "data", "sandbox")
+workspace_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+_SANDBOX_ROOT = os.path.join(workspace_dir, "agenthub_export")
 os.makedirs(_SANDBOX_ROOT, exist_ok=True)
 
 # Limits
