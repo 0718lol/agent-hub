@@ -18,6 +18,53 @@ class LLMAPIError(Exception):
         super().__init__(f"LLM API Error {status_code}: {message}")
 
 
+# Fold a long Python code block to its skeleton via the stdlib ast module.
+# Keeps imports, decorators and function/class signatures (including async def);
+# returns None when parsing fails so the caller falls back to line-based folding.
+def _fold_python_ast(code):
+    import ast as _ast
+
+    try:
+        tree = _ast.parse(code)
+    except SyntaxError:
+        return None
+
+    lines = code.split(chr(10))
+    keep = set()
+
+    def _mark_signature(node):
+        start = min([d.lineno for d in node.decorator_list], default=node.lineno)
+        if node.body:
+            sig_end = max(node.lineno, min(n.lineno for n in node.body) - 1)
+        else:
+            sig_end = node.end_lineno
+        keep.update(range(start - 1, sig_end))
+
+    for node in tree.body:
+        if isinstance(node, (_ast.Import, _ast.ImportFrom)):
+            keep.update(range(node.lineno - 1, node.end_lineno))
+        elif isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            _mark_signature(node)
+            if isinstance(node, _ast.ClassDef):
+                for child in node.body:
+                    if isinstance(child, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                        _mark_signature(child)
+
+    out = []
+    folded = 0
+    for idx, line in enumerate(lines):
+        if idx in keep:
+            if folded:
+                out.append(f"    # [... 中段 {folded} 行实现被折叠以节省 Token ...]")
+                folded = 0
+            out.append(line)
+        else:
+            folded += 1
+    if folded:
+        out.append(f"    # [... 中段 {folded} 行实现被折叠以节省 Token ...]")
+    return chr(10).join(out)
+
+
 class ContextOptimizer:
     """Helper to optimize and prune LLM input messages to save tokens."""
 
@@ -31,6 +78,8 @@ class ContextOptimizer:
         """
         if not isinstance(content, str) or not content:
             return content
+
+        original_len = len(content)
 
         import re
 
@@ -46,6 +95,11 @@ class ContextOptimizer:
         for _full_block, _lang, code in code_blocks:
             lines = code.split("\n")
             if len(lines) > 100:
+                if _lang in ("python", "py", "python3"):
+                    ast_folded = _fold_python_ast(code)
+                    if ast_folded is not None:
+                        content = content.replace(code, ast_folded)
+                        continue
                 # We perform an outline fold: keeping imports, class definitions, and def (function) signatures,
                 # but folding long inner function bodies.
                 folded_lines = []
@@ -60,13 +114,15 @@ class ContextOptimizer:
                         stripped.startswith("from ") or
                         stripped.startswith("class ") or
                         stripped.startswith("def ") or
+                        stripped.startswith("async def ") or
                         stripped.startswith("function ") or
-                        stripped.startswith("export ")):
+                        stripped.startswith("export ") or
+                        stripped.startswith("@")):
                         if in_class_or_def and folded_count > 0:
                             folded_lines.append(f"    # [... 中段 {folded_count} 行实现被折叠以节省 Token ...]")
                             folded_count = 0
                         folded_lines.append(line)
-                        in_class_or_def = stripped.startswith("class ") or stripped.startswith("def ") or stripped.startswith("function ")
+                        in_class_or_def = stripped.startswith("class ") or stripped.startswith("def ") or stripped.startswith("async def ") or stripped.startswith("function ")
                     else:
                         if in_class_or_def:
                             folded_count += 1
@@ -78,6 +134,10 @@ class ContextOptimizer:
 
                 folded_code = "\n".join(folded_lines)
                 content = content.replace(code, folded_code)
+
+        if original_len > len(content):
+            saved_pct = (1 - len(content) / original_len) * 100
+            logger.info(f"ContextOptimizer: 单条消息压缩 {original_len} -> {len(content)} 字符（节省 {saved_pct:.1f}%）")
 
         # Step 3: Default Head/Tail truncation preserving critical tracebacks/exceptions/errors
         if len(content) <= max_chars:
@@ -98,29 +158,36 @@ class ContextOptimizer:
         if error_block:
             # We construct a message structure with the error block injected
             num_pruned = len(content) - len(head) - len(tail) - len(error_block)
-            return (
+            result = (
                 f"{head}\n\n"
                 f"[... ⚠️ 此处已自动压缩中段 {num_pruned} 字符以节省 Token ...]\n\n"
                 f"【拦截并抽取的关键报错/堆栈片段】:\n{error_block}\n\n"
                 f"{tail}"
             )
+            logger.info(f"ContextOptimizer: 单条消息截断 {original_len} -> {len(result)} 字符（含关键报错保护）")
+            return result
         else:
             # Fallback to standard head/tail truncation
             keep_standard = max_chars // 4
             head_std = content[:keep_standard * 2]
             tail_std = content[-keep_standard * 2:]
             num_pruned = len(content) - 4 * keep_standard
-            return (
+            result = (
                 f"{head_std}\n\n"
                 f"[... ⚠️ 此处已自动压缩中段 {num_pruned} 字符以节省 Token，防止上下文溢出 ...]\n\n"
                 f"{tail_std}"
             )
+            logger.info(f"ContextOptimizer: 单条消息截断 {original_len} -> {len(result)} 字符")
+            return result
 
     @classmethod
     def optimize_messages(cls, messages: list[dict], max_total_chars: int = 30000) -> list[dict]:
         """Scan messages to compress individual large ones, and compress deep conversation history
         if total character length exceeds max_total_chars.
         """
+        original_total = sum(
+            len(m.get("content", "")) for m in messages if isinstance(m.get("content"), str)
+        )
         optimized = []
         for msg in messages:
             role = msg.get("role")
@@ -164,6 +231,13 @@ class ContextOptimizer:
             else:
                 compressed_history.append(msg)
 
+        final_total = sum(
+            len(m.get("content", "")) for m in compressed_history + recent_messages
+            if isinstance(m.get("content"), str)
+        )
+        if final_total < original_total:
+            saved_pct = (1 - final_total / original_total) * 100
+            logger.info(f"ContextOptimizer: 对话历史压缩 {original_total} -> {final_total} 字符（节省 {saved_pct:.1f}%）")
         return compressed_history + recent_messages
 
 
