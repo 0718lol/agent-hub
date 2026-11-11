@@ -333,14 +333,15 @@ async def test_best_of_n_publishes_selected_code_to_canvas(
     from app.services import agent_orchestrator
 
     selected = "```html\n<!doctype html><html><body>Selected</body></html>\n```"
-    monkeypatch.setattr(agent_orchestrator.quality_gate, "enabled", True)
-    monkeypatch.setattr(agent_orchestrator.quality_gate, "best_of_n", 2)
+    gate = agent_orchestrator.quality_gate._default
+    monkeypatch.setattr(gate, "enabled", True)
+    monkeypatch.setattr(gate, "best_of_n", 2)
     monkeypatch.setattr(
-        agent_orchestrator.quality_gate,
+        gate,
         "best_of_n_generate",
         AsyncMock(return_value=(selected, {"total_score": 95}, [])),
     )
-    save_artifact_mock = MagicMock(return_value={"id": 42, "name": "index.html"})
+    save_artifact_mock = MagicMock(return_value={"id": 42, "name": "index.html", "version": 3, "content_hash": "a" * 64})
     monkeypatch.setattr(agent_orchestrator, "save_artifact", save_artifact_mock)
 
     await agent_orchestrator.run_target_agent_flow(
@@ -358,6 +359,8 @@ async def test_best_of_n_publishes_selected_code_to_canvas(
     code_events = _filter_messages(mock_ws_manager.messages, msg_type="code")
     preview_events = _filter_messages(mock_ws_manager.messages, msg_type="preview")
     assert code_events[-1]["artifact_id"] == 42
+    assert code_events[-1]["artifact_version"] == 3
+    assert code_events[-1]["content_hash"] == "a" * 64
     assert code_events[-1]["code"] == "<!doctype html><html><body>Selected</body></html>"
     assert preview_events[-1]["html"] == code_events[-1]["code"]
 
@@ -378,7 +381,7 @@ async def test_quality_retry_does_not_replace_final_code_artifact(
         initial_stream,
     )
     save_artifact_mock = MagicMock(
-        return_value={"id": 1, "name": "index.html"}
+        return_value={"id": 1, "name": "index.html", "version": 1, "content_hash": "b" * 64}
     )
     monkeypatch.setattr(agent_orchestrator, "save_artifact", save_artifact_mock)
 

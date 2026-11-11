@@ -4,6 +4,7 @@ Artifact CRUD operations.
 Handles saving, retrieving, and grouping code artifacts produced by
 agents during conversations.
 """
+import hashlib
 import re
 from datetime import UTC, datetime
 
@@ -16,7 +17,7 @@ from app.core.models import Artifact, Conversation
 
 @db_write_transaction
 def save_artifact(conversation_id: str, agent_id: str, language: str,
-                  code: str, name: str | None = None) -> dict:
+                  code: str, name: str | None = None, parent_id: int | None = None) -> dict:
     if not name:
         if language.lower() in ("python", "py"):
             class_match = re.search(r"class\s+(\w+)", code)
@@ -53,12 +54,20 @@ def save_artifact(conversation_id: str, agent_id: str, language: str,
             name = f"code_snippet.{language}"
 
     with Session(_engine_mod.engine) as session:
+        previous = session.exec(select(Artifact).where(Artifact.conversation_id == conversation_id, Artifact.name == name).order_by(Artifact.id.desc())).first()
+        if parent_id is not None:
+            parent = session.get(Artifact, parent_id)
+            if parent is None or parent.conversation_id != conversation_id or parent.name != name:
+                raise ValueError("Invalid artifact parent")
         art = Artifact(
             conversation_id=conversation_id,
             agent_id=agent_id,
             name=name,
             language=language,
-            code=code
+            code=code,
+            version=(previous.version + 1) if previous else 1,
+            parent_id=parent_id if parent_id is not None else (previous.id if previous else None),
+            content_hash=hashlib.sha256(code.encode()).hexdigest(),
         )
         session.add(art)
         session.commit()
@@ -142,9 +151,9 @@ def get_artifacts_grouped(
         latest = versions[-1]
         history = []
         for idx, v in enumerate(versions):
-            v_num = f"v{idx + 1}"
             history.append({
-                "version_label": v_num,
+                "version_label": f"v{v['version']}",
+                "version": v["version"], "parent_id": v["parent_id"], "content_hash": v["content_hash"],
                 "id": v["id"],
                 "agent_id": v["agent_id"],
                 "created_at": v["created_at"],
@@ -165,9 +174,32 @@ def get_artifacts_grouped(
             "sandbox_output": latest["sandbox_output"],
             "created_at": latest["created_at"],
             "latest_id": latest["id"],
+            "version": latest["version"], "parent_id": latest["parent_id"], "content_hash": latest["content_hash"],
             "total_versions": len(versions),
             "history": history[::-1],
         })
 
     result.sort(key=lambda x: x["created_at"], reverse=True)
     return result[:limit]
+
+
+def get_artifact(artifact_id: int, user_id: str) -> dict | None:
+    from app.core.tenancy import belongs_to_user
+    with Session(_engine_mod.engine) as session:
+        art = session.get(Artifact, artifact_id)
+        return art.model_dump() if art and belongs_to_user(art.conversation_id, user_id) else None
+
+
+@db_write_transaction
+def record_artifact_validation(artifact_id: int, user_id: str, status: str, output: str) -> dict:
+    from app.core.tenancy import belongs_to_user
+    with Session(_engine_mod.engine) as session:
+        art = session.get(Artifact, artifact_id)
+        if not art or not belongs_to_user(art.conversation_id, user_id):
+            raise ValueError("Artifact not found")
+        art.sandbox_status = status
+        art.sandbox_output = output[:20000]
+        session.add(art)
+        session.commit()
+        session.refresh(art)
+        return art.model_dump()

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { DiffEditor, Editor } from '@monaco-editor/react'
 import { useCanvasStore } from '../../stores/canvasStore'
 import { useThemeStore } from '../../stores/themeStore'
@@ -7,6 +7,35 @@ export default function DiffViewer() {
   const generatedCode = useCanvasStore((s) => s.generatedCode)
   const previousCode = useCanvasStore((s) => s.previousCode)
   const theme = useThemeStore((s) => s.theme)
+  const artifact = useCanvasStore((s) => s.artifact)
+  const artifacts = useCanvasStore((s) => s.artifacts)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { setEditing(false); setDraft(artifact?.code || ''); setMessage('') }, [artifact?.id])
+  const save = async () => {
+    setBusy(true)
+    try {
+      const response = await fetch('/api/artifacts/' + artifact.id + '/versions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: draft }) })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.detail || '保存失败')
+      useCanvasStore.getState().selectArtifact(result, true)
+      await useCanvasStore.getState().loadArtifacts(useCanvasStore.getState().artifactConversation)
+      setEditing(false)
+      setMessage('已保存为新版本')
+    } catch (error) { setMessage(error.message) } finally { setBusy(false) }
+  }
+  const validate = async () => {
+    setBusy(true)
+    try {
+      const response = await fetch('/api/artifacts/' + artifact.id + '/validate', { method: 'POST' })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.detail || '验证失败')
+      useCanvasStore.getState().selectArtifact(result, true)
+      setMessage(result.sandbox_output || result.sandbox_status)
+    } catch (error) { setMessage(error.message) } finally { setBusy(false) }
+  }
 
   if (!generatedCode) {
     return (
@@ -25,7 +54,7 @@ export default function DiffViewer() {
   const monacoLang = language.toLowerCase() === 'html' ? 'html' : language.toLowerCase() === 'python' ? 'python' : 'javascript'
 
   const commonOptions = {
-    readOnly: true,
+    readOnly: !editing,
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
     fontSize: 13,
@@ -35,6 +64,17 @@ export default function DiffViewer() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {artifact && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: 8 }}>
+        <select aria-label="产物版本" value={artifact.id} onChange={(event) => useCanvasStore.getState().selectArtifact(artifacts.find(item => item.id === Number(event.target.value)), true)}>
+          {!artifacts.some(item => item.id === artifact.id) && <option value={artifact.id}>{artifact.name} v{artifact.version}</option>}
+          {artifacts.map(item => <option key={item.id} value={item.id}>{item.name} v{item.version}</option>)}
+        </select>
+        <span>{artifact.content_hash?.slice(0, 12)} · {artifact.sandbox_status === 'success' ? '沙箱运行通过' : artifact.sandbox_status === 'error' || artifact.sandbox_status === 'timeout' ? '验证失败' : '未验证'}</span>
+        <button disabled={busy} onClick={() => { setDraft(code); setEditing(!editing) }}>{editing ? '取消编辑' : '编辑'}</button>
+        {editing && <button disabled={busy} onClick={save}>保存新版本</button>}
+        {!editing && ['python','py','javascript','js'].includes(language.toLowerCase()) && <button disabled={busy} onClick={validate}>{busy ? '正在验证…' : '沙箱验证'}</button>}
+      </div>}
+      {message && <pre role="status" style={{ whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto', padding: 8 }}>{message}</pre>}
       <div style={{
         display: 'flex', alignItems: 'center', justifyBetween: 'space-between', gap: 8, marginBottom: 12,
         padding: '8px 12px', background: 'var(--bg-tertiary)', borderRadius: 8, flexShrink: 0,
@@ -65,7 +105,7 @@ export default function DiffViewer() {
       <div style={{
         flex: 1, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)',
       }}>
-        {previousCode ? (
+        {previousCode && !editing ? (
           <DiffEditor
             height="100%"
             language={monacoLang}
@@ -78,7 +118,8 @@ export default function DiffViewer() {
           <Editor
             height="100%"
             language={monacoLang}
-            value={code}
+            value={editing ? draft : code}
+            onChange={(value) => setDraft(value || '')}
             theme={monacoTheme}
             options={commonOptions}
           />

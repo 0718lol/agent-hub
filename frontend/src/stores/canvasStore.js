@@ -39,6 +39,10 @@ export const useCanvasStore = create((set) => ({
       slidePanelTab: 'code',
       previewHtml: null,
       generatedCode: null,
+      artifact: null,
+      artifacts: [],
+      artifactConversation: null,
+      artifactPinned: false,
       previousCode: '',
       isDeploying: false,
       deployLogs: [],
@@ -84,6 +88,32 @@ export const useCanvasStore = create((set) => ({
   clearStreamingHtml: () => set({ streamingHtml: null }),
 
   generatedCode: null,
+  artifact: null,
+  artifacts: [],
+  artifactConversation: null,
+  artifactPinned: false,
+  selectArtifact: (artifact, pinned = false) => set((state) => ({
+    artifact, artifactPinned: pinned,
+    generatedCode: { language: artifact.language, code: artifact.code },
+    previousCode: state.generatedCode?.code || '',
+    previewHtml: ['html', 'htm'].includes(artifact.language.toLowerCase()) ? artifact.code : null,
+    streamingHtml: null,
+  })),
+  loadArtifacts: async (conversationId) => {
+    const state = useCanvasStore.getState()
+    if (state.artifactConversation !== conversationId) {
+      set({ artifactConversation: conversationId, artifact: null, artifacts: [], artifactPinned: false, generatedCode: null, previewHtml: null, streamingHtml: null, previousCode: '' })
+    }
+    const response = await fetch(`/api/artifacts?conversation_id=${encodeURIComponent(conversationId)}&limit=100`)
+    if (!response.ok) return false
+    const groups = await response.json()
+    if (useCanvasStore.getState().artifactConversation !== conversationId) return true
+    const artifacts = groups.flatMap(group => group.history.map(item => ({ ...item, name: group.name, language: group.language, conversation_id: conversationId }))).sort((a, b) => b.id - a.id)
+    set({ artifacts })
+    const current = useCanvasStore.getState()
+    if (artifacts.length && !current.artifactPinned && (!current.artifact || artifacts[0].id > current.artifact.id)) current.selectArtifact(artifacts[0])
+    return artifacts.length > 0 || Boolean(useCanvasStore.getState().artifact)
+  },
   previousCode: '',
   setGeneratedCode: (language, code) =>
     set((state) => {

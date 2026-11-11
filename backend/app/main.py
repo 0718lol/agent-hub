@@ -69,6 +69,7 @@ from app.routers import (
 from app.routers import (
     cron as cron_router,
 )
+from app.routers import handoff as handoff_router
 from app.routers import (
     knowledge as knowledge_router,
 )
@@ -228,6 +229,7 @@ app.include_router(auth_router.router, prefix="/api")
 app.include_router(admin_router.router, prefix="/api")
 app.include_router(agents_router.router, prefix="/api")
 app.include_router(artifacts_router.router, prefix="/api")
+app.include_router(handoff_router.router, prefix="/api")
 app.include_router(uploads_router.router, prefix="/api")
 app.include_router(uploads_router.router)
 app.include_router(settings_router.router, prefix="/api")
@@ -341,7 +343,7 @@ async def readiness():
 
 # ---- Persistent deployment queue ----
 from app.core.tenancy import request_user_id, scope_conversation_id
-from app.services.deployment import DEPLOY_TARGETS
+from app.services.deployment import DEPLOY_TARGETS, DeploymentError
 from app.services.deployment_queue import (
     DeploymentAlreadyQueued,
     DeploymentQueueUnavailable,
@@ -350,6 +352,7 @@ from app.services.deployment_queue import (
 
 
 class DeployRequest(BaseModel):
+    artifact_id: int | None = None
     target: str = "auto"
     signing_mode: str = "demo"
     keystore_file_id: str = ""
@@ -406,15 +409,24 @@ async def deploy_project(conversation_id: str, request: Request, options: Deploy
         scoped_id = scope_conversation_id(user_id, conversation_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    snapshot_id = None
     try:
-        job = await deployment_queue.enqueue(
-            scoped_id, user_id, target, options=_deployment_options(user_id, options)
-        )
+        from app.services.delivery_store import discard_unused_snapshot, freeze_delivery, read_snapshot
+        deployment_options = _deployment_options(user_id, options)
+        snapshot_id = await asyncio.to_thread(freeze_delivery, scoped_id, user_id, options.artifact_id)
+        snapshot = await asyncio.to_thread(read_snapshot, snapshot_id, user_id, scoped_id)
+        deployment_options.update(snapshot_id=snapshot_id, input_hash=snapshot['content_hash'], artifact_id=options.artifact_id)
+        job = await deployment_queue.enqueue(scoped_id, user_id, target, options=deployment_options)
+    except DeploymentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except DeploymentQueueUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"status": "queued", "target": target, "job_id": job.id}
+    finally:
+        if snapshot_id:
+            await asyncio.to_thread(discard_unused_snapshot, snapshot_id)
+    return {"status": "queued", "target": target, "job_id": job.id, "snapshot_id": job.snapshot_id, "input_hash": job.input_hash, "artifact_id": job.artifact_id}
 
 
 @app.get("/api/deployments/{job_id}")
@@ -453,6 +465,9 @@ async def download_deployment_logs(job_id: str, request: Request):
         "AgentHub deployment log",
         f"job_id: {job.id}",
         f"target: {job.target}",
+        f"snapshot_id: {job.snapshot_id}",
+        f"input_hash: {job.input_hash}",
+        f"artifact_id: {job.artifact_id}",
         f"status: {job.status}",
         f"created_at: {job.created_at}",
         "",

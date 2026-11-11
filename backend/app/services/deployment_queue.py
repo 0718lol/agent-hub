@@ -1,5 +1,6 @@
 """Redis Streams-backed persistent deployment queue."""
 
+import asyncio
 import json
 import socket
 import uuid
@@ -44,6 +45,9 @@ class DeploymentJob:
     progress: int = 5
     log_entries: list[dict] | None = None
     cancel_requested: bool = False
+    snapshot_id: str = ""
+    input_hash: str = ""
+    artifact_id: int | None = None
 
     def __post_init__(self):
         now = datetime.now(UTC).isoformat()
@@ -117,6 +121,9 @@ class DeploymentQueue:
             action=action,
             source_job_id=source_job_id,
             options=options,
+            snapshot_id=(options or {}).get("snapshot_id", ""),
+            input_hash=(options or {}).get("input_hash", ""),
+            artifact_id=(options or {}).get("artifact_id"),
             log="任务已进入持久化队列",
             log_entries=[{
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -131,30 +138,37 @@ class DeploymentQueue:
             raise DeploymentAlreadyQueued("该项目已有构建任务正在排队或运行")
         payload = json.dumps(asdict(job), ensure_ascii=False)
         try:
+            from app.services.delivery_store import persist_job
+            await asyncio.to_thread(persist_job, job)
             await client.set(self._status_key(job.id), payload, ex=settings.deployment_status_ttl)
-            await client.xadd(self.stream, {"payload": payload}, maxlen=10_000, approximate=True)
             score = datetime.fromisoformat(job.created_at).timestamp()
             await client.zadd(self._user_index(user_id), {job.id: score})
             await client.zadd(self._global_index(), {job.id: score})
+            # Publish only after receipts and indexes exist. A worker must not
+            # consume a snapshot which admission cleanup is about to remove.
+            await client.xadd(self.stream, {"payload": payload}, maxlen=10_000, approximate=True)
         except Exception:
+            from app.services.delivery_store import delete_job
+            await asyncio.to_thread(delete_job, job.id)
+            await client.delete(self._status_key(job.id))
+            await client.zrem(self._user_index(user_id), job.id)
+            await client.zrem(self._global_index(), job.id)
             await client.delete(self._lock_key(conversation_id))
             raise
         return job
 
     async def list_for_user(self, user_id: str, limit: int = 50) -> list[DeploymentJob]:
-        client = await self.ensure_available()
-        ids = await client.zrevrange(self._user_index(user_id), 0, max(0, limit - 1))
-        if not ids:
-            return []
-        values = await client.mget([self._status_key(job_id) for job_id in ids])
-        jobs = [DeploymentJob(**json.loads(raw)) for raw in values if raw]
-        return [job for job in jobs if job.action == "deploy"]
+        from app.services.delivery_store import list_jobs
+        jobs = await asyncio.to_thread(list_jobs, user_id, limit)
+        return [DeploymentJob(**job) for job in jobs if job.get("action") == "deploy"]
 
     async def indexed_job_ids(self) -> list[str]:
         client = await self.ensure_available()
         return await client.zrange(self._global_index(), 0, -1)
 
     async def remove_history(self, job: DeploymentJob) -> None:
+        from app.services.delivery_store import delete_job
+        await asyncio.to_thread(delete_job, job.id)
         client = await self.ensure_available()
         await client.delete(self._status_key(job.id))
         await client.zrem(self._user_index(job.user_id), job.id)
@@ -165,12 +179,20 @@ class DeploymentQueue:
         await client.set(WORKER_HEARTBEAT_KEY, self.consumer, ex=15)
 
     async def get(self, job_id: str) -> DeploymentJob | None:
-        client = await self.ensure_available()
-        raw = await client.get(self._status_key(job_id))
-        if not raw:
-            return None
-        job = DeploymentJob(**json.loads(raw))
-        job.cancel_requested = bool(await client.get(self._cancel_key(job_id)))
+        from app.services.delivery_store import read_job
+        stored = await asyncio.to_thread(read_job, job_id)
+        if stored is None:
+            client = await self.ensure_available()
+            raw = await client.get(self._status_key(job_id))
+            if not raw:
+                return None
+            stored = json.loads(raw)
+        job = DeploymentJob(**stored)
+        try:
+            client = await self.ensure_available()
+            job.cancel_requested = bool(await client.get(self._cancel_key(job_id))) or job.cancel_requested
+        except DeploymentQueueUnavailable:
+            pass
         return job
 
     async def update(self, job: DeploymentJob, **changes) -> DeploymentJob:
@@ -178,6 +200,8 @@ class DeploymentQueue:
         for key, value in changes.items():
             setattr(job, key, value)
         job.updated_at = datetime.now(UTC).isoformat()
+        from app.services.delivery_store import persist_job
+        await asyncio.to_thread(persist_job, job)
         await client.set(
             self._status_key(job.id),
             json.dumps(asdict(job), ensure_ascii=False),
@@ -256,6 +280,8 @@ class DeploymentQueue:
             ex=settings.deployment_status_ttl,
         )
         job.cancel_requested = True
+        from app.services.delivery_store import persist_job
+        await asyncio.to_thread(persist_job, job)
         return job
 
     async def is_cancel_requested(self, job_id: str) -> bool:
@@ -282,6 +308,8 @@ class DeploymentQueue:
             "progress": 5,
         }][-300:]
         job.updated_at = datetime.now(UTC).isoformat()
+        from app.services.delivery_store import persist_job
+        await asyncio.to_thread(persist_job, job)
         payload = json.dumps(asdict(job), ensure_ascii=False)
         await client.set(self._status_key(job.id), payload, ex=settings.deployment_status_ttl)
         await client.xadd(self.stream, {"payload": payload}, maxlen=10_000, approximate=True)

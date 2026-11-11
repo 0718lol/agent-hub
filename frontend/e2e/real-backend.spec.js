@@ -1,4 +1,7 @@
 import { expect, test } from '@playwright/test'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 test.skip(!process.env.REAL_BACKEND, 'Set REAL_BACKEND=1 to exercise the real FastAPI and Redis services')
 
@@ -10,6 +13,7 @@ test('真实后端支持会话、上传、部署排队与取消', async ({ page 
     },
   })
   expect(registration.status()).toBe(201)
+  const { user } = await registration.json()
 
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root')).not.toBeEmpty()
@@ -40,9 +44,24 @@ test('真实后端支持会话、上传、部署排队与取消', async ({ page 
   const healthData = await health.json()
   const queueReady = healthData.capabilities?.deployment_queue === true
 
-  const deploy = await page.request.post(`/api/deploy/${rows[0].id}`, {
-    data: { target: 'web' },
-  })
+  const deployUrl = `/api/deploy/${rows[0].id}`
+  const deployOptions = { data: { target: 'web' } }
+  const emptyDeploy = await page.request.post(deployUrl, deployOptions)
+  expect(emptyDeploy.status()).toBe(422)
+  expect((await emptyDeploy.json()).detail).toContain('No generated project')
+
+  // The local backend freezes the generated project before checking the queue.
+  const exportRoot = fileURLToPath(new URL('../../agenthub_export/', import.meta.url))
+  const workspace = join(exportRoot, `tenant__${user.tenant_id}__conv__${rows[0].id}`)
+  await mkdir(exportRoot, { recursive: true })
+  await mkdir(workspace)
+  let deploy
+  try {
+    await writeFile(join(workspace, 'index.html'), '<h1>Deployment smoke test</h1>')
+    deploy = await page.request.post(deployUrl, deployOptions)
+  } finally {
+    await rm(workspace, { recursive: true, force: true })
+  }
   if (!queueReady) {
     expect(deploy.status()).toBe(503)
     expect((await deploy.json()).detail).toMatch(/Redis|Worker/)
@@ -50,6 +69,8 @@ test('真实后端支持会话、上传、部署排队与取消', async ({ page 
   }
   expect(deploy.status()).toBe(200)
   const queued = await deploy.json()
+  expect(queued.snapshot_id).toMatch(/^[a-f0-9]{32}$/)
+  expect(queued.input_hash).toMatch(/^[a-f0-9]{64}$/)
 
   const status = await page.request.get(`/api/deployments/${queued.job_id}`)
   expect(status.status()).toBe(200)

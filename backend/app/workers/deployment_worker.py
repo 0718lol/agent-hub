@@ -213,6 +213,7 @@ async def process_job(message_id: str, job: DeploymentJob) -> None:
                 deployment_id=job.id,
                 options=job.options,
                 cancelled=cancelled,
+                snapshot_id=job.snapshot_id,
             )
         if await cancelled():
             await _cleanup_cancelled_result(job, result)

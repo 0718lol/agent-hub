@@ -290,6 +290,8 @@ async def _publish_code_artifact(
         "code": code,
         "artifact_id": artifact["id"],
         "artifact_name": artifact["name"],
+        "artifact_version": artifact["version"],
+        "content_hash": artifact["content_hash"],
     })
     if language.lower() in ("html", "htm", ""):
         await manager.broadcast(conversation_id, {
@@ -698,6 +700,8 @@ async def stream_agent_reply(
                         "agent_id": agent.agent_id, "language": "html",
                         "code": fallback_html, "artifact_id": artifact["id"],
                         "artifact_name": artifact["name"],
+        "artifact_version": artifact["version"],
+        "content_hash": artifact["content_hash"],
                     })
                     await manager.broadcast(conversation_id, {
                         "type": "preview", "conversation_id": conversation_id,
@@ -823,7 +827,7 @@ async def stream_agent_reply(
     is_llm_error = _terminal_model_error(raw_text)
     # Quality gate is disabled for the product path. Keep artifact learning
     # eligible for successful non-error generations.
-    quality_passed_for_skill = not is_llm_error and bool(raw_text.strip())
+    quality_passed_for_skill = False  # Only explicitly validated artifacts may become reusable skills.
     # Extract and store successful code as reusable skill
     if _skill_lib and quality_passed_for_skill and not is_llm_error and raw_text:
         try:

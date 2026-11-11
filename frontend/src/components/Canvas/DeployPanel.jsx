@@ -30,6 +30,8 @@ export default function DeployPanel() {
   const setDeployJobId = useCanvasStore((s) => s.setDeployJobId)
 
   const activeId = useChatStore((s) => s.activeConversationId)
+  const artifact = useCanvasStore((s) => s.artifact)
+  const [inputMode, setInputMode] = useState('project')
   const terminalEndRef = useRef(null)
   const [target, setTarget] = useState('auto')
   const [signingMode, setSigningMode] = useState('demo')
@@ -117,6 +119,7 @@ export default function DeployPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           target,
+          artifact_id: inputMode === 'artifact' ? artifact?.id : null,
           signing_mode: signingMode,
           keystore_file_id: keystore.id,
           key_alias: keyAlias,
@@ -137,6 +140,7 @@ export default function DeployPanel() {
         setDeployJobId(data.job_id)
         setActiveJob({
           id: data.job_id,
+          snapshot_id: data.snapshot_id, input_hash: data.input_hash, artifact_id: data.artifact_id,
           status: 'queued',
           stage: 'queued',
           progress: 5,
@@ -245,6 +249,13 @@ export default function DeployPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 12, overflowY: 'auto' }}>
+      <label style={{ display: 'block', marginBottom: 10 }}>发布内容
+        <select value={inputMode} onChange={(event) => setInputMode(event.target.value)} disabled={isDeploying}>
+          <option value="project">当前完整项目（冻结文件快照）</option>
+          <option value="artifact" disabled={!artifact}>当前单文件版本{artifact ? ' v' + artifact.version : ''}</option>
+        </select>
+      </label>
+      {activeJob?.input_hash && <div style={{ fontSize: 12, marginBottom: 10 }}>输入快照：{activeJob.input_hash.slice(0, 12)}{activeJob.artifact_id ? ' · 产物 #' + activeJob.artifact_id : ''}</div>}
       {/* Panel Header */}
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',

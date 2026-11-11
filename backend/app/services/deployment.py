@@ -653,12 +653,20 @@ async def run_deployment_pipeline(
     deployment_id: str = "",
     options: dict | None = None,
     cancelled: CancellationCallback | None = None,
+    snapshot_id: str = "",
+    _workspace_path: Path | None = None,
 ) -> DeploymentResult:
-    """Detect, build, package, and optionally publish one generated project."""
+    """Build the frozen input when provided; legacy direct callers stay supported."""
+    if snapshot_id:
+        from app.services.delivery_store import materialize_snapshot
+        with materialize_snapshot(snapshot_id, user_id, conversation_id) as frozen:
+            return await run_deployment_pipeline(conversation_id, user_id=user_id, target=target,
+                token=token, site_id=site_id, progress=progress, deployment_id=deployment_id,
+                options=options, cancelled=cancelled, _workspace_path=frozen)
     if target not in DEPLOY_TARGETS:
         raise DeploymentError(f"Unsupported deployment target: {target}")
     await _raise_if_cancelled(cancelled)
-    workspace = get_workspace_path(conversation_id)
+    workspace = _workspace_path if _workspace_path is not None else get_workspace_path(conversation_id)
     options = options or {}
     detected = await asyncio.to_thread(detect_project_type, workspace)
     await _raise_if_cancelled(cancelled)

@@ -8,6 +8,7 @@ import MessageBubble from '../Chat/MessageBubble'
 import InputBar from '../Chat/InputBar'
 import InlineDeployCard from '../Chat/InlineDeployCard'
 import ChatPanelHeader from './ChatPanelHeader'
+import ProjectHandoff from '../Chat/ProjectHandoff'
 import ChatPanelContent from './ChatPanelContent'
 import TabBar from './TabBar'
 import TaskBoard from '../Canvas/TaskBoard'
@@ -67,37 +68,45 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
     loadMessages(activeId)
   }, [activeId])
 
-  // Sync canvas code & preview from messages
+  // Persisted artifacts are authoritative; old conversations can use message fallback.
   useEffect(() => {
-    if (!conv?.messages) return
-    let foundCode = false
-    let foundPreview = false
-    for (let i = conv.messages.length - 1; i >= 0; i--) {
-      const msg = conv.messages[i]
-      if (msg.streaming) continue
-      const text = msg.content?.text || ''
-      const previewMatch = text.match(/\[preview:(\w+)\]/)
-      if (previewMatch && PREVIEW_HTML[previewMatch[1]]) {
-        const code = previewMatch[1] === 'promo'
-          ? buildPromoPreviewHtml(extractPromoSubject(text))
-          : PREVIEW_HTML[previewMatch[1]]
-        if (!foundCode) { setGeneratedCode('html', code); foundCode = true }
-        if (!foundPreview) { useCanvasStore.getState().setPreviewHtml(code); foundPreview = true }
-      }
-      const codeMatch = text.match(/```(\w*)\n([\s\S]*?)```/)
-      if (codeMatch) {
-        const lang = codeMatch[1] || 'text'
-        const code = codeMatch[2]
-        if (!foundCode) { setGeneratedCode(lang, code); foundCode = true }
-        if (lang === 'html' && !foundPreview) { useCanvasStore.getState().setPreviewHtml(code); foundPreview = true }
-      }
-      const mockupMatch = text.match(/\[mockup:(\w+)\]/)
-      if (mockupMatch?.[1] === 'promo' && !foundPreview) {
-        useCanvasStore.getState().setPreviewHtml(buildPromoPreviewHtml(extractPromoSubject(text)))
-        foundPreview = true
-      }
-      if (foundCode && foundPreview) break
+    let disposed = false
+    const load = async () => {
+      try {
+        const hasArtifacts = await useCanvasStore.getState().loadArtifacts(activeId)
+        if (disposed || hasArtifacts || !conv?.messages) return
+      } catch (_error) { return }
+        let foundCode = false
+        let foundPreview = false
+        for (let i = conv.messages.length - 1; i >= 0; i--) {
+          const msg = conv.messages[i]
+          if (msg.streaming) continue
+          const text = msg.content?.text || ''
+          const previewMatch = text.match(/\[preview:(\w+)\]/)
+          if (previewMatch && PREVIEW_HTML[previewMatch[1]]) {
+            const code = previewMatch[1] === 'promo'
+              ? buildPromoPreviewHtml(extractPromoSubject(text))
+              : PREVIEW_HTML[previewMatch[1]]
+            if (!foundCode) { setGeneratedCode('html', code); foundCode = true }
+            if (!foundPreview) { useCanvasStore.getState().setPreviewHtml(code); foundPreview = true }
+          }
+          const codeMatch = text.match(/```(\w*)\n([\s\S]*?)```/)
+          if (codeMatch) {
+            const lang = codeMatch[1] || 'text'
+            const code = codeMatch[2]
+            if (!foundCode) { setGeneratedCode(lang, code); foundCode = true }
+            if (lang === 'html' && !foundPreview) { useCanvasStore.getState().setPreviewHtml(code); foundPreview = true }
+          }
+          const mockupMatch = text.match(/\[mockup:(\w+)\]/)
+          if (mockupMatch?.[1] === 'promo' && !foundPreview) {
+            useCanvasStore.getState().setPreviewHtml(buildPromoPreviewHtml(extractPromoSubject(text)))
+            foundPreview = true
+          }
+          if (foundCode && foundPreview) break
+        }
     }
+    load()
+    return () => { disposed = true }
   }, [conv?.messages, activeId])
 
   // WS connection — 延迟到下一帧，不阻塞 UI 更新
@@ -128,7 +137,12 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
       }
       if (data.type === 'thinking') { setThinking(activeId, data.agent_id, data.text); return }
       if (data.type === 'code') {
-        useCanvasStore.getState().setGeneratedCode(data.language, data.code)
+        const canvas = useCanvasStore.getState()
+        if (data.artifact_id && !canvas.artifactPinned) {
+          canvas.selectArtifact({ id: data.artifact_id, language: data.language, code: data.code, name: data.artifact_name, version: data.artifact_version, content_hash: data.content_hash })
+        } else if (!data.artifact_id && !canvas.artifact) {
+          canvas.setGeneratedCode(data.language, data.code)
+        }
         if (data.artifact_id) {
           const current = useChatStore.getState().conversations.find((item) => item.id === activeId)?.goal || {}
           useChatStore.getState().updateConversation(activeId, {
@@ -143,7 +157,7 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
         }
         return
       }
-      if (data.type === 'preview') { useCanvasStore.getState().setPreviewHtml(data.html); return }
+      if (data.type === 'preview') { if (!useCanvasStore.getState().artifact) useCanvasStore.getState().setPreviewHtml(data.html); return }
       if (data.type === 'generating') {
         setGenerating(activeId, data.is_generating)
         if (!data.is_generating && generationTimeoutRef.current) {
@@ -333,6 +347,7 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
         readiness={readiness}
       />
 
+      <ProjectHandoff conversationId={activeId} />
       <TabBar />
 
       <div className="chat-panel-tabs-container">

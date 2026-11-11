@@ -176,7 +176,31 @@ class Artifact(SQLModel, table=True):
     name: str
     language: str
     code: str
+    version: int = Field(default=1)
+    parent_id: int | None = Field(default=None)
+    content_hash: str = Field(default="")
     quality_score: int | None = Field(default=None)
     sandbox_status: str = Field(default="untested")
     sandbox_output: str | None = Field(default=None)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
+class DeliverySnapshot(SQLModel, table=True):
+    __tablename__ = "delivery_snapshots"
+    id: str = Field(primary_key=True)
+    user_id: str = Field(index=True)
+    conversation_id: str = Field(index=True)
+    artifact_id: int | None = None
+    content_hash: str
+    manifest: str
+    archive: bytes
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
+class DeliveryRecord(SQLModel, table=True):
+    __tablename__ = "delivery_records"
+    id: str = Field(primary_key=True)
+    user_id: str = Field(index=True)
+    conversation_id: str = Field(index=True)
+    payload: str
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(), index=True)

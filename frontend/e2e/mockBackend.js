@@ -78,6 +78,9 @@ function json(route, body, status = 200) {
 
 export async function installMockBackend(page, { holdDeployment = false } = {}) {
   const state = { deployed: false, cancelRequested: false, requests: [] }
+  // Keep browser checks independent of external font availability.
+  await page.route('https://fonts.googleapis.com/**', route => route.abort())
+  await page.route('https://fonts.gstatic.com/**', route => route.abort())
 
   await page.route('**/api/**', async (route) => {
     const request = route.request()

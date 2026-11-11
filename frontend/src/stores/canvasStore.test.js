@@ -219,3 +219,27 @@ describe('canvasStore', () => {
     expect(userNode.status).toBe('idle')
   })
 })
+
+describe('artifact authority', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({ artifact: null, artifacts: [], artifactConversation: null, artifactPinned: false, generatedCode: null, previewHtml: null })
+  })
+  it('keeps a selected older version when newer results arrive', async () => {
+    const original = { id: 1, language: 'html', name: 'index.html', code: '<h1>v1</h1>', version: 1 }
+    useCanvasStore.setState({ artifactConversation: 'c' })
+    useCanvasStore.getState().selectArtifact(original, true)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => [{ name: 'index.html', language: 'html', history: [{ ...original, id: 2, code: '<h1>v2</h1>', version: 2 }, original] }] }))
+    await useCanvasStore.getState().loadArtifacts('c')
+    expect(useCanvasStore.getState().artifact.id).toBe(1)
+    expect(useCanvasStore.getState().previewHtml).toBe('<h1>v1</h1>')
+    vi.unstubAllGlobals()
+  })
+  it('drops the previous conversations artifact before loading another', async () => {
+    useCanvasStore.setState({ artifactConversation: 'old', artifact: { id: 1 }, previewHtml: 'old', artifactPinned: true })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => [] }))
+    await useCanvasStore.getState().loadArtifacts('new')
+    expect(useCanvasStore.getState().artifact).toBeNull()
+    expect(useCanvasStore.getState().previewHtml).toBeNull()
+    vi.unstubAllGlobals()
+  })
+})
