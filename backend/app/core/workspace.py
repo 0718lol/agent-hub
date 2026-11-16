@@ -20,8 +20,11 @@ def resolve_workspace(conversation_id: str, *, create: bool = True) -> Path | No
     if create:
         WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
 
-    workspace = (WORKSPACE_ROOT / conversation_id).resolve()
-    if workspace.parent != WORKSPACE_ROOT:
+    expected = WORKSPACE_ROOT / conversation_id
+    if expected.is_symlink():
+        return None
+    workspace = expected.resolve()
+    if workspace != expected:
         return None
 
     if create:

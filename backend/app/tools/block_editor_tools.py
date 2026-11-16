@@ -4,6 +4,8 @@ import logging
 import os
 import re
 
+from app.core.workspace import resolve_workspace
+
 from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_block_editor_tools")
@@ -92,13 +94,12 @@ class FilePatchBlockTool(AgentTool):
             return ToolResult(success=False, error="文件路径 path 和修改块 patch_blocks 不能为空")
 
         # 1. Resolve sandboxed file path
-        workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conv_id)
-        os.makedirs(sandbox_dir, exist_ok=True)
-
-        # Secure path resolution to block directory traversals
-        safe_path = os.path.abspath(os.path.join(sandbox_dir, filepath))
-        if not safe_path.startswith(sandbox_dir):
+        workspace = resolve_workspace(conv_id)
+        if workspace is None:
+            return ToolResult(success=False, error="无效的会话沙盒目录")
+        sandbox_dir = str(workspace)
+        safe_path = os.path.realpath(os.path.join(sandbox_dir, filepath))
+        if not safe_path.startswith(sandbox_dir + os.sep):
             return ToolResult(success=False, error="路径越权：只允许修改会话沙盒目录内的文件")
 
         if not os.path.exists(safe_path):

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import sys
 
 
@@ -91,28 +92,54 @@ async def git_checkpoint(sandbox_dir: str, message: str) -> str:
 
 async def git_rollback(sandbox_dir: str) -> bool:
     """Hard-rollback all modifications since the last commit (discard dirty work)."""
-    # 1. Reset all modifications
-    code_reset, _, _ = await run_git_cmd(sandbox_dir, "reset", "--hard", "HEAD")
-    # 2. Clean all untracked files
-    code_clean, _, _ = await run_git_cmd(sandbox_dir, "clean", "-fd")
-    return code_reset == 0 and code_clean == 0
+    return await _reset_workspace(sandbox_dir, "HEAD")
 
 async def git_rollback_to(sandbox_dir: str, commit_hash: str) -> bool:
     """Force roll back the workspace to a specific commit checkpoint."""
-    # 1. Hard reset to hash
-    code_reset, _, _ = await run_git_cmd(sandbox_dir, "reset", "--hard", commit_hash)
-    # 2. Clean untracked files
-    code_clean, _, _ = await run_git_cmd(sandbox_dir, "clean", "-fd")
-    return code_reset == 0 and code_clean == 0
+    if not re.fullmatch("[0-9a-fA-F]{7,64}", commit_hash):
+        return False
+
+    options = _workspace_git_options(sandbox_dir)
+    if not options:
+        return False
+    code, keys, _ = await run_git_cmd(
+        sandbox_dir, *options, "config", "--local", "--no-includes", "--name-only", "--list",
+    )
+    # A reset can run a worktree filter or fetch missing objects using repository commands.
+    if code != 0 or any(
+        key.startswith(("filter.", "include.", "includeif.")) or key == "extensions.worktreeconfig"
+        or key.endswith(".promisor")
+        for key in keys.casefold().splitlines()
+    ):
+        return False
+    return await _reset_workspace(sandbox_dir, commit_hash)
+
+
+def _workspace_git_options(sandbox_dir: str) -> tuple[str, ...]:
+    dot_git = os.path.join(sandbox_dir, ".git")
+    if not os.path.isdir(dot_git) or os.path.islink(dot_git):
+        return ()
+    return ("--git-dir=.git", "--work-tree=.", "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}")
+
+
+async def _reset_workspace(sandbox_dir: str, revision: str) -> bool:
+    options = _workspace_git_options(sandbox_dir)
+    if not options:
+        return False
+    code, _, _ = await run_git_cmd(sandbox_dir, *options, "reset", "--hard", revision, "--")
+    if code != 0:
+        return False
+    code, _, _ = await run_git_cmd(sandbox_dir, *options, "clean", "-fd")
+    return code == 0
 
 async def git_log(sandbox_dir: str) -> list[dict]:
     """Query git commit log structured as a list of commits."""
-    dot_git = os.path.join(sandbox_dir, ".git")
-    if not os.path.exists(dot_git):
+    options = _workspace_git_options(sandbox_dir)
+    if not options:
         return []
 
     # Query log: hash|unix_timestamp|message
-    code, out, _ = await run_git_cmd(sandbox_dir, "log", "--pretty=format:%H|%ct|%s")
+    code, out, _ = await run_git_cmd(sandbox_dir, *options, "log", "--pretty=format:%H|%ct|%s")
     if code != 0 or not out:
         return []
 

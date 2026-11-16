@@ -1,16 +1,23 @@
 ﻿"""Unit tests for file_ops._safe_path — path traversal prevention.
 
-Pure logic tests: no real filesystem writes, no network.
+All generated workspaces are isolated in a temporary directory.
 """
 
 import os
 import sys
-from unittest.mock import patch
+import pytest
 
 # Ensure the backend app package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.core import workspace as workspace_module
 from app.tools.file_ops import _read_text_file, _safe_path
+
+
+@pytest.fixture(autouse=True)
+def sandbox_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(workspace_module, "WORKSPACE_ROOT", tmp_path)
+    return tmp_path
 
 
 class TestTextDecoding:
@@ -93,96 +100,35 @@ class TestSafePathTraversalPrevention:
 
 
 class TestSafePathSymlinkTraversal:
-    """Symlink-based traversal must be blocked via os.path.realpath mocking."""
+    """Resolve real links and reject sibling workspaces."""
 
-    @patch("app.tools.file_ops.os.path.realpath")
-    @patch("app.tools.file_ops.os.makedirs")
-    def test_symlink_pointing_outside_sandbox(self, mock_makedirs, mock_realpath):
-        # First call: resolve sandbox dir -> returns sandbox dir
-        # Second call: resolve file path (symlink target) -> returns outside sandbox
-        call_count = {"n": 0}
-        def fake_realpath(path):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                return "/data/sandbox/conv123"
-            return "/etc/passwd"
+    def test_symlink_pointing_outside_sandbox(self, sandbox_root):
+        workspace = sandbox_root / "conv123"
+        workspace.mkdir()
+        sibling = sandbox_root / "conv123_evil"
+        sibling.mkdir()
+        (workspace / "escape").symlink_to(sibling, target_is_directory=True)
 
-        mock_realpath.side_effect = fake_realpath
-        result = _safe_path("conv123", "symlink_to_etc")
-        # If realpath resolves outside sandbox, should return None
-        assert result is None
+        assert _safe_path("conv123", "escape/file.txt") is None
 
-    @patch("app.tools.file_ops.os.path.realpath")
-    @patch("app.tools.file_ops.os.makedirs")
-    def test_symlink_resolving_inside_sandbox(self, mock_makedirs, mock_realpath):
-        # All paths resolve inside sandbox
-        mock_realpath.side_effect = lambda p: p.replace("..", "").replace("//", "/")
-        # This test verifies that when realpath stays inside sandbox, path is allowed
-        # We need a more careful mock
-        sandbox_base = "/data/sandbox/conv123"
+    def test_symlink_resolving_inside_sandbox(self, sandbox_root):
+        workspace = sandbox_root / "conv123"
+        workspace.mkdir()
+        file = workspace / "file.txt"
+        file.write_text("safe")
+        (workspace / "link.txt").symlink_to(file)
 
-        def safe_realpath(path):
-            if path.startswith(sandbox_base):
-                return path
-            return os.path.join(sandbox_base, os.path.basename(path))
+        assert _safe_path("conv123", "link.txt") == str(file)
 
-        mock_realpath.side_effect = safe_realpath
-        result = _safe_path("conv123", "file.txt")
-        assert result is not None
+    def test_workspace_alias_is_rejected(self, sandbox_root):
+        target = sandbox_root / "conv_owner"
+        target.mkdir()
+        (sandbox_root / "conv_other").symlink_to(target, target_is_directory=True)
 
+        assert _safe_path("conv_other", "private.txt") is None
 
-class TestSafePathBoundaryChecks:
-    """Boundary conditions: sandbox_evil vs sandbox prefix confusion."""
-
-    @patch("app.tools.file_ops.os.path.realpath")
-    @patch("app.tools.file_ops.os.makedirs")
-    def test_sandbox_prefix_confusion(self, mock_makedirs, mock_realpath):
-        # sandbox_evil should not match sandbox + os.sep
-        # Simulate: conversation "sandbox" with file resolving to "sandbox_evil/..."
-        sandbox_dir = "/data/sandbox/sandbox"
-
-        def fake_realpath(path):
-            # Simulate a path that has the sandbox prefix but extends to sandbox_evil
-            if "evil" in str(path):
-                return "/data/sandbox/sandbox_evil/secret.txt"
-            return sandbox_dir
-
-        mock_realpath.side_effect = fake_realpath
-        result = _safe_path("sandbox", "evil_trick")
-        # Should be None because the resolved path is outside the sandbox
-        assert result is None
-
-    @patch("app.tools.file_ops.os.path.realpath")
-    @patch("app.tools.file_ops.os.makedirs")
-    def test_exact_sandbox_dir_allowed(self, mock_makedirs, mock_realpath):
-        sandbox_dir = "/data/sandbox/conv123"
-        mock_realpath.return_value = sandbox_dir
-        result = _safe_path("conv123", ".")
-        # resolved == sandbox_dir is allowed
-        assert result == sandbox_dir
-
-    @patch("app.tools.file_ops.os.path.realpath")
-    @patch("app.tools.file_ops.os.makedirs")
-    def test_path_just_outside_sandbox_blocked(self, mock_makedirs, mock_realpath):
-        # First call resolves sandbox dir, second call resolves to path
-        # that has sandbox prefix but is NOT within it (no trailing sep)
-        call_count = {"n": 0}
-        def fake_realpath(path):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                return "/data/sandbox/conv123"
-            return "/data/sandbox/conv123_evil"
-
-        mock_realpath.side_effect = fake_realpath
-        result = _safe_path("conv123", "trick")
-        assert result is None
-
-    def test_empty_filepath(self):
-        # Empty filepath should still resolve (to sandbox root or similar)
-        result = _safe_path("conv123", "")
-        # Depending on implementation, may return sandbox root or None
-        # The key thing is it should not crash
-        assert result is not None or result is None  # just no crash
+    def test_empty_filepath_resolves_to_own_workspace(self, sandbox_root):
+        assert _safe_path("conv123", "") == str(sandbox_root / "conv123")
 
 
 class TestSafePathConversationIsolation:

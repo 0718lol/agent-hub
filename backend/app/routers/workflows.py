@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.core.async_wrappers import async_get_custom_agents
+from app.core.concurrency import generation_admission
 from app.core.config import settings
 from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config
 from app.core.database import (
@@ -12,9 +13,11 @@ from app.core.database import (
     async_get_project_memory_cached,
     async_save_memory_item_cached,
 )
+from app.core.git_sandbox import git_log, git_rollback_to
 from app.core.llm_client import llm_client
 from app.core.tenancy import request_user_id, scope_conversation_id
 from app.core.websocket import manager
+from app.core.workspace import resolve_workspace
 from app.routers.settings import HILSettings
 from app.services.agent_registry import agent_registry
 
@@ -30,11 +33,11 @@ class MemoryUpdate(BaseModel):
 async def get_sandbox_commits(conversation_id: str, request: Request):
     """Retrieve visual Git commits history in the dynamic vertical timeline."""
     try:
-        from app.core.git_sandbox import get_sandbox_commits_log
-        commits = await get_sandbox_commits_log(scope_conversation_id(request_user_id(request), conversation_id))
-        return commits
-    except Exception as e:
-        return {"error": str(e), "commits": []}
+        scoped_id = scope_conversation_id(request_user_id(request), conversation_id)
+    except ValueError as exc:
+        return {"error": str(exc), "commits": []}
+    workspace = resolve_workspace(scoped_id, create=False)
+    return await git_log(str(workspace)) if workspace else []
 
 
 class SandboxRollbackRequest(BaseModel):
@@ -48,22 +51,36 @@ async def rollback_sandbox(conversation_id: str, body: SandboxRollbackRequest, r
     if not commit_hash:
         return {"status": "error", "message": "Missing commit_hash parameter"}
 
+    user_id = request_user_id(request)
     try:
-        from app.core.git_sandbox import rollback_sandbox_to_commit
-        scoped_id = scope_conversation_id(request_user_id(request), conversation_id)
-        success = await rollback_sandbox_to_commit(scoped_id, commit_hash)
-        if success:
-            # Broadcast update event to frontend to refresh sandbox explorer and show warning log
-            await manager.broadcast(scoped_id, {
-                "type": "sandbox_rollback",
-                "conversation_id": scoped_id,
-                "commit_hash": commit_hash,
-                "message": f"🔄 已成功手动回滚至 Git 版本检查点: {commit_hash[:7]}"
-            })
-            return {"status": "ok", "message": f"Successfully rolled back sandbox to {commit_hash}"}
-        return {"status": "error", "message": "Rollback failed"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+        scoped_id = scope_conversation_id(user_id, conversation_id)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    workspace = resolve_workspace(scoped_id, create=False)
+    if workspace is None:
+        return {"status": "error", "message": "Workspace not found"}
+
+    admitted, reason = await generation_admission.acquire(user_id, scoped_id)
+    if not admitted:
+        return {"status": "error", "message": reason}
+    try:
+        commits = await git_log(str(workspace))
+        matching = [item["hash"] for item in commits if item["hash"].startswith(commit_hash.lower())]
+        if len(commit_hash) < 7 or len(matching) != 1:
+            return {"status": "error", "message": "Unknown or ambiguous commit checkpoint"}
+        commit_hash = matching[0]
+        if not await git_rollback_to(str(workspace), commit_hash):
+            return {"status": "error", "message": "Rollback failed"}
+    finally:
+        await generation_admission.release(user_id, scoped_id)
+
+    await manager.broadcast(scoped_id, {
+        "type": "sandbox_rollback",
+        "conversation_id": scoped_id,
+        "commit_hash": commit_hash,
+        "message": f"🔄 已成功手动回滚至 Git 版本检查点: {commit_hash[:7]}",
+    })
+    return {"status": "ok", "message": f"Successfully rolled back sandbox to {commit_hash}"}
 
 
 @router.get("/memory/{conversation_id}")
