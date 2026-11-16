@@ -20,10 +20,12 @@ async def run_git_cmd(cwd: str, *args) -> tuple[int, str, str]:
     """Helper to safely run a git command asynchronously in the target sandboxed workspace."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", *args,
+            "git", "--no-pager", "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}",
+            "-c", "log.showSignature=false", "-c", "commit.gpgSign=false", *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
+            env={**os.environ, "GIT_ALLOW_PROTOCOL": "", "GIT_NO_LAZY_FETCH": "1"},
             creationflags=0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW on Windows
         )
         stdout, stderr = await proc.communicate()
@@ -119,7 +121,7 @@ def _workspace_git_options(sandbox_dir: str) -> tuple[str, ...]:
     dot_git = os.path.join(sandbox_dir, ".git")
     if not os.path.isdir(dot_git) or os.path.islink(dot_git):
         return ()
-    return ("--git-dir=.git", "--work-tree=.", "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}")
+    return ("--git-dir=.git", "--work-tree=.")
 
 
 async def _reset_workspace(sandbox_dir: str, revision: str) -> bool:
@@ -139,7 +141,7 @@ async def git_log(sandbox_dir: str) -> list[dict]:
         return []
 
     # Query log: hash|unix_timestamp|message
-    code, out, _ = await run_git_cmd(sandbox_dir, *options, "log", "--pretty=format:%H|%ct|%s")
+    code, out, _ = await run_git_cmd(sandbox_dir, *options, "log", "--no-show-signature", "--pretty=format:%H|%ct|%s")
     if code != 0 or not out:
         return []
 

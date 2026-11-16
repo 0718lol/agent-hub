@@ -137,10 +137,18 @@ async def export_workflow(conversation_id: str, request: Request):
     }
 
 
+class ImportedLLMSettings(BaseModel):
+    provider: str = "openai"
+    base_url: str = ""
+    model: str = ""
+    temperature: float | None = None
+    max_tokens: int | None = None
+
+
 class WorkflowImport(BaseModel):
     custom_agents: list[dict] = Field(default_factory=list)
     hil: HILSettings | None = None
-    llm: dict | None = None
+    llm: ImportedLLMSettings | None = None
 
 
 @router.post("/workflow/import")
@@ -173,12 +181,12 @@ async def import_workflow(body: WorkflowImport, request: Request):
     llm = body.llm
     if llm:
         llm_client.configure(
-            provider=llm.get("provider", "openai"),
-            api_key=llm_client.api_key, # preserve current api key
-            base_url=llm.get("base_url", ""),
-            model=llm.get("model", ""),
-            temperature=llm.get("temperature"),
-            max_tokens=llm.get("max_tokens"),
+            provider=llm.provider,
+            api_key=llm_client.retained_api_key(llm.provider, llm.base_url),
+            base_url=llm.base_url,
+            model=llm.model,
+            temperature=llm.temperature,
+            max_tokens=llm.max_tokens,
         )
         save_llm_config(llm_client, settings)
 

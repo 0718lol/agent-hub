@@ -127,6 +127,21 @@ async def test_workflow_round_trip_and_compilation_are_tenant_scoped(monkeypatch
             original = owner_workflow["custom_agents"][0]
             assert copy["agent_id"] != original["agent_id"]
             assert copy["system_prompt"] == original["system_prompt"]
+
+            same_endpoint = await first.post("/api/workflow/import", json=owner_workflow)
+            assert same_endpoint.status_code == 200
+            assert (await first.get("/api/settings/llm")).json()["api_key_set"] is True
+
+            # Changing the model origin must clear the previous key, including after a client reload.
+            monkeypatch.setattr(llm_client._default, "api_key", "inherited-test-key")
+            different_endpoint = await first.post("/api/workflow/import", json={
+                "llm": {**owner_workflow["llm"], "base_url": "https://other.example/v1"},
+            })
+            assert different_endpoint.status_code == 200
+            llm_client.evict(tenants[0])
+            model_config = (await first.get("/api/settings/llm")).json()
+            assert model_config["base_url"] == "https://other.example/v1"
+            assert model_config["api_key_set"] is False
         finally:
             for tenant in tenants:
                 llm_client.evict(tenant)

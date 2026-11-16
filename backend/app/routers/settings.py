@@ -60,7 +60,7 @@ async def update_llm_settings(s: LLMSettings):
         thinking_mode = "disabled"
     llm_client.configure(
         provider=s.provider,
-        api_key=s.api_key if s.api_key else llm_client.api_key,
+        api_key=s.api_key or llm_client.retained_api_key(s.provider, s.base_url),
         base_url=s.base_url,
         model=s.model,
         temperature=s.temperature,

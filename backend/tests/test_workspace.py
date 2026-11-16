@@ -1,5 +1,6 @@
 """Generated workspace path validation tests."""
 
+import subprocess
 from unittest.mock import AsyncMock
 
 from httpx import ASGITransport, AsyncClient
@@ -52,6 +53,13 @@ async def test_sandbox_history_and_rollback_are_scoped_to_workspace(tmp_path, mo
         url = "/api/sandbox/conv_pm"
         assert (await client.get(f"{url}/commits", headers=other)).json() == []
         assert (await client.post(f"{url}/rollback", headers=other, json={"commit_hash": first})).json()["status"] == "error"
+        tool_url = "/api/runtime-tools/file_read/test"
+        payload = {"params": {"conversation_id": owner_id, "path": "index.txt"}}
+        assert (await client.post(tool_url, headers=other, json=payload)).status_code == 403
+        payload["params"]["conversation_id"] = "conv_pm"
+        own_result = await client.post(tool_url, json=payload)
+        assert own_result.json()["success"] is True
+        assert (await client.post(tool_url, headers=other, json=payload)).json()["success"] is False
         history = (await client.get(f"{url}/commits")).json()
         assert [item["hash"] for item in history[:2]] == [second, first]
 
@@ -72,6 +80,31 @@ async def test_sandbox_history_and_rollback_are_scoped_to_workspace(tmp_path, mo
         assert file.read_text() == "first"
         assert not scratch.exists()
         manager.broadcast.assert_awaited_once()
+
+
+async def test_git_history_does_not_execute_repository_signature_verifier(tmp_path):
+    from app.core.git_sandbox import git_checkpoint, git_log, run_git_cmd
+
+    (tmp_path / "index.txt").write_text("commit data")
+    assert await git_checkpoint(str(tmp_path), "Signed checkpoint")
+    _, original, _ = await run_git_cmd(str(tmp_path), "cat-file", "-p", "HEAD")
+    header, message = original.split("\n\n", 1)
+    signature = "gpgsig -----BEGIN PGP SIGNATURE-----\n \n c2ln\n -----END PGP SIGNATURE-----"
+    commit = subprocess.run(
+        ["git", "hash-object", "-t", "commit", "-w", "--stdin"],
+        input=f"{header}\n{signature}\n\n{message}\n",
+        cwd=tmp_path, text=True, capture_output=True, check=True,
+    ).stdout.strip()
+    await run_git_cmd(str(tmp_path), "update-ref", "HEAD", commit)
+
+    verifier = tmp_path / "verifier"
+    verifier.write_text("#!/bin/sh\ntouch .verifier-ran\nexit 1\n")
+    verifier.chmod(0o700)
+    await run_git_cmd(str(tmp_path), "config", "gpg.program", str(verifier))
+    await run_git_cmd(str(tmp_path), "config", "log.showSignature", "true")
+
+    assert (await git_log(str(tmp_path)))[0]["hash"] == commit
+    assert not (tmp_path / ".verifier-ran").exists()
 
 
 async def test_workspace_tools_reject_sibling_paths(tmp_path, monkeypatch):

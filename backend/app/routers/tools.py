@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.agents.custom import AVAILABLE_TOOLS
-from app.core.tenancy import request_user_id
+from app.core.tenancy import conversation_user_id, public_conversation_id, request_user_id, scope_conversation_id
 from app.core.tenant_config import get_tenant_json, set_tenant_json
 
 
@@ -41,10 +41,26 @@ async def list_runtime_tools():
 
 
 @router.post("/runtime-tools/{tool_name}/test")
-async def test_runtime_tool(tool_name: str, body: ToolTestRequest = ToolTestRequest()):
+async def test_runtime_tool(tool_name: str, request: Request, body: ToolTestRequest = ToolTestRequest()):
     """Manually test an executable tool with given params."""
-    from app.tools import execute_tool_call
-    result = await execute_tool_call(tool_name, body.params)
+    from app.tools import execute_tool_call, get_tool
+
+    params = dict(body.params)
+    tool = get_tool(tool_name)
+    if tool and "conversation_id" in tool.parameters.get("properties", {}):
+        user_id = request_user_id(request)
+        conversation_id = params.get("conversation_id", "default")
+        if not isinstance(conversation_id, str):
+            raise HTTPException(status_code=422, detail="Invalid conversation ID")
+        owner = conversation_user_id(conversation_id)
+        if owner is not None and owner != user_id:
+            raise HTTPException(status_code=403, detail="Conversation belongs to another tenant")
+        try:
+            params["conversation_id"] = scope_conversation_id(user_id, public_conversation_id(conversation_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    result = await execute_tool_call(tool_name, params)
     return {
         "tool": tool_name,
         "success": result.success,
