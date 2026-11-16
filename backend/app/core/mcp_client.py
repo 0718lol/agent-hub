@@ -5,6 +5,7 @@ import os
 import sys
 
 from app.core.subprocess_security import limit_windows_process, safe_terminate_process_tree
+from app.core.workspace import resolve_workspace
 
 _logger = logging.getLogger("mcp_client")
 
@@ -261,9 +262,10 @@ class SystemMCPServer:
         if not conversation_id:
             return {"isError": True, "content": [{"type": "text", "text": "Error: conversation_id is required to resolve sandboxed paths"}]}
 
-        workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conversation_id)
-        os.makedirs(sandbox_dir, exist_ok=True)
+        workspace = resolve_workspace(conversation_id)
+        if workspace is None:
+            return {"isError": True, "content": [{"type": "text", "text": "Error: Invalid conversation workspace"}]}
+        sandbox_dir = str(workspace)
 
         try:
             if tool_name == "workspace_list_dir":

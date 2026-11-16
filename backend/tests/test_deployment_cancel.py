@@ -1,12 +1,14 @@
 """Tests for deployment cancellation admission and worker finalization."""
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
-from app.main import cancel_deployment
-from app.services.deployment_queue import DeploymentJob, deployment_queue
+from app.main import cancel_deployment, cleanup_deployments, deployment_action, retry_deployment
+from app.services.deployment_queue import DeploymentJob, DeploymentQueueUnavailable, deployment_queue
 from app.workers import deployment_worker
 
 
@@ -14,6 +16,53 @@ def _request() -> Request:
     request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
     request.state.tenant_id = "api-client"
     return request
+
+
+@pytest.mark.parametrize("action", ["retry", "rollback", "offline", "cleanup"])
+async def test_deployment_actions_report_unavailable_queue(monkeypatch, action):
+    job = DeploymentJob(
+        id="f" * 32,
+        conversation_id="tenant__api-client__conv__demo",
+        user_id="api-client",
+        target="api",
+        provider="docker-runtime",
+    )
+    monkeypatch.setattr(deployment_queue, "get", AsyncMock(return_value=job))
+    monkeypatch.setattr(deployment_queue, "enqueue", AsyncMock(side_effect=DeploymentQueueUnavailable("Worker unavailable")))
+
+    with pytest.raises(HTTPException) as exc_info:
+        if action == "retry":
+            await retry_deployment(job.id, _request())
+        elif action == "cleanup":
+            await cleanup_deployments(_request())
+        else:
+            await deployment_action(job.id, action, _request())
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Worker unavailable"
+
+
+async def test_cleanup_keeps_old_queued_and_running_deployments(monkeypatch):
+    from app.core.config import settings
+
+    old = (datetime.now(UTC) - timedelta(days=settings.deployment_retention_days + 1)).isoformat()
+    jobs = {
+        status: DeploymentJob(
+            id=status,
+            conversation_id="tenant__api-client__conv__demo",
+            user_id="api-client",
+            target="api",
+            status=status,
+            created_at=old,
+        )
+        for status in ("queued", "running", "failed")
+    }
+    remove = AsyncMock()
+    monkeypatch.setattr(deployment_worker.deployment_queue, "indexed_job_ids", AsyncMock(return_value=list(jobs)))
+    monkeypatch.setattr(deployment_worker.deployment_queue, "get", AsyncMock(side_effect=jobs.get))
+    monkeypatch.setattr(deployment_worker, "_remove_deployment", remove)
+
+    assert await deployment_worker.cleanup_deployments("api-client") == 1
+    remove.assert_awaited_once_with(jobs["failed"])
 
 
 @pytest.mark.asyncio

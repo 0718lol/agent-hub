@@ -40,10 +40,9 @@ def orchestration_mocks(mock_ws_manager, monkeypatch):
     """
 
     # ---- 1. WebSocket manager ----
-    # Patch both the canonical source *and* the orchestrator module-level binding,
-    # because ``agent_orchestrator`` imported it with ``from … import manager``.
-    monkeypatch.setattr("app.core.websocket.manager", mock_ws_manager)
-    monkeypatch.setattr("app.services.agent_orchestrator.manager", mock_ws_manager)
+    # Modules that import the singleton while this fixture is active must keep
+    # the real manager after teardown.
+    monkeypatch.setattr("app.core.websocket.manager.broadcast", mock_ws_manager.broadcast)
 
     # ---- 2. LLM client ----
     # Patch attributes on the singleton object so every module that imported it
@@ -333,10 +332,11 @@ async def test_best_of_n_publishes_selected_code_to_canvas(
     from app.services import agent_orchestrator
 
     selected = "```html\n<!doctype html><html><body>Selected</body></html>\n```"
-    monkeypatch.setattr(agent_orchestrator.quality_gate, "enabled", True)
-    monkeypatch.setattr(agent_orchestrator.quality_gate, "best_of_n", 2)
+    gate = agent_orchestrator.quality_gate._default
+    monkeypatch.setattr(gate, "enabled", True)
+    monkeypatch.setattr(gate, "best_of_n", 2)
     monkeypatch.setattr(
-        agent_orchestrator.quality_gate,
+        gate,
         "best_of_n_generate",
         AsyncMock(return_value=(selected, {"total_score": 95}, [])),
     )
@@ -392,6 +392,26 @@ async def test_quality_retry_does_not_replace_final_code_artifact(
     code_events = _filter_messages(mock_ws_manager.messages, msg_type="code")
     assert code_events[-1]["artifact_id"] == 1
     assert "Initial" in code_events[-1]["code"]
+
+
+@pytest.mark.parametrize("decision", ["Proceed", "Terminate"])
+async def test_checkpoint_recovery_accepts_stored_option_strings(
+    mock_ws_manager, orchestration_mocks, decision
+):
+    from app.core.crud import save_hil_checkpoint
+    from app.services import agent_orchestrator
+
+    conversation_id = "test_conv_review_recovery"
+    save_hil_checkpoint(
+        conversation_id, "agent_pm", "END", {}, "Continue?",
+        ["*Proceed::Approve the result", "Terminate::End the workflow"], "Original request",
+    )
+
+    await agent_orchestrator.resume_graph_from_checkpoint(conversation_id, decision)
+
+    assert agent_orchestrator.get_pending_hil_checkpoint(conversation_id) is None
+    assert mock_ws_manager.messages[-1]["is_generating"] is False
+    assert ("已终止" if decision == "Terminate" else "审核通过") in mock_ws_manager.messages[-2]["content"]["text"]
 
 
 @pytest.mark.asyncio

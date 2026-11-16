@@ -1,8 +1,11 @@
 import asyncio
 import json
 import logging
+from uuid import uuid4
 
 from fastapi import WebSocket
+
+from app.core.tenancy import public_conversation_id
 
 logger = logging.getLogger("websocket_manager")
 
@@ -12,12 +15,11 @@ class ConnectionManager:
         self.active_connections: dict[str, set[WebSocket]] = {}
         self.locks: dict[WebSocket, asyncio.Lock] = {}
         self.pubsub_task: asyncio.Task | None = None
+        self._publisher_id = uuid4().hex
 
     async def connect(self, websocket: WebSocket, conversation_id: str):
         await websocket.accept()
-        if conversation_id not in self.active_connections:
-            self.active_connections[conversation_id] = set()
-        self.active_connections[conversation_id].add(websocket)
+        self.active_connections.setdefault(conversation_id, set()).add(websocket)
         self.locks[websocket] = asyncio.Lock()
 
         # Start the background Pub/Sub listener task lazily on the first connection
@@ -32,9 +34,7 @@ class ConnectionManager:
         self.locks.pop(websocket, None)
 
     async def broadcast(self, conversation_id: str, message: dict):
-        """Broadcasts a message to all connected clients under a conversation_id.
-        If Redis is online, publishes to Redis Pub/Sub. Otherwise, broadcasts locally.
-        """
+        """Deliver locally and use Redis Pub/Sub to reach clients on other processes."""
         from app.core.redis import redis_manager
 
         if await redis_manager.check_connection():
@@ -42,34 +42,43 @@ class ConnectionManager:
                 client = redis_manager.get_client()
                 payload = {
                     "conversation_id": conversation_id,
-                    "message": message
+                    "message": message,
+                    "publisher_id": self._publisher_id,
                 }
                 await client.publish("agenthub:ws_broadcast", json.dumps(payload, ensure_ascii=False))
-                return
             except Exception as e:
-                logger.warning(f"Failed to publish broadcast to Redis: {e}. Falling back to local broadcast.")
+                logger.warning(f"Could not relay WebSocket broadcast through Redis: {e}")
                 redis_manager._is_connected = False
 
-        # Fallback to local broadcast
+        # Local delivery works even before the Redis subscription is ready.
         await self._local_broadcast(conversation_id, message)
+
+    @staticmethod
+    def _encode(message: dict) -> str:
+        outgoing = dict(message)
+        if outgoing.get("conversation_id"):
+            outgoing["conversation_id"] = public_conversation_id(outgoing["conversation_id"])
+        return json.dumps(outgoing, ensure_ascii=False)
+
+    async def _send_text(self, websocket: WebSocket, text: str) -> None:
+        lock = self.locks.get(websocket)
+        if lock:
+            async with lock:
+                await asyncio.wait_for(websocket.send_text(text), timeout=5.0)
+        else:
+            await asyncio.wait_for(websocket.send_text(text), timeout=5.0)
+
+    async def send(self, websocket: WebSocket, message: dict) -> None:
+        await self._send_text(websocket, self._encode(message))
 
     async def _local_broadcast(self, conversation_id: str, message: dict):
         """Broadcasts a message directly to WebSockets hosted on this local server process."""
         if conversation_id in self.active_connections:
-            from app.core.tenancy import public_conversation_id
-            outgoing = dict(message)
-            if outgoing.get("conversation_id"):
-                outgoing["conversation_id"] = public_conversation_id(outgoing["conversation_id"])
-            data = json.dumps(outgoing, ensure_ascii=False)
+            data = self._encode(message)
             stale_connections = []
             for connection in list(self.active_connections[conversation_id]):
-                lock = self.locks.get(connection)
                 try:
-                    if lock:
-                        async with lock:
-                            await asyncio.wait_for(connection.send_text(data), timeout=5.0)
-                    else:
-                        await asyncio.wait_for(connection.send_text(data), timeout=5.0)
+                    await self._send_text(connection, data)
                 except TimeoutError:
                     logger.warning(f"WebSocket send timeout for connection in conv {conversation_id}, removing stale connection")
                     stale_connections.append(connection)
@@ -77,8 +86,7 @@ class ConnectionManager:
                     stale_connections.append(connection)
             # Clean up stale connections that failed to receive
             for conn in stale_connections:
-                self.active_connections.get(conversation_id, set()).discard(conn)
-                self.locks.pop(conn, None)
+                self.disconnect(conn, conversation_id)
 
     async def _redis_listener(self):
         """Background listener subscribing to the Redis broadcast channel.
@@ -114,6 +122,8 @@ class ConnectionManager:
                         message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                         if message:
                             data = json.loads(message["data"])
+                            if data.get("publisher_id") == self._publisher_id:
+                                continue
                             conv_id = data.get("conversation_id")
                             payload = data.get("message")
                             if conv_id and payload:

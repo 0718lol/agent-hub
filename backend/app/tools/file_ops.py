@@ -3,16 +3,11 @@
 import logging
 import os
 
-from app.core.workspace import is_safe_conversation_id, resolve_workspace
+from app.core.workspace import resolve_workspace
 
 from .registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("tool_file_ops")
-
-# Sandbox root directory (per-conversation isolation)
-workspace_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-_SANDBOX_ROOT = os.path.join(workspace_dir, "agenthub_export")
-os.makedirs(_SANDBOX_ROOT, exist_ok=True)
 
 # Limits
 _MAX_READ_SIZE = 50000  # 50KB max read
@@ -44,19 +39,6 @@ def _read_text_file(path: str) -> str:
 
 def _safe_path(conversation_id: str, filepath: str) -> str | None:
     """Resolve path within sandbox, preventing directory traversal."""
-    if not is_safe_conversation_id(conversation_id):
-        return None
-    sandbox_dir = os.path.realpath(os.path.join(_SANDBOX_ROOT, conversation_id))
-    os.makedirs(sandbox_dir, exist_ok=True)
-    resolved = os.path.realpath(os.path.join(sandbox_dir, filepath))
-    # Security: ensure resolved path is within sandbox
-    if not resolved.startswith(sandbox_dir + os.sep) and resolved != sandbox_dir:
-        return None
-    return resolved
-
-
-def _safe_workspace_path(conversation_id: str, filepath: str) -> str | None:
-    """Resolve path within the unified agenthub_export workspace sandbox, preventing directory traversal."""
     workspace = resolve_workspace(conversation_id)
     if workspace is None:
         return None
@@ -270,7 +252,7 @@ class FileViewWindowedTool(AgentTool):
         if not filepath:
             return ToolResult(success=False, error="文件路径不能为空")
 
-        safe = _safe_workspace_path(conv_id, filepath)
+        safe = _safe_path(conv_id, filepath)
         if safe is None:
             return ToolResult(success=False, error="路径越界：不允许访问沙盒外文件")
 
@@ -371,7 +353,7 @@ class FileEditLineTool(AgentTool):
         if not filepath:
             return ToolResult(success=False, error="文件路径不能为空")
 
-        safe = _safe_workspace_path(conv_id, filepath)
+        safe = _safe_path(conv_id, filepath)
         if safe is None:
             return ToolResult(success=False, error="路径越界：不允许访问沙盒外文件")
 

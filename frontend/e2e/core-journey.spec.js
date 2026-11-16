@@ -62,3 +62,27 @@ test('用户可以取消正在运行的构建任务', async ({ page }) => {
   await expect(sidePanel.getByText('构建已被用户取消')).toBeVisible({ timeout: 5_000 })
   await expect(sidePanel.getByRole('button', { name: '启动流水线' })).toBeVisible()
 })
+
+test('清空历史请求失败时保留消息', async ({ page }) => {
+  await installMockWebSocket(page)
+  await installMockBackend(page)
+  await page.route('**/api/conversations/conv_pm/messages', async (route) => {
+    if (route.request().method() !== 'DELETE') return route.fallback()
+    return route.fulfill({ status: 503, json: { detail: '暂时不可用' } })
+  })
+
+  await page.goto('/')
+  await page.getByLabel('输入消息').fill('生成一个团队待办工具')
+  await page.getByRole('button', { name: '发送消息' }).click()
+  const reply = page.getByText('第一版工具已经生成，可以在右侧预览。')
+  await expect(reply).toBeVisible()
+
+  const dialogs = []
+  page.on('dialog', async (dialog) => {
+    dialogs.push(dialog.message())
+    await dialog.accept()
+  })
+  await page.getByRole('button', { name: '清空当前 Agent 聊天记录' }).click()
+  await expect.poll(() => dialogs).toContain('清空失败，请稍后再试。')
+  await expect(reply).toBeVisible()
+})

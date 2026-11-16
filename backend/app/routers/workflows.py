@@ -1,32 +1,25 @@
-import json
-import re
+from hashlib import sha256
+from pprint import pformat
 
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from app.core.async_wrappers import async_get_custom_agents
+from app.core.concurrency import generation_admission
 from app.core.config import settings
 from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config
-from app.core.database import get_custom_agents
-from app.core.llm_client import llm_client
-from app.services.agent_registry import agent_registry
-
-
-def _save_llm_config():
-    save_llm_config(llm_client, settings)
-
-from typing import Any, Dict
-
-from fastapi import APIRouter, Request
-from pydantic import BaseModel
-
-from app.core.async_wrappers import async_delete_memory_item, async_get_project_memory, async_save_memory_item
 from app.core.database import (
     async_delete_memory_item_cached,
     async_get_project_memory_cached,
     async_save_memory_item_cached,
-    delete_memory_item,
-    get_project_memory,
-    save_memory_item,
 )
+from app.core.git_sandbox import git_log, git_rollback_to
+from app.core.llm_client import llm_client
 from app.core.tenancy import request_user_id, scope_conversation_id
 from app.core.websocket import manager
+from app.core.workspace import resolve_workspace
+from app.routers.settings import HILSettings
+from app.services.agent_registry import agent_registry
 
 router = APIRouter(tags=["workflows"])
 
@@ -40,11 +33,11 @@ class MemoryUpdate(BaseModel):
 async def get_sandbox_commits(conversation_id: str, request: Request):
     """Retrieve visual Git commits history in the dynamic vertical timeline."""
     try:
-        from app.core.git_sandbox import get_sandbox_commits_log
-        commits = await get_sandbox_commits_log(scope_conversation_id(request_user_id(request), conversation_id))
-        return commits
-    except Exception as e:
-        return {"error": str(e), "commits": []}
+        scoped_id = scope_conversation_id(request_user_id(request), conversation_id)
+    except ValueError as exc:
+        return {"error": str(exc), "commits": []}
+    workspace = resolve_workspace(scoped_id, create=False)
+    return await git_log(str(workspace)) if workspace else []
 
 
 class SandboxRollbackRequest(BaseModel):
@@ -58,22 +51,36 @@ async def rollback_sandbox(conversation_id: str, body: SandboxRollbackRequest, r
     if not commit_hash:
         return {"status": "error", "message": "Missing commit_hash parameter"}
 
+    user_id = request_user_id(request)
     try:
-        from app.core.git_sandbox import rollback_sandbox_to_commit
-        scoped_id = scope_conversation_id(request_user_id(request), conversation_id)
-        success = await rollback_sandbox_to_commit(scoped_id, commit_hash)
-        if success:
-            # Broadcast update event to frontend to refresh sandbox explorer and show warning log
-            await manager.broadcast(scoped_id, {
-                "type": "sandbox_rollback",
-                "conversation_id": scoped_id,
-                "commit_hash": commit_hash,
-                "message": f"🔄 已成功手动回滚至 Git 版本检查点: {commit_hash[:7]}"
-            })
-            return {"status": "ok", "message": f"Successfully rolled back sandbox to {commit_hash}"}
-        return {"status": "error", "message": "Rollback failed"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+        scoped_id = scope_conversation_id(user_id, conversation_id)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    workspace = resolve_workspace(scoped_id, create=False)
+    if workspace is None:
+        return {"status": "error", "message": "Workspace not found"}
+
+    admitted, reason = await generation_admission.acquire(user_id, scoped_id)
+    if not admitted:
+        return {"status": "error", "message": reason}
+    try:
+        commits = await git_log(str(workspace))
+        matching = [item["hash"] for item in commits if item["hash"].startswith(commit_hash.lower())]
+        if len(commit_hash) < 7 or len(matching) != 1:
+            return {"status": "error", "message": "Unknown or ambiguous commit checkpoint"}
+        commit_hash = matching[0]
+        if not await git_rollback_to(str(workspace), commit_hash):
+            return {"status": "error", "message": "Rollback failed"}
+    finally:
+        await generation_admission.release(user_id, scoped_id)
+
+    await manager.broadcast(scoped_id, {
+        "type": "sandbox_rollback",
+        "conversation_id": scoped_id,
+        "commit_hash": commit_hash,
+        "message": f"🔄 已成功手动回滚至 Git 版本检查点: {commit_hash[:7]}",
+    })
+    return {"status": "ok", "message": f"Successfully rolled back sandbox to {commit_hash}"}
 
 
 @router.get("/memory/{conversation_id}")
@@ -114,14 +121,9 @@ async def delete_memory_api(conversation_id: str, key: str, request: Request):
 # ---- Langflow Workflow Serialization & Compiler REST APIs ----
 
 @router.get("/workflow/export/{conversation_id}")
-async def export_workflow(conversation_id: str):
+async def export_workflow(conversation_id: str, request: Request):
     """Export current workflow configuration, custom agents, and settings as JSON."""
-    hil = get_hil_settings()
-    custom_agents_data = []
-    for ca in get_custom_agents():
-        custom_agents_data.append(ca)
-
-    workflow_data = {
+    return {
         "conversation_id": conversation_id,
         "llm": {
             "provider": llm_client.provider,
@@ -130,50 +132,74 @@ async def export_workflow(conversation_id: str):
             "temperature": llm_client.temperature,
             "max_tokens": llm_client.max_tokens,
         },
-        "hil": hil,
-        "custom_agents": custom_agents_data
+        "hil": get_hil_settings(),
+        "custom_agents": await async_get_custom_agents(request_user_id(request)),
     }
-    return workflow_data
+
+
+class ImportedLLMSettings(BaseModel):
+    provider: str = "openai"
+    base_url: str = ""
+    model: str = ""
+    temperature: float | None = None
+    max_tokens: int | None = None
+
+
+class WorkflowImport(BaseModel):
+    custom_agents: list[dict] = Field(default_factory=list)
+    hil: HILSettings | None = None
+    llm: ImportedLLMSettings | None = None
 
 
 @router.post("/workflow/import")
-async def import_workflow(body: dict):
+async def import_workflow(body: WorkflowImport, request: Request):
     """Import and reconstruct workflow custom agents and settings from JSON config."""
-    custom_agents = body.get("custom_agents", [])
+    user_id = request_user_id(request)
+    custom_agents = [agent for agent in body.custom_agents if agent.get("agent_id")]
+    for agent in custom_agents:
+        aid = agent["agent_id"]
+        if not isinstance(aid, str):
+            raise HTTPException(status_code=422, detail="Invalid agent ID")
+        try:
+            scope_conversation_id(user_id, f"conv_{aid}")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     imported_count = 0
-    for ca in custom_agents:
-        aid = ca.get("agent_id")
-        if aid:
-            await agent_registry.register_custom_agent(ca)
-            imported_count += 1
+    for agent in custom_agents:
+        try:
+            await agent_registry.register_custom_agent(agent, user_id)
+        except PermissionError:
+            # Re-imports of a shared workflow update the same tenant-owned copy.
+            digest = sha256(f"{user_id}:{agent['agent_id']}".encode()).hexdigest()[:24]
+            await agent_registry.register_custom_agent({**agent, "agent_id": f"agent_imported_{digest}"}, user_id)
+        imported_count += 1
 
-    hil = body.get("hil")
-    if hil:
-        save_hil_settings(hil)
+    if body.hil:
+        save_hil_settings(body.hil.model_dump())
 
-    llm = body.get("llm")
+    llm = body.llm
     if llm:
         llm_client.configure(
-            provider=llm.get("provider", "openai"),
-            api_key=llm_client.api_key, # preserve current api key
-            base_url=llm.get("base_url", ""),
-            model=llm.get("model", ""),
-            temperature=llm.get("temperature"),
-            max_tokens=llm.get("max_tokens"),
+            provider=llm.provider,
+            api_key=llm_client.retained_api_key(llm.provider, llm.base_url),
+            base_url=llm.base_url,
+            model=llm.model,
+            temperature=llm.temperature,
+            max_tokens=llm.max_tokens,
         )
-        _save_llm_config()
+        save_llm_config(llm_client, settings)
 
     return {"status": "ok", "imported_agents_count": imported_count}
 
 
 @router.post("/workflow/compile/{conversation_id}")
-async def compile_workflow(conversation_id: str):
-    """Compile visually designed multi-agent team and guards into a standalone, 0-dependency Python script."""
+async def compile_workflow(conversation_id: str, request: Request):
+    """Compile a tenant's multi-agent team and guards into a standalone script."""
     from app.services.agent_orchestrator import get_agents
-    AGENTS = get_agents()
-    # Serialize agents data
+
     agents_str_dict = {}
-    for aid, agent in AGENTS.items():
+    for aid, agent in get_agents(request_user_id(request)).items():
         agents_str_dict[aid] = {
             "name": getattr(agent, "name", ""),
             "avatar": getattr(agent, "avatar", "🤖"),
@@ -184,6 +210,9 @@ async def compile_workflow(conversation_id: str):
         }
 
     hil = get_hil_settings()
+    cooldown_steps = hil.get("cooldown_steps", 2)
+    if not isinstance(cooldown_steps, int) or cooldown_steps < 1:
+        cooldown_steps = 2
 
     # Standalone code template
     code_content = f"""# -*- coding: utf-8 -*-
@@ -304,12 +333,12 @@ class StateGraph:
 
 
 # ---- EXPORTED CONFIGURATION ----
-AGENTS = {json.dumps(agents_str_dict, ensure_ascii=False, indent=4)}
+AGENTS = {pformat(agents_str_dict, sort_dicts=False)}
 LLM_CONFIG = {{
-    "provider": "{llm_client.provider}",
-    "base_url": "{llm_client.base_url}",
-    "model": "{llm_client.model}",
-    "api_key": "{llm_client.api_key if llm_client.api_key else ''}"
+    "provider": {llm_client.provider!r},
+    "base_url": {llm_client.base_url!r},
+    "model": {llm_client.model!r},
+    "api_key": os.environ.get("AGENTHUB_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", ""),
 }}
 
 # ---- STANDALONE LLM CHAT CLIENT ----
@@ -551,8 +580,8 @@ async def main_flow(task_text, human_input_mode, cooldown_steps):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Exported Standalone Agent Team")
     parser.add_argument("--task", type=str, required=True, help="Task prompt for the agent team")
-    parser.add_argument("--hil", type=str, default="{hil.get('human_input_mode', 'NEVER')}", choices=["NEVER", "ALWAYS", "COOLDOWN"], help="Human-in-the-loop mode")
-    parser.add_argument("--cooldown", type=int, default={hil.get('cooldown_steps', 2)}, help="Cooldown steps for HIL")
+    parser.add_argument("--hil", type=str, default={hil.get('human_input_mode', 'NEVER')!r}, choices=["NEVER", "ALWAYS", "COOLDOWN"], help="Human-in-the-loop mode")
+    parser.add_argument("--cooldown", type=int, default={cooldown_steps}, help="Cooldown steps for HIL")
 
     args = parser.parse_args()
 

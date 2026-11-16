@@ -312,6 +312,7 @@ export default function MessageBubble({ message, conversationId, isPinned, isLas
       content: {
         text: `[ask_user_reply] ${answer}`,
         target_agent: message.sender,
+        review_id: typeof message.id === 'string' && message.id.startsWith('hil-') ? message.id : undefined,
       },
     })
   }

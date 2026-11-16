@@ -24,7 +24,7 @@ from app.services.agent_orchestrator import (
     run_target_agent_flow,
     run_user_message_flow,
 )
-from app.tools.judge_tools import _pending_interactions
+from app.tools.judge_tools import _pending_interactions, human_review_message, pending_review_message
 
 router = APIRouter()
 logger = get_logger("ws")
@@ -71,6 +71,29 @@ async def _protocol_error(conversation_id: str, text: str) -> None:
     })
 
 
+async def _recoverable_review(conversation_id: str) -> dict | None:
+    if conversation_id in _stop_events:
+        return None
+    try:
+        return await async_get_pending_hil_checkpoint(conversation_id)
+    except Exception as exc:
+        logger.debug(f"Failed to check HIL checkpoint for recovery: {exc}")
+        return None
+
+
+async def _restore_review(websocket: WebSocket, conversation_id: str) -> None:
+    prompt = pending_review_message(conversation_id)
+    if prompt is None:
+        checkpoint = await _recoverable_review(conversation_id)
+        prompt = pending_review_message(conversation_id)
+        if not prompt and checkpoint and checkpoint.get("question") and conversation_id not in _stop_events:
+            prompt = human_review_message(
+                conversation_id, checkpoint["question"], checkpoint["options"], checkpoint["created_at"],
+            )
+    if prompt:
+        await manager.send(websocket, prompt)
+
+
 @router.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     user_id = websocket_user_id(websocket)
@@ -113,18 +136,20 @@ async def _serve_authenticated_websocket(
     )
 
     await manager.connect(websocket, conversation_id)
+
     # Heartbeat task to keep connection alive
     async def _heartbeat():
         while True:
             try:
                 await asyncio.sleep(30)
-                await websocket.send_json({"type": "ping"})
+                await manager.send(websocket, {"type": "ping"})
             except Exception:
                 break
 
     heartbeat_task = asyncio.create_task(_heartbeat())
 
     try:
+        await _restore_review(websocket, conversation_id)
         while True:
             data = await websocket.receive_text()
             try:
@@ -140,60 +165,7 @@ async def _serve_authenticated_websocket(
             if not isinstance(msg_type, str):
                 await _protocol_error(conversation_id, "Message type must be a string")
                 continue
-            content = msg.get("content", {})
-            if not isinstance(content, dict):
-                await _protocol_error(conversation_id, "Message content must be an object")
-                continue
-            text = content.get("text", "")
-            if not isinstance(text, str):
-                await _protocol_error(conversation_id, "Message text must be a string")
-                continue
-            target_agent = content.get("target_agent")
-            if target_agent is not None and not isinstance(target_agent, str):
-                await _protocol_error(conversation_id, "target_agent must be a string")
-                continue
-            sender = "user"
-
-            logger.debug(f"conv={conversation_id} type={msg_type} sender={sender} target_agent={target_agent} text={text[:60]}")
-
-            # Intercept user interaction response if there's a pending interactive judge wait
-            is_active_hil = conversation_id in _pending_interactions
-
-            # Recovery path check
-            is_recovered_hil = False
-            if not is_active_hil:
-                try:
-                    checkpoint = await async_get_pending_hil_checkpoint(conversation_id)
-                    if checkpoint:
-                        is_recovered_hil = True
-                except Exception as e:
-                    logger.debug(f"Failed to check HIL checkpoint for recovery: {e}")
-
-            if is_active_hil or is_recovered_hil:
-                reply_text = text
-                if reply_text.startswith("[ask_user_reply]"):
-                    reply_text = reply_text.replace("[ask_user_reply]", "").strip()
-
-                if is_active_hil:
-                    fut = _pending_interactions.get(conversation_id)
-                    if fut is None:
-                        pass  # Entry removed during await, fall through
-                    elif not fut.done():
-                        with contextlib.suppress(asyncio.InvalidStateError):
-                            fut.set_result(reply_text)
-                else:
-                    # Recovery path: trigger asynchronous recovery task
-                    create_tracked_task(resume_graph_from_checkpoint(conversation_id, reply_text), name=f"resume_graph_{conversation_id}")
-
-                # We still want to save and broadcast this message to display it in the Chat UI as a user reply
-                await async_save_message(conversation_id, sender, content, streaming=False)
-                await manager.broadcast(conversation_id, {
-                    "type": "message",
-                    "conversation_id": conversation_id,
-                    "sender": sender,
-                    "content": {"text": text},
-                    "stream": False,
-                })
+            if msg_type == "pong":
                 continue
 
             # Handle stop generation — must be processed without blocking on
@@ -204,6 +176,9 @@ async def _serve_authenticated_websocket(
                 logger.debug(f"[STOP] conv={conversation_id} event_exists={event is not None} already_set={event.is_set() if event else 'N/A'}")
                 if event:
                     event.set()
+                    pending = _pending_interactions.get(conversation_id)
+                    if pending is not None and not pending.done():
+                        pending.set_result("Terminate")
                 continue
 
             # Handle read receipt
@@ -220,56 +195,81 @@ async def _serve_authenticated_websocket(
                 await handle_verdict(conversation_id, msg, manager)
                 continue
 
+            if msg_type != "message":
+                continue
+            content = msg.get("content", {})
+            if not isinstance(content, dict):
+                await _protocol_error(conversation_id, "Message content must be an object")
+                continue
+            text = content.get("text", "")
+            if not isinstance(text, str):
+                await _protocol_error(conversation_id, "Message text must be a string")
+                continue
+            target_agent = content.get("target_agent")
+            if target_agent is not None and not isinstance(target_agent, str):
+                await _protocol_error(conversation_id, "target_agent must be a string")
+                continue
+
             # Only empty input is ignored. Single-character, numeric, and
             # punctuation replies can carry valid conversational meaning.
-            if sender == "user":
-                stripped = text.strip()
-                if not stripped:
+            if not text.strip():
+                continue
+
+            pending = _pending_interactions.get(conversation_id)
+            checkpoint = None
+            if pending is None:
+                checkpoint = await _recoverable_review(conversation_id)
+                pending = _pending_interactions.get(conversation_id)
+
+            reply_text = text.strip().removeprefix("[ask_user_reply]").strip()
+            review_id = content.get("review_id")
+            if review_id is not None or target_agent == "user_interaction_judge":
+                if pending is not None:
+                    prompt = pending_review_message(conversation_id)
+                    expected = prompt["id"] if prompt else None
+                else:
+                    expected = f"hil-{checkpoint['created_at']}" if checkpoint else None
+                if expected is None or (review_id is not None and review_id != expected):
+                    await _protocol_error(conversation_id, "这条审核请求已结束，请查看当前会话。")
                     continue
+            if pending is not None:
+                if reply_text and not pending.done():
+                    pending.set_result(reply_text)
+                    await _record_user_message(conversation_id, content, text)
+                continue
+            if checkpoint and not reply_text:
+                continue
 
-                admitted, reason = await generation_admission.acquire(user_id, conversation_id)
-                if not admitted:
-                    await manager.broadcast(conversation_id, {
-                        "type": "error",
-                        "conversation_id": conversation_id,
-                        "content": {"text": reason},
-                    })
-                    continue
+            admitted, reason = await generation_admission.acquire(user_id, conversation_id)
+            if not admitted:
+                await _protocol_error(conversation_id, reason)
+                continue
 
-                await asyncio.to_thread(initialize_conversation_goal, conversation_id, stripped)
+            task_started = False
+            try:
+                if not checkpoint:
+                    await asyncio.to_thread(initialize_conversation_goal, conversation_id, text.strip())
+                await _record_user_message(conversation_id, content, text)
 
-            await async_save_message(conversation_id, sender, content, streaming=False)
+                if checkpoint:
+                    flow = resume_graph_from_checkpoint(conversation_id, reply_text)
+                else:
+                    target = get_agents(user_id).get(target_agent) if target_agent else None
+                    if target is not None:
+                        flow = run_target_agent_flow(conversation_id, target, text)
+                    else:
+                        flow = run_user_message_flow(conversation_id, text, target_agent)
 
-            await manager.broadcast(conversation_id, {
-                "type": "message",
-                "conversation_id": conversation_id,
-                "sender": sender,
-                "content": {"text": text},
-                "stream": False,
-            })
-
-            current_agents = get_agents(user_id)
-            if target_agent and target_agent in current_agents:
                 create_tracked_task(
-                    _run_admitted_flow(
-                        user_id,
-                        conversation_id,
-                        run_target_agent_flow(conversation_id, current_agents[target_agent], text),
-                    ),
-                    name=f"target_agent_{conversation_id}",
+                    _run_admitted_flow(user_id, conversation_id, flow),
+                    name=f"agent_flow_{conversation_id}",
                 )
-            elif sender == "user":
-                create_tracked_task(
-                    _run_admitted_flow(
-                        user_id,
-                        conversation_id,
-                        run_user_message_flow(conversation_id, text, target_agent),
-                    ),
-                    name=f"user_flow_{conversation_id}",
-                )
+                task_started = True
+            finally:
+                if not task_started:
+                    await generation_admission.release(user_id, conversation_id)
 
     except WebSocketDisconnect:
-        heartbeat_task.cancel()
         pass
     except Exception:
         logger.exception("WebSocket handler failed for conversation %s", conversation_id)
@@ -277,5 +277,19 @@ async def _serve_authenticated_websocket(
             await websocket.close(code=1011, reason="Internal server error")
     finally:
         manager.disconnect(websocket, conversation_id)
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
         # A browser refresh or brief network loss must not abort generation.
         # The explicit "stop" message remains the only user cancellation path.
+
+
+async def _record_user_message(conversation_id: str, content: dict, text: str) -> None:
+    await async_save_message(conversation_id, "user", content, streaming=False)
+    await manager.broadcast(conversation_id, {
+        "type": "message",
+        "conversation_id": conversation_id,
+        "sender": "user",
+        "content": {"text": text},
+        "stream": False,
+    })

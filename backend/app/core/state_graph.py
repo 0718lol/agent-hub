@@ -253,19 +253,9 @@ class StateGraph:
 
             # 5. Human-in-the-loop Intercept Check
             if next_node and stop_event and not stop_event.is_set():
-                import json
-                import os
+                from app.core.config_persistence import get_hil_settings
 
-                # Load HIL settings safely
-                hil_config_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "hil_config.json")
-                hil_settings = {"human_input_mode": "NEVER", "cooldown_steps": 2}
-                try:
-                    if os.path.exists(hil_config_path):
-                        with open(hil_config_path, encoding="utf-8") as f:
-                            hil_settings = json.load(f)
-                except Exception as e:
-                    logger.warning(f"Failed to load HIL config, using defaults: {e}")
-
+                hil_settings = get_hil_settings()
                 human_input_mode = hil_settings.get("human_input_mode", "NEVER")
                 cooldown_steps = hil_settings.get("cooldown_steps", 2)
 
@@ -280,11 +270,12 @@ class StateGraph:
                 trigger = False
                 if human_input_mode == "ALWAYS":
                     trigger = True
-                elif human_input_mode == "COOLDOWN":
+                elif human_input_mode == "COOLDOWN" and isinstance(cooldown_steps, int) and cooldown_steps > 0:
                     trigger = len(state.get("completed_nodes", [])) % cooldown_steps == 0
 
                 if trigger:
-                    from app.core.database import save_message
+                    from app.core.async_wrappers import async_save_pending_hil
+                    from app.core.database import resolve_hil_checkpoint, save_message
                     from app.tools.judge_tools import UserInteractionJudgeTool
 
                     current_agent_name = current_node.replace("agent_", "").upper()
@@ -308,9 +299,9 @@ class StateGraph:
                     })
 
                     # Save HIL checkpoint to database for power-off/reboot resilience
+                    review_id = None
                     try:
-                        from app.core.database import save_hil_checkpoint
-                        save_hil_checkpoint(
+                        review_id = await async_save_pending_hil(
                             conversation_id=conversation_id,
                             current_node=current_node,
                             next_node=next_node,
@@ -322,14 +313,23 @@ class StateGraph:
                     except Exception as db_ex:
                         logger.error(f"[StateGraph] Failed to save HIL checkpoint: {db_ex}")
 
+                    if stop_event.is_set():
+                        break
+
                     tool = UserInteractionJudgeTool()
                     res = await tool.run({
                         "question": question,
                         "options": options,
-                        "conversation_id": conversation_id
+                        "conversation_id": conversation_id,
+                        "review_id": review_id,
                     })
 
                     decision = res.decision.strip()
+                    if review_id:
+                        try:
+                            await asyncio.to_thread(resolve_hil_checkpoint, conversation_id, decision)
+                        except Exception:
+                            logger.exception("[StateGraph] Failed to resolve HIL checkpoint")
                     if decision.lower() in ("approve", "yes", "y"):
                         logger.info("[HIL Intercept] Approved by user.")
                     elif decision.lower() in ("terminate", "end", "stop"):

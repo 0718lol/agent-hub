@@ -607,6 +607,11 @@ class LLMClient:
             return bool(self.model)
         return bool(self.api_key and self.base_url and self.model)
 
+    def retained_api_key(self, provider: str, base_url: str) -> str:
+        if provider == self.provider and base_url.rstrip("/") == self.base_url:
+            return self.api_key
+        return ""
+
     def is_ollama_active(self) -> bool:
         """Check if local Ollama service is running."""
         import socket
@@ -978,7 +983,10 @@ class TenantAwareLLMClient:
         inherited = self._default
         client.configure(
             provider=config.get("provider") or inherited.provider or settings.llm_provider,
-            api_key=deobfuscate_key(config.get("api_key", "")) or inherited.api_key or settings.llm_api_key,
+            api_key=(
+                deobfuscate_key(config["api_key"]) if "api_key" in config
+                else inherited.api_key or settings.llm_api_key
+            ),
             base_url=config.get("base_url") or inherited.base_url or settings.llm_base_url,
             model=config.get("model") or inherited.model or settings.llm_model,
             temperature=config.get("temperature", inherited.temperature),

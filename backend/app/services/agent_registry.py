@@ -49,8 +49,6 @@ class AgentRegistry:
         self._agents["agent_reviewer"].description = "审查代码质量、安全性、性能"
         self._agents["agent_debugger"].description = "自动分析代码错误并提供最小化修复"
 
-        self.load_custom_agents_sync()
-
     def _set_custom_agent(self, config: dict) -> None:
         aid = config["agent_id"]
         db_tools = config.get("tools", [])
@@ -123,8 +121,8 @@ class AgentRegistry:
         async with self._lock:
             aid = config.get("agent_id") or f"agent_custom_{uuid.uuid4().hex[:12]}"
             existing_owner = self._agent_owners.get(aid)
-            if existing_owner and existing_owner != user_id:
-                raise PermissionError("Custom agent belongs to another tenant")
+            if aid in self._builtin_agent_ids or (existing_owner and existing_owner != user_id):
+                raise PermissionError("Agent ID is already reserved")
             name = config.get("name", "自定义助手")
             avatar = config.get("avatar", "🤖")
             role = config.get("role", "智能助手")

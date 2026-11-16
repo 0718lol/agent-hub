@@ -272,6 +272,172 @@ async def test_read_receipt(ws_app):
                 assert resp["reader"] == "user"
 
 
+@pytest.mark.parametrize("recovering", [False, True], ids=["live", "checkpoint"])
+async def test_control_frames_leave_human_review_pending(ws_app, monkeypatch, recovering):
+    from app.core.tenancy import scope_conversation_id
+    from app.routers import ws as ws_routes
+    from app.tools.judge_tools import _pending_review_messages, human_review_message
+
+    internal_id = scope_conversation_id("api-client", "conv_review")
+    pending = asyncio.get_running_loop().create_future()
+    lookup = ws_routes.async_get_pending_hil_checkpoint
+    resume = AsyncMock()
+    monkeypatch.setattr(ws_routes, "resume_graph_from_checkpoint", resume)
+    options = ["*Approve::Continue the workflow"]
+    if recovering:
+        lookup.return_value = {"question": "Continue?", "options": options, "created_at": "test-review"}
+    else:
+        monkeypatch.setitem(ws_routes._pending_interactions, internal_id, pending)
+        monkeypatch.setitem(_pending_review_messages, internal_id, human_review_message(internal_id, "Continue?", options, "test-review"))
+
+    async with ASGIWebSocketTransport(app=ws_app) as transport:
+        async with httpx.AsyncClient(transport=transport, headers={"x-api-secret": "test-secret"}) as client:
+            async with aconnect_ws("ws://testserver/ws/conv_review", client) as socket:
+                prompt = await _receive_json(socket)
+                assert prompt["id"] == "hil-test-review"
+                assert prompt["conversation_id"] == "conv_review"
+                lookup.reset_mock()
+                await socket.send_json({"type": "pong"})
+                await socket.send_json({"type": "read"})
+                assert (await _receive_json(socket))["type"] == "read"
+                lookup.assert_not_awaited()
+                resume.assert_not_awaited()
+                ws_routes.async_save_message.assert_not_awaited()
+                assert not pending.done()
+
+                await socket.send_json({
+                    "type": "message",
+                    "content": {"text": "[ask_user_reply] Approve", "review_id": prompt["id"]},
+                })
+                assert (await _receive_json(socket))["type"] == "message"
+                ws_routes.async_save_message.assert_awaited_once()
+                if recovering:
+                    await socket.send_json({"type": "read"})
+                    assert (await _receive_json(socket))["type"] == "read"
+                    resume.assert_awaited_once_with(internal_id, "Approve")
+                else:
+                    assert pending.result() == "Approve"
+
+
+async def test_disconnected_tenant_review_waits_for_the_matching_reply(ws_app, monkeypatch):
+    from app.core.tenancy import scope_conversation_id
+    from app.services.webhook_gateway import webhook_gateway
+    from app.tools.judge_tools import UserInteractionJudgeTool
+
+    internal_id = scope_conversation_id("api-client", "conv_offline_review")
+    notification = asyncio.Event()
+
+    async def notify(*args):
+        notification.set()
+
+    monkeypatch.setattr(webhook_gateway, "send_hil_notification", AsyncMock(side_effect=notify))
+    task = asyncio.create_task(UserInteractionJudgeTool().run({"conversation_id": internal_id}))
+    try:
+        await asyncio.wait_for(notification.wait(), 2)
+        assert not task.done()
+
+        async with ASGIWebSocketTransport(app=ws_app) as transport:
+            async with httpx.AsyncClient(transport=transport, headers={"x-api-secret": "test-secret"}) as client:
+                async with aconnect_ws("ws://testserver/ws/conv_offline_review", client) as socket:
+                    prompt = await _receive_json(socket)
+                    assert prompt["sender"] == "user_interaction_judge"
+                    assert "[ask_user:" in prompt["content"]["text"]
+
+                    async def reply(review_id):
+                        await socket.send_json({
+                            "type": "message", "content": {"text": "[ask_user_reply] Yes", "review_id": review_id},
+                        })
+
+                    await reply("hil-old-review")
+                    assert (await _receive_json(socket))["type"] == "error"
+                    assert not task.done()
+                    await reply(prompt["id"])
+                    assert (await asyncio.wait_for(task, 2)).decision == "Yes"
+                    await reply(prompt["id"])
+                    assert (await _receive_json(socket))["type"] == "message"  # original user echo
+                    assert (await _receive_json(socket))["type"] == "error"
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_stop_resolves_an_active_human_review(ws_app, monkeypatch):
+    from app.core.tenancy import scope_conversation_id
+    from app.routers import ws as ws_routes
+
+    internal_id = scope_conversation_id("api-client", "conv_review_stop")
+    event = asyncio.Event()
+    pending = asyncio.get_running_loop().create_future()
+    monkeypatch.setitem(ws_routes._stop_events, internal_id, event)
+    monkeypatch.setitem(ws_routes._pending_interactions, internal_id, pending)
+
+    async with ASGIWebSocketTransport(app=ws_app) as transport:
+        async with httpx.AsyncClient(transport=transport, headers={"x-api-secret": "test-secret"}) as client:
+            async with aconnect_ws("ws://testserver/ws/conv_review_stop", client) as socket:
+                await socket.send_json({"type": "stop"})
+                assert await asyncio.wait_for(pending, timeout=2) == "Terminate"
+                assert event.is_set()
+                ws_routes.async_save_message.assert_not_awaited()
+
+
+async def test_failed_message_write_releases_generation_slot(ws_app):
+    from app.routers import ws as ws_routes
+
+    ws_routes.async_save_message.side_effect = [RuntimeError("temporary storage failure"), None]
+    async with ASGIWebSocketTransport(app=ws_app) as transport:
+        async with httpx.AsyncClient(transport=transport, headers={"x-api-secret": "test-secret"}) as client:
+            with pytest.raises(BaseExceptionGroup) as exc_info:
+                async with aconnect_ws("ws://testserver/ws/conv_retry", client) as socket:
+                    await socket.send_json({"type": "message", "content": {"text": "retry me"}})
+                    await _receive_json(socket)
+            assert _find_ws_disconnect(exc_info.value).code == 1011
+
+            async with aconnect_ws("ws://testserver/ws/conv_retry", client) as socket:
+                await socket.send_json({"type": "message", "content": {"text": "retry me"}})
+                reply = await _receive_json(socket)
+                assert reply["type"] == "message"
+                assert reply["content"]["text"] == "retry me"
+
+
+async def test_redis_relay_delivers_locally_before_subscription(monkeypatch):
+    from app.core.redis import redis_manager
+    from app.core.websocket import ConnectionManager
+
+    manager = ConnectionManager()
+    connection = AsyncMock()
+    redis_client = AsyncMock()
+    redis_client.publish.return_value = 0
+    manager.active_connections["conv_local"] = {connection}
+    monkeypatch.setattr(redis_manager, "check_connection", AsyncMock(return_value=True))
+    monkeypatch.setattr(redis_manager, "get_client", lambda: redis_client)
+
+    await manager.broadcast("conv_local", {"type": "read"})
+
+    redis_client.publish.assert_awaited_once()
+    connection.send_text.assert_awaited_once_with('{"type": "read"}')
+
+
+async def test_human_review_can_be_answered_during_notification(monkeypatch):
+    from app.core.websocket import manager
+    from app.services.webhook_gateway import webhook_gateway
+    from app.tools.judge_tools import UserInteractionJudgeTool, _pending_interactions
+
+    conversation_id = "conv_immediate_hil"
+    monkeypatch.setitem(manager.active_connections, conversation_id, set())
+
+    async def notify(*args):
+        _pending_interactions[conversation_id].set_result("Yes")
+
+    monkeypatch.setattr(manager, "broadcast", AsyncMock(side_effect=notify))
+    monkeypatch.setattr(webhook_gateway, "send_hil_notification", AsyncMock())
+
+    result = await asyncio.wait_for(UserInteractionJudgeTool().run({"conversation_id": conversation_id}), timeout=2)
+
+    assert result.decision == "Yes"
+    assert conversation_id not in _pending_interactions
+
+
 # ---------------------------------------------------------------------------
 # Error handling tests
 # ---------------------------------------------------------------------------

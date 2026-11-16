@@ -134,7 +134,10 @@ async def cleanup_deployments(user_id: str | None = None) -> int:
     jobs = []
     for job_id in await deployment_queue.indexed_job_ids():
         job = await deployment_queue.get(job_id)
-        if job and job.action == "deploy" and (not user_id or job.user_id == user_id):
+        if (
+            job and job.action == "deploy" and job.status in {"success", "failed", "cancelled"}
+            and (not user_id or job.user_id == user_id)
+        ):
             jobs.append(job)
     jobs.sort(key=lambda item: item.created_at, reverse=True)
     cutoff = time.time() - settings.deployment_retention_days * 24 * 60 * 60

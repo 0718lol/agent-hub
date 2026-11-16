@@ -99,9 +99,12 @@ class BaseAgent:
                 # Execute the first tool call found
                 tool_name, params, start_pos, _end_pos = tool_calls[0]
 
-                # Inject conversation_id for ACI and file/browser tools
-                if tool_name in ("file_read", "file_write", "file_list", "browser_action", "file_view_windowed", "file_edit_line", "run_stateful_command", "e2b_python_interpreter") and conversation_id:
-                    params.setdefault("conversation_id", conversation_id)
+                # Workspace tools must use the active conversation even if the model supplied an ID.
+                if conversation_id and tool_name in {
+                    "file_read", "file_write", "file_list", "browser_action", "file_view_windowed",
+                    "file_edit_line", "file_patch_block", "run_stateful_command", "e2b_python_interpreter",
+                }:
+                    params["conversation_id"] = conversation_id
 
                 logger.info(f"Agent '{self.agent_id}' calling tool: {tool_name}({params})")
                 result = await execute_tool_call(tool_name, params)

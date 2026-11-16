@@ -269,6 +269,21 @@ describe("WSClient (websocket.js)", () => {
     expect(wsClient.reconnectTimer).toBeNull()
   })
 
+  it("notifies subscribers when connecting and resets backoff for a different conversation", async () => {
+    const onStatus = vi.fn()
+    const unsubscribe = wsClient.onStatusChange(onStatus)
+    try {
+      wsClient.currentConvId = "conv_previous"
+      wsClient.reconnectAttempts = 4
+      wsClient.connect("conv_next")
+      expect(onStatus).toHaveBeenCalledWith("reconnecting")
+      expect(wsClient.reconnectAttempts).toBe(0)
+      await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith("connected"))
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it("sendTo sends to correct conversation", async () => {
     wsClient.connect("conv_a")
     await vi.waitFor(() => expect(MockWebSocket.instances[0].readyState).toBe(MockWebSocket.OPEN))
