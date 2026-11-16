@@ -3,7 +3,7 @@ import { Plus, Settings, Pin, MoreHorizontal, X, PanelLeftClose, PanelLeftOpen, 
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useTabStore } from '../../stores/tabStore'
-import SettingsPanel from './SettingsPanel'
+import SettingsPanel from '../Settings/SettingsPanel'
 import IconAvatar from '../IconAvatar'
 import AgentSelector from '../Chat/AgentSelector'
 import LocalAgentSelector from '../Chat/LocalAgentSelector'

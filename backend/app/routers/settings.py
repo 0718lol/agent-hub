@@ -2,7 +2,7 @@ from typing import Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config
@@ -28,8 +28,8 @@ class LLMSettings(BaseModel):
 
 
 class HILSettings(BaseModel):
-    human_input_mode: Literal["NEVER", "ALWAYS", "AUTO"] = "NEVER"
-    cooldown_steps: int = 2
+    human_input_mode: Literal["NEVER", "ALWAYS", "AUTO", "COOLDOWN"] = "NEVER"
+    cooldown_steps: int = Field(default=2, gt=0)
 
 
 @router.get("/settings/llm")

@@ -65,3 +65,68 @@ async def test_new_tenant_copies_only_builtin_conversation_templates():
 
     assert any(row["id"] == "conv_pm" for row in rows)
     assert not any(row["id"] == "private_legacy" for row in rows)
+
+
+async def test_workflow_round_trip_and_compilation_are_tenant_scoped(monkeypatch):
+    from app.core.config import settings
+    from app.core.llm_client import llm_client
+    from app.main import app
+
+    monkeypatch.setattr(settings, "llm_api_key", "")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as first, AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as second:
+        tenants = []
+        try:
+            for client, username in [(first, "workflow-first"), (second, "workflow-second")]:
+                registration = await client.post(
+                    "/api/auth/register", json={"username": username, "password": "password123"}
+                )
+                assert registration.status_code == 201
+                tenants.append(registration.json()["user"]["tenant_id"])
+
+            secret = "workflow-test-credential"
+            llm = await first.post("/api/settings/llm", json={
+                "provider": "openai", "api_key": secret, "base_url": "https://example.test/v1", "model": 'quote"test',
+            })
+            assert llm.status_code == 200
+
+            imported = await first.post("/api/workflow/import", json={
+                "custom_agents": [{
+                    "agent_id": "agent_workflow_private",
+                    "name": "Private agent",
+                    "system_prompt": "Only the owner's script should initially contain this prompt.",
+                }],
+                "hil": {"human_input_mode": "COOLDOWN", "cooldown_steps": 3},
+            })
+            assert imported.json() == {"status": "ok", "imported_agents_count": 1}
+            owner_workflow = (await first.get("/api/workflow/export/conv_pm")).json()
+            stranger_workflow = (await second.get("/api/workflow/export/conv_pm")).json()
+            assert len(owner_workflow["custom_agents"]) == 1
+            assert owner_workflow["hil"]["cooldown_steps"] == 3
+            assert stranger_workflow["custom_agents"] == []
+            assert stranger_workflow["hil"]["human_input_mode"] == "NEVER"
+
+            for client in [first, second]:
+                compiled = await client.post("/api/workflow/compile/conv_pm")
+                assert compiled.status_code == 200
+                code = compiled.json()["code"]
+                compile(code, "exported_team.py", "exec")
+                assert ("agent_workflow_private" in code) is (client is first)
+                assert secret not in code
+                assert "AGENTHUB_LLM_API_KEY" in code
+
+            copied = await second.post("/api/workflow/import", json=owner_workflow)
+            assert copied.json() == {"status": "ok", "imported_agents_count": 1}
+            repeated = await second.post("/api/workflow/import", json=owner_workflow)
+            assert repeated.status_code == 200
+            copies = (await second.get("/api/workflow/export/conv_pm")).json()["custom_agents"]
+            assert len(copies) == 1
+            copy = copies[0]
+            original = owner_workflow["custom_agents"][0]
+            assert copy["agent_id"] != original["agent_id"]
+            assert copy["system_prompt"] == original["system_prompt"]
+        finally:
+            for tenant in tenants:
+                llm_client.evict(tenant)

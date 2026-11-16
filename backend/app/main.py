@@ -254,6 +254,7 @@ if FRONTEND_AVATARS.is_dir():
 
 # ---- Initialize database ----
 init_db()
+agent_registry.load_custom_agents_sync()
 bootstrap_admin_from_env()
 
 # ---- Load LLM config at startup ----
@@ -344,6 +345,7 @@ from app.core.tenancy import request_user_id, scope_conversation_id
 from app.services.deployment import DEPLOY_TARGETS
 from app.services.deployment_queue import (
     DeploymentAlreadyQueued,
+    DeploymentJob,
     DeploymentQueueUnavailable,
     deployment_queue,
 )
@@ -417,29 +419,27 @@ async def deploy_project(conversation_id: str, request: Request, options: Deploy
     return {"status": "queued", "target": target, "job_id": job.id}
 
 
-@app.get("/api/deployments/{job_id}")
-async def deployment_status(job_id: str, request: Request):
+async def _get_owned_deployment(job_id: str, user_id: str) -> DeploymentJob:
     if not re.fullmatch(r"[a-f0-9]{32}", job_id):
         raise HTTPException(status_code=400, detail="Invalid deployment ID")
     try:
         job = await deployment_queue.get(job_id)
     except DeploymentQueueUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    if not job or job.user_id != request_user_id(request):
+    if not job or job.user_id != user_id:
         raise HTTPException(status_code=404, detail="Deployment not found")
+    return job
+
+
+@app.get("/api/deployments/{job_id}")
+async def deployment_status(job_id: str, request: Request):
+    job = await _get_owned_deployment(job_id, request_user_id(request))
     return job.public_dict()
 
 
 @app.get("/api/deployments/{job_id}/logs")
 async def download_deployment_logs(job_id: str, request: Request):
-    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
-        raise HTTPException(status_code=400, detail="Invalid deployment ID")
-    try:
-        job = await deployment_queue.get(job_id)
-    except DeploymentQueueUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    if not job or job.user_id != request_user_id(request):
-        raise HTTPException(status_code=404, detail="Deployment not found")
+    job = await _get_owned_deployment(job_id, request_user_id(request))
     labels = {
         "queued": "排队",
         "generate": "生成",
@@ -483,9 +483,9 @@ async def deployment_history(request: Request, limit: int = 30):
 
 @app.post("/api/deployments/{job_id}/retry")
 async def retry_deployment(job_id: str, request: Request):
-    source = await deployment_queue.get(job_id)
     user_id = request_user_id(request)
-    if not source or source.user_id != user_id or source.action != "deploy":
+    source = await _get_owned_deployment(job_id, user_id)
+    if source.action != "deploy":
         raise HTTPException(status_code=404, detail="Deployment not found")
     try:
         job = await deployment_queue.enqueue(
@@ -497,19 +497,15 @@ async def retry_deployment(job_id: str, request: Request):
         )
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "queued", "job_id": job.id}
 
 
 @app.post("/api/deployments/{job_id}/cancel")
 async def cancel_deployment(job_id: str, request: Request):
-    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
-        raise HTTPException(status_code=400, detail="Invalid deployment ID")
-    try:
-        job = await deployment_queue.get(job_id)
-    except DeploymentQueueUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    user_id = request_user_id(request)
-    if not job or job.user_id != user_id or job.action != "deploy":
+    job = await _get_owned_deployment(job_id, request_user_id(request))
+    if job.action != "deploy":
         raise HTTPException(status_code=404, detail="Deployment not found")
     if job.status not in {"queued", "running"}:
         raise HTTPException(status_code=409, detail="该任务已经结束，无法取消")
@@ -526,9 +522,9 @@ async def cancel_deployment(job_id: str, request: Request):
 async def deployment_action(job_id: str, action: str, request: Request):
     if action not in {"rollback", "offline"}:
         raise HTTPException(status_code=404, detail="Unsupported deployment action")
-    source = await deployment_queue.get(job_id)
     user_id = request_user_id(request)
-    if not source or source.user_id != user_id or source.provider != "docker-runtime":
+    source = await _get_owned_deployment(job_id, user_id)
+    if source.provider != "docker-runtime":
         raise HTTPException(status_code=404, detail="API deployment not found")
     try:
         job = await deployment_queue.enqueue(
@@ -540,6 +536,8 @@ async def deployment_action(job_id: str, action: str, request: Request):
         )
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "queued", "job_id": job.id}
 
 
@@ -553,6 +551,8 @@ async def cleanup_deployments(request: Request):
         )
     except DeploymentAlreadyQueued as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeploymentQueueUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "queued", "job_id": job.id}
 
 

@@ -38,9 +38,11 @@ class WSClient {
       return
     }
 
+    if (this.currentConvId !== conversationId) this.reconnectAttempts = 0
     this.currentConvId = conversationId
     this.shouldReconnect = true
     clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
 
     if (this.ws) {
       const oldWs = this.ws
@@ -53,7 +55,7 @@ class WSClient {
 
     const ws = new WebSocket(url)
     this.ws = ws
-    this.status = 'reconnecting'
+    this._setStatus('reconnecting')
 
     ws.onopen = () => {
       if (this.ws !== ws) return // Safe guard against stale connections
@@ -128,8 +130,7 @@ class WSClient {
   }
 
   /**
-   * 强制发送：保证消息送达。如果 ws 未连接到 targetConvId，先连接再发。
-   * 比 send() 安全，不会因 disconnect 丢失队列。
+   * 向指定会话发送消息。如果连接尚未建立，先排队并发起连接。
    */
   sendTo(targetConvId, data) {
     const json = JSON.stringify(data)
@@ -151,6 +152,7 @@ class WSClient {
   disconnect() {
     this.shouldReconnect = false
     clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
     this.reconnectAttempts = 0
     this.pendingMessages = []
     this._setStatus('disconnected')

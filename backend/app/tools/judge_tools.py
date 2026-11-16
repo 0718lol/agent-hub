@@ -320,33 +320,31 @@ class UserInteractionJudgeTool:
 
             tag = f"[ask_user: {question} | {' | '.join(opt_segments)}]"
 
-            # 广播给前端
-            await manager.broadcast(conversation_id, {
-                "type": "message",
-                "conversation_id": conversation_id,
-                "sender": "user_interaction_judge",
-                "content": {"text": tag},
-                "stream": False,
-            })
-
-            # 同时派发给多渠道异步协同网关 (Slack/Telegram)
-            try:
-                from app.services.webhook_gateway import webhook_gateway
-                # Format to run non-blockingly or await
-                await webhook_gateway.send_hil_notification(conversation_id, question, parsed_options)
-            except Exception as ex:
-                import logging
-                logging.getLogger("user_interaction_judge").error(f"Failed to dispatch HIL Webhook notification: {ex}")
-
-            # 注册 Future 挂起等待
+            # Register the waiter before either notification can receive a reply.
             fut = asyncio.get_running_loop().create_future()
             _pending_interactions[conversation_id] = fut
-
             try:
-                # 等待用户回复（通过 websocket 触发的 set_result）
+                await manager.broadcast(conversation_id, {
+                    "type": "message",
+                    "conversation_id": conversation_id,
+                    "sender": "user_interaction_judge",
+                    "content": {"text": tag},
+                    "stream": False,
+                })
+
+                try:
+                    from app.services.webhook_gateway import webhook_gateway
+
+                    await webhook_gateway.send_hil_notification(conversation_id, question, parsed_options)
+                except Exception as ex:
+                    import logging
+
+                    logging.getLogger("user_interaction_judge").error(f"Failed to dispatch HIL Webhook notification: {ex}")
+
                 answer = await fut
             finally:
-                _pending_interactions.pop(conversation_id, None)
+                if _pending_interactions.get(conversation_id) is fut:
+                    _pending_interactions.pop(conversation_id)
 
         # 整理输出决策和评分
         decision = answer.strip()

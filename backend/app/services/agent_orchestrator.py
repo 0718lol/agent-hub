@@ -1130,11 +1130,29 @@ async def resume_graph_from_checkpoint(conversation_id: str, action: str):
         "stream": False,
     })
 
-    start_node = None
-    if action.lower() in ("approve", "yes", "y") or any(
-        action.lower() == opt["label"].lower() and opt["recommended"]
-        for opt in checkpoint.get("options", [])
-    ):
+    decision = action.strip().casefold()
+    recommended = set()
+    for option in checkpoint.get("options") or []:
+        if isinstance(option, str) and option.startswith("*"):
+            recommended.add(option[1:].partition("::")[0].strip().casefold())
+        elif isinstance(option, dict) and option.get("recommended"):
+            recommended.add(str(option.get("label", "")).strip().casefold())
+
+    if decision in {"terminate", "end", "stop"}:
+        await manager.broadcast(conversation_id, {
+            "type": "message",
+            "conversation_id": conversation_id,
+            "sender": "system",
+            "content": {"text": "🛑 审核不通过，流程已终止。"},
+            "stream": False,
+        })
+        await manager.broadcast(conversation_id, {
+            "type": "generating",
+            "conversation_id": conversation_id,
+            "is_generating": False,
+        })
+        return
+    if decision in {"approve", "yes", "y"} or decision in recommended:
         if next_node == "END":
             await manager.broadcast(conversation_id, {
                 "type": "message",
@@ -1150,20 +1168,6 @@ async def resume_graph_from_checkpoint(conversation_id: str, action: str):
             })
             return
         start_node = next_node
-    elif action.lower() in ("terminate", "end", "stop"):
-        await manager.broadcast(conversation_id, {
-            "type": "message",
-            "conversation_id": conversation_id,
-            "sender": "system",
-            "content": {"text": "🛑 审核不通过，流程已终止。"},
-            "stream": False,
-        })
-        await manager.broadcast(conversation_id, {
-            "type": "generating",
-            "conversation_id": conversation_id,
-            "is_generating": False,
-        })
-        return
     else:
         # Feedback / retry
         feedback = action

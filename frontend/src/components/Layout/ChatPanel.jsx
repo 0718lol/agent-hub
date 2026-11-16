@@ -299,7 +299,8 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
     if (!activeId) return
     if (!window.confirm('确定要清空当前会话的全部历史消息吗？此操作不可撤销。')) return
     try {
-      await fetch(`/api/conversations/${activeId}/messages`, { method: 'DELETE' })
+      const response = await fetch(`/api/conversations/${activeId}/messages`, { method: 'DELETE' })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
       clearMessages(activeId)
       useCanvasStore.getState().setPreviewHtml('')
       useCanvasStore.getState().setGeneratedCode('text', '')
