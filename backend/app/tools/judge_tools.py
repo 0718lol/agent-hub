@@ -1,8 +1,10 @@
 """Concrete JudgeTool implementations wrapping existing evaluation logic."""
 
+import asyncio
 import json
 import re
 from typing import Any
+from uuid import uuid4
 
 from app.tools.base import JudgeResult
 
@@ -227,7 +229,51 @@ class AlignmentJudgeTool:
 # Interactive choice tool (Yes/No/Else or specific options)
 # ============================================================
 
-_pending_interactions: dict[str, Any] = {}
+_pending_interactions: dict[str, asyncio.Future[str]] = {}
+_pending_review_messages: dict[str, dict] = {}
+
+
+def _parse_review_options(options: list) -> list[dict]:
+    parsed = []
+    for option in options:
+        if isinstance(option, dict):
+            parsed.append({
+                "label": str(option.get("label", "")).strip(),
+                "description": str(option.get("description") or "").strip(),
+                "recommended": bool(option.get("recommended")),
+            })
+        elif isinstance(option, str):
+            label, _, description = option.partition("::")
+            label = label.strip()
+            parsed.append({
+                "label": label.removeprefix("*").strip(),
+                "description": description.strip(),
+                "recommended": label.startswith("*"),
+            })
+    return parsed
+
+
+def human_review_message(conversation_id: str, question: str, options: list, review_id: str) -> dict:
+    choices = []
+    for option in _parse_review_options(options):
+        prefix = "*" if option["recommended"] else ""
+        description = f"::{option['description']}" if option["description"] else ""
+        choices.append(f"{prefix}{option['label']}{description}")
+    return {
+        "type": "message",
+        "id": f"hil-{review_id}",
+        "conversation_id": conversation_id,
+        "sender": "user_interaction_judge",
+        "content": {"text": f"[ask_user: {question} | {' | '.join(choices)}]"},
+        "stream": False,
+    }
+
+
+def pending_review_message(conversation_id: str) -> dict | None:
+    waiter = _pending_interactions.get(conversation_id)
+    if waiter is not None and not waiter.done():
+        return _pending_review_messages.get(conversation_id)
+    return None
 
 
 class UserInteractionJudgeTool:
@@ -237,37 +283,19 @@ class UserInteractionJudgeTool:
     description = "人工交互评测工具，提示用户进行方案选择或反馈"
 
     async def run(self, input_data: dict, llm_client: Any = None) -> JudgeResult:
-        import asyncio
-
+        from app.core.tenancy import conversation_user_id
         from app.core.websocket import manager
 
         question = input_data.get("question", "请问哪种方案合适？")
         options_raw = input_data.get("options", ["*Yes::接受此方案", "No::拒绝此方案", "Else::自定义输入其他反馈"])
         conversation_id = input_data.get("conversation_id")
 
-        # 格式化选项 (处理 * 推荐标记和 :: 描述)
-        # 例如: ["*Yes::描述", "No::描述"]
-        parsed_options = []
-        for opt in options_raw:
-            label_part = opt
-            desc_part = ""
-            if "::" in opt:
-                label_part, desc_part = opt.split("::", 1)
+        parsed_options = _parse_review_options(options_raw)
 
-            recommended = False
-            label = label_part.strip()
-            if label.startswith("*"):
-                recommended = True
-                label = label[1:].strip()
-
-            parsed_options.append({
-                "label": label,
-                "description": desc_part.strip(),
-                "recommended": recommended
-            })
-
-        # CLI / Terminal 模式 (如果没有活跃连接或者没有 conversation_id)
-        is_cli = not conversation_id or not hasattr(manager, "active_connections") or conversation_id not in manager.active_connections
+        # Tenant workflows must keep waiting for an explicit answer during a disconnect.
+        is_cli = not conversation_id or (
+            not conversation_user_id(conversation_id) and conversation_id not in manager.active_connections
+        )
 
         if is_cli:
             # 打印类似 claude code 风格的提示
@@ -310,27 +338,13 @@ class UserInteractionJudgeTool:
 
         # WebSocket 模式
         else:
-            # 构造前端 [ask_user:...] 标记格式
-            # 格式: [ask_user: Question | Option1::Description1 | *Option2::Description2]
-            opt_segments = []
-            for opt in parsed_options:
-                prefix = "*" if opt["recommended"] else ""
-                desc = f"::{opt['description']}" if opt["description"] else ""
-                opt_segments.append(f"{prefix}{opt['label']}{desc}")
-
-            tag = f"[ask_user: {question} | {' | '.join(opt_segments)}]"
-
             # Register the waiter before either notification can receive a reply.
             fut = asyncio.get_running_loop().create_future()
+            frame = human_review_message(conversation_id, question, options_raw, input_data.get("review_id") or uuid4().hex)
             _pending_interactions[conversation_id] = fut
+            _pending_review_messages[conversation_id] = frame
             try:
-                await manager.broadcast(conversation_id, {
-                    "type": "message",
-                    "conversation_id": conversation_id,
-                    "sender": "user_interaction_judge",
-                    "content": {"text": tag},
-                    "stream": False,
-                })
+                await manager.broadcast(conversation_id, frame)
 
                 try:
                     from app.services.webhook_gateway import webhook_gateway
@@ -345,6 +359,7 @@ class UserInteractionJudgeTool:
             finally:
                 if _pending_interactions.get(conversation_id) is fut:
                     _pending_interactions.pop(conversation_id)
+                    _pending_review_messages.pop(conversation_id, None)
 
         # 整理输出决策和评分
         decision = answer.strip()

@@ -25,6 +25,7 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
   const activeId = activeTab?.convId || 'conv_pm'
 
   const conversations = useChatStore((s) => s.conversations)
+  const ownerId = useChatStore((s) => s._ownerId)
   const addMessage = useChatStore((s) => s.addMessage)
   const updateLastAgentMessage = useChatStore((s) => s.updateLastAgentMessage)
   const loadMessages = useChatStore((s) => s.loadMessages)
@@ -63,9 +64,9 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
 
   useEffect(() => {
     // 如果当前会话正在生成中，延迟加载历史，避免覆盖流式消息
-    if (generatingConvs.has(activeId)) return
+    if (!ownerId || generatingConvs.has(activeId)) return
     loadMessages(activeId)
-  }, [activeId])
+  }, [activeId, ownerId])
 
   // Sync canvas code & preview from messages
   useEffect(() => {
@@ -211,8 +212,10 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
         // back over WS, which would otherwise duplicate every user bubble.
         if (data.sender === 'user') return
 
-        // 跳过服务器回显的用户消息（handleSend 已本地添加）
-        if (data.sender === 'user') return
+        if (data.sender === 'user_interaction_judge' && data.id) {
+          addMessage(activeId, { id: data.id, sender: data.sender, content: data.content, streaming: false })
+          return
+        }
 
         // 收到 Agent 消息时自动清除该 Agent 的 typing 状态
         setTyping(activeId, data.sender, false)

@@ -33,6 +33,37 @@ describe('chatStore', () => {
     expect(state.thinkingAgents).toEqual({})
   })
 
+  it('keeps a live review that arrives while history is loading', async () => {
+    const store = useChatStore.getState()
+    store.addConversation({ id: 'conv_pm', name: 'PM' })
+    let finishHistory
+    fetch.mockReturnValueOnce(new Promise((resolve) => { finishHistory = resolve }))
+    const loading = store.loadMessages('conv_pm')
+
+    const review = { id: 'hil-review', sender: 'user_interaction_judge', content: { text: 'Review' } }
+    store.addMessage('conv_pm', review)
+    store.addMessage('conv_pm', review)
+    finishHistory({ ok: true, json: async () => [{ id: 1, content: { text: 'Earlier' } }] })
+    await loading
+
+    expect(useChatStore.getState().conversations[0].messages.map((message) => message.id)).toEqual([1, 'hil-review'])
+  })
+
+  it('ignores a history response from a previous account', async () => {
+    const store = useChatStore.getState()
+    store.setOwner('tenant-a')
+    let finishHistory
+    fetch.mockReturnValueOnce(new Promise((resolve) => { finishHistory = resolve }))
+    const loading = store.loadMessages('conv_pm')
+    store.setOwner('tenant-b')
+    finishHistory({ ok: true, json: async () => [{ id: 1, content: { text: 'Private A' }, pinned: true }] })
+    await loading
+
+    const state = useChatStore.getState()
+    expect(state.conversations.find((item) => item.id === 'conv_pm').messages).toEqual([])
+    expect(state.pinnedMessages).toEqual({})
+  })
+
   // ---------- addConversation ----------
 
   it('should add a new conversation', () => {

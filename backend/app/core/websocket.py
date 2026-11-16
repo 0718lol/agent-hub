@@ -5,6 +5,8 @@ from uuid import uuid4
 
 from fastapi import WebSocket
 
+from app.core.tenancy import public_conversation_id
+
 logger = logging.getLogger("websocket_manager")
 
 
@@ -51,23 +53,32 @@ class ConnectionManager:
         # Local delivery works even before the Redis subscription is ready.
         await self._local_broadcast(conversation_id, message)
 
+    @staticmethod
+    def _encode(message: dict) -> str:
+        outgoing = dict(message)
+        if outgoing.get("conversation_id"):
+            outgoing["conversation_id"] = public_conversation_id(outgoing["conversation_id"])
+        return json.dumps(outgoing, ensure_ascii=False)
+
+    async def _send_text(self, websocket: WebSocket, text: str) -> None:
+        lock = self.locks.get(websocket)
+        if lock:
+            async with lock:
+                await asyncio.wait_for(websocket.send_text(text), timeout=5.0)
+        else:
+            await asyncio.wait_for(websocket.send_text(text), timeout=5.0)
+
+    async def send(self, websocket: WebSocket, message: dict) -> None:
+        await self._send_text(websocket, self._encode(message))
+
     async def _local_broadcast(self, conversation_id: str, message: dict):
         """Broadcasts a message directly to WebSockets hosted on this local server process."""
         if conversation_id in self.active_connections:
-            from app.core.tenancy import public_conversation_id
-            outgoing = dict(message)
-            if outgoing.get("conversation_id"):
-                outgoing["conversation_id"] = public_conversation_id(outgoing["conversation_id"])
-            data = json.dumps(outgoing, ensure_ascii=False)
+            data = self._encode(message)
             stale_connections = []
             for connection in list(self.active_connections[conversation_id]):
-                lock = self.locks.get(connection)
                 try:
-                    if lock:
-                        async with lock:
-                            await asyncio.wait_for(connection.send_text(data), timeout=5.0)
-                    else:
-                        await asyncio.wait_for(connection.send_text(data), timeout=5.0)
+                    await self._send_text(connection, data)
                 except TimeoutError:
                     logger.warning(f"WebSocket send timeout for connection in conv {conversation_id}, removing stale connection")
                     stale_connections.append(connection)

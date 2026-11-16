@@ -192,13 +192,23 @@ export const useChatStore = create((set, get) => ({
   markSent: (conversationId) => set((state) => ({ allRead: { ...state.allRead, [conversationId]: false } })),
 
   loadMessages: async (conversationId) => {
+    const ownerId = get()._ownerId
+    const previous = get().conversations.find((item) => item.id === conversationId)?.messages || []
     try {
       const response = await fetch(`/api/conversations/${conversationId}/messages`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const rawMessages = await response.json()
+      if (get()._ownerId !== ownerId) return
       const messages = rawMessages.filter((message) => !isInternalNoiseMessage(message))
       set((state) => ({
-        conversations: state.conversations.map((conversation) => conversation.id === conversationId ? { ...conversation, messages } : conversation),
+        conversations: state.conversations.map((conversation) => {
+          if (conversation.id !== conversationId) return conversation
+          // A review replay can arrive over WebSocket while the history request is in flight.
+          const liveReviews = conversation.messages.filter((message) =>
+            message.sender === 'user_interaction_judge' && !previous.includes(message) &&
+            !messages.some((saved) => saved.id === message.id))
+          return { ...conversation, messages: [...messages, ...liveReviews] }
+        }),
         pinnedMessages: { ...state.pinnedMessages, [conversationId]: messages.filter((message) => message.pinned).map((message) => message.id) },
         hasOlderMessages: { ...state.hasOlderMessages, [conversationId]: rawMessages.length === 100 },
       }))
@@ -208,6 +218,7 @@ export const useChatStore = create((set, get) => ({
   },
 
   loadOlderMessages: async (conversationId) => {
+    const ownerId = get()._ownerId
     const conversation = get().conversations.find((item) => item.id === conversationId)
     const beforeId = conversation?.messages.find((message) => typeof message.id === 'number')?.id
     if (!beforeId) return
@@ -215,6 +226,7 @@ export const useChatStore = create((set, get) => ({
       const response = await fetch(`/api/conversations/${conversationId}/messages?limit=100&before_id=${beforeId}`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const rawOlder = await response.json()
+      if (get()._ownerId !== ownerId) return
       const older = rawOlder.filter((message) => !isInternalNoiseMessage(message))
       set((state) => ({
         conversations: state.conversations.map((item) => item.id === conversationId
@@ -299,7 +311,15 @@ export const useChatStore = create((set, get) => ({
   addConversation: (conversation) => {
     set((state) => {
       if (state.conversations.some((item) => item.id === conversation.id)) return state
-      return { conversations: [...state.conversations, { ...conversation, updatedAt: Date.now(), unread: false, pinned: false }] }
+      return {
+        conversations: [...state.conversations, {
+          ...conversation,
+          messages: conversation.messages || [],
+          updatedAt: Date.now(),
+          unread: false,
+          pinned: false,
+        }],
+      }
     })
     return fetch('/api/conversations', {
       method: 'POST',
@@ -383,7 +403,16 @@ export const useChatStore = create((set, get) => ({
       const list = Array.isArray(data) ? data : (data.conversations || [])
       if (get()._ownerId !== ownerId) return
       if (list.length > 0) {
-        set({ conversations: list.map(mapConversation), activeConversationId: list[0]?.id || 'conv_pm' })
+        set((state) => {
+          const existing = new Map(state.conversations.map((conversation) => [conversation.id, conversation]))
+          return {
+            conversations: list.map((row) => {
+              const conversation = mapConversation(row)
+              return { ...conversation, messages: existing.get(conversation.id)?.messages || conversation.messages }
+            }),
+            activeConversationId: list[0]?.id || 'conv_pm',
+          }
+        })
       } else {
         set({ conversations: [], activeConversationId: 'conv_pm' })
       }

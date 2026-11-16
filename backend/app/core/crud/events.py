@@ -70,7 +70,7 @@ def clear_event_items(conversation_id: str):
 @db_write_transaction
 def save_hil_checkpoint(conversation_id: str, current_node: str,
                         next_node: str, state_data: dict, question: str,
-                        options: list, original_prompt: str):
+                        options: list, original_prompt: str) -> str:
     with Session(_engine_mod.engine) as session:
         state_data_dict = (
             state_data.model_dump()
@@ -87,8 +87,10 @@ def save_hil_checkpoint(conversation_id: str, current_node: str,
             original_prompt=original_prompt,
             status="pending"
         )
+        review_id = item.created_at
         session.merge(item)
         session.commit()
+        return review_id
 
 
 def get_pending_hil_checkpoint(conversation_id: str) -> dict | None:

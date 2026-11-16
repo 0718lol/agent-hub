@@ -276,20 +276,27 @@ async def test_read_receipt(ws_app):
 async def test_control_frames_leave_human_review_pending(ws_app, monkeypatch, recovering):
     from app.core.tenancy import scope_conversation_id
     from app.routers import ws as ws_routes
+    from app.tools.judge_tools import _pending_review_messages, human_review_message
 
     internal_id = scope_conversation_id("api-client", "conv_review")
     pending = asyncio.get_running_loop().create_future()
     lookup = ws_routes.async_get_pending_hil_checkpoint
     resume = AsyncMock()
     monkeypatch.setattr(ws_routes, "resume_graph_from_checkpoint", resume)
+    options = ["*Approve::Continue the workflow"]
     if recovering:
-        lookup.return_value = {"current_node": "agent_pm"}
+        lookup.return_value = {"question": "Continue?", "options": options, "created_at": "test-review"}
     else:
         monkeypatch.setitem(ws_routes._pending_interactions, internal_id, pending)
+        monkeypatch.setitem(_pending_review_messages, internal_id, human_review_message(internal_id, "Continue?", options, "test-review"))
 
     async with ASGIWebSocketTransport(app=ws_app) as transport:
         async with httpx.AsyncClient(transport=transport, headers={"x-api-secret": "test-secret"}) as client:
             async with aconnect_ws("ws://testserver/ws/conv_review", client) as socket:
+                prompt = await _receive_json(socket)
+                assert prompt["id"] == "hil-test-review"
+                assert prompt["conversation_id"] == "conv_review"
+                lookup.reset_mock()
                 await socket.send_json({"type": "pong"})
                 await socket.send_json({"type": "read"})
                 assert (await _receive_json(socket))["type"] == "read"
@@ -298,7 +305,10 @@ async def test_control_frames_leave_human_review_pending(ws_app, monkeypatch, re
                 ws_routes.async_save_message.assert_not_awaited()
                 assert not pending.done()
 
-                await socket.send_json({"type": "message", "content": {"text": "[ask_user_reply] Approve"}})
+                await socket.send_json({
+                    "type": "message",
+                    "content": {"text": "[ask_user_reply] Approve", "review_id": prompt["id"]},
+                })
                 assert (await _receive_json(socket))["type"] == "message"
                 ws_routes.async_save_message.assert_awaited_once()
                 if recovering:
@@ -307,6 +317,49 @@ async def test_control_frames_leave_human_review_pending(ws_app, monkeypatch, re
                     resume.assert_awaited_once_with(internal_id, "Approve")
                 else:
                     assert pending.result() == "Approve"
+
+
+async def test_disconnected_tenant_review_waits_for_the_matching_reply(ws_app, monkeypatch):
+    from app.core.tenancy import scope_conversation_id
+    from app.services.webhook_gateway import webhook_gateway
+    from app.tools.judge_tools import UserInteractionJudgeTool
+
+    internal_id = scope_conversation_id("api-client", "conv_offline_review")
+    notification = asyncio.Event()
+
+    async def notify(*args):
+        notification.set()
+
+    monkeypatch.setattr(webhook_gateway, "send_hil_notification", AsyncMock(side_effect=notify))
+    task = asyncio.create_task(UserInteractionJudgeTool().run({"conversation_id": internal_id}))
+    try:
+        await asyncio.wait_for(notification.wait(), 2)
+        assert not task.done()
+
+        async with ASGIWebSocketTransport(app=ws_app) as transport:
+            async with httpx.AsyncClient(transport=transport, headers={"x-api-secret": "test-secret"}) as client:
+                async with aconnect_ws("ws://testserver/ws/conv_offline_review", client) as socket:
+                    prompt = await _receive_json(socket)
+                    assert prompt["sender"] == "user_interaction_judge"
+                    assert "[ask_user:" in prompt["content"]["text"]
+
+                    async def reply(review_id):
+                        await socket.send_json({
+                            "type": "message", "content": {"text": "[ask_user_reply] Yes", "review_id": review_id},
+                        })
+
+                    await reply("hil-old-review")
+                    assert (await _receive_json(socket))["type"] == "error"
+                    assert not task.done()
+                    await reply(prompt["id"])
+                    assert (await asyncio.wait_for(task, 2)).decision == "Yes"
+                    await reply(prompt["id"])
+                    assert (await _receive_json(socket))["type"] == "message"  # original user echo
+                    assert (await _receive_json(socket))["type"] == "error"
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_stop_resolves_an_active_human_review(ws_app, monkeypatch):

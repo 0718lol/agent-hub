@@ -1,5 +1,6 @@
 """Tests for deployment cancellation admission and worker finalization."""
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -38,6 +39,30 @@ async def test_deployment_actions_report_unavailable_queue(monkeypatch, action):
             await deployment_action(job.id, action, _request())
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "Worker unavailable"
+
+
+async def test_cleanup_keeps_old_queued_and_running_deployments(monkeypatch):
+    from app.core.config import settings
+
+    old = (datetime.now(UTC) - timedelta(days=settings.deployment_retention_days + 1)).isoformat()
+    jobs = {
+        status: DeploymentJob(
+            id=status,
+            conversation_id="tenant__api-client__conv__demo",
+            user_id="api-client",
+            target="api",
+            status=status,
+            created_at=old,
+        )
+        for status in ("queued", "running", "failed")
+    }
+    remove = AsyncMock()
+    monkeypatch.setattr(deployment_worker.deployment_queue, "indexed_job_ids", AsyncMock(return_value=list(jobs)))
+    monkeypatch.setattr(deployment_worker.deployment_queue, "get", AsyncMock(side_effect=jobs.get))
+    monkeypatch.setattr(deployment_worker, "_remove_deployment", remove)
+
+    assert await deployment_worker.cleanup_deployments("api-client") == 1
+    remove.assert_awaited_once_with(jobs["failed"])
 
 
 @pytest.mark.asyncio

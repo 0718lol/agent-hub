@@ -24,7 +24,7 @@ from app.services.agent_orchestrator import (
     run_target_agent_flow,
     run_user_message_flow,
 )
-from app.tools.judge_tools import _pending_interactions
+from app.tools.judge_tools import _pending_interactions, human_review_message, pending_review_message
 
 router = APIRouter()
 logger = get_logger("ws")
@@ -69,6 +69,29 @@ async def _protocol_error(conversation_id: str, text: str) -> None:
         "conversation_id": conversation_id,
         "content": {"text": text},
     })
+
+
+async def _recoverable_review(conversation_id: str) -> dict | None:
+    if conversation_id in _stop_events:
+        return None
+    try:
+        return await async_get_pending_hil_checkpoint(conversation_id)
+    except Exception as exc:
+        logger.debug(f"Failed to check HIL checkpoint for recovery: {exc}")
+        return None
+
+
+async def _restore_review(websocket: WebSocket, conversation_id: str) -> None:
+    prompt = pending_review_message(conversation_id)
+    if prompt is None:
+        checkpoint = await _recoverable_review(conversation_id)
+        prompt = pending_review_message(conversation_id)
+        if not prompt and checkpoint and checkpoint.get("question") and conversation_id not in _stop_events:
+            prompt = human_review_message(
+                conversation_id, checkpoint["question"], checkpoint["options"], checkpoint["created_at"],
+            )
+    if prompt:
+        await manager.send(websocket, prompt)
 
 
 @router.websocket("/ws/{conversation_id}")
@@ -119,13 +142,14 @@ async def _serve_authenticated_websocket(
         while True:
             try:
                 await asyncio.sleep(30)
-                await websocket.send_json({"type": "ping"})
+                await manager.send(websocket, {"type": "ping"})
             except Exception:
                 break
 
     heartbeat_task = asyncio.create_task(_heartbeat())
 
     try:
+        await _restore_review(websocket, conversation_id)
         while True:
             data = await websocket.receive_text()
             try:
@@ -193,14 +217,21 @@ async def _serve_authenticated_websocket(
 
             pending = _pending_interactions.get(conversation_id)
             checkpoint = None
-            if pending is None and conversation_id not in _stop_events:
-                try:
-                    checkpoint = await async_get_pending_hil_checkpoint(conversation_id)
-                except Exception as e:
-                    logger.debug(f"Failed to check HIL checkpoint for recovery: {e}")
+            if pending is None:
+                checkpoint = await _recoverable_review(conversation_id)
                 pending = _pending_interactions.get(conversation_id)
 
             reply_text = text.strip().removeprefix("[ask_user_reply]").strip()
+            review_id = content.get("review_id")
+            if review_id is not None or target_agent == "user_interaction_judge":
+                if pending is not None:
+                    prompt = pending_review_message(conversation_id)
+                    expected = prompt["id"] if prompt else None
+                else:
+                    expected = f"hil-{checkpoint['created_at']}" if checkpoint else None
+                if expected is None or (review_id is not None and review_id != expected):
+                    await _protocol_error(conversation_id, "这条审核请求已结束，请查看当前会话。")
+                    continue
             if pending is not None:
                 if reply_text and not pending.done():
                     pending.set_result(reply_text)

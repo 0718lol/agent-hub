@@ -274,7 +274,8 @@ class StateGraph:
                     trigger = len(state.get("completed_nodes", [])) % cooldown_steps == 0
 
                 if trigger:
-                    from app.core.database import save_message
+                    from app.core.async_wrappers import async_save_pending_hil
+                    from app.core.database import resolve_hil_checkpoint, save_message
                     from app.tools.judge_tools import UserInteractionJudgeTool
 
                     current_agent_name = current_node.replace("agent_", "").upper()
@@ -298,9 +299,9 @@ class StateGraph:
                     })
 
                     # Save HIL checkpoint to database for power-off/reboot resilience
+                    review_id = None
                     try:
-                        from app.core.database import save_hil_checkpoint
-                        save_hil_checkpoint(
+                        review_id = await async_save_pending_hil(
                             conversation_id=conversation_id,
                             current_node=current_node,
                             next_node=next_node,
@@ -319,10 +320,16 @@ class StateGraph:
                     res = await tool.run({
                         "question": question,
                         "options": options,
-                        "conversation_id": conversation_id
+                        "conversation_id": conversation_id,
+                        "review_id": review_id,
                     })
 
                     decision = res.decision.strip()
+                    if review_id:
+                        try:
+                            await asyncio.to_thread(resolve_hil_checkpoint, conversation_id, decision)
+                        except Exception:
+                            logger.exception("[StateGraph] Failed to resolve HIL checkpoint")
                     if decision.lower() in ("approve", "yes", "y"):
                         logger.info("[HIL Intercept] Approved by user.")
                     elif decision.lower() in ("terminate", "end", "stop"):
