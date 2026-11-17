@@ -170,11 +170,34 @@ async def _clear_login_identity(identity_key: str) -> None:
 
 @router.get("/auth/status")
 async def auth_status(request: Request):
+    from app.core.runtime_mode import is_passwordless_workbench, is_workbench_mode
+
     account = get_session_account(request.cookies.get(SESSION_COOKIE))
+    if account is not None:
+        return {
+            "auth_required": True,
+            "authenticated": True,
+            "user": account.public_dict(),
+        }
+    if is_passwordless_workbench():
+        return {
+            "auth_required": False,
+            "workbench_mode": True,
+            "authenticated": True,
+            "user": {
+                "id": "local",
+                "user_id": "local",
+                "tenant_id": "local",
+                "username": "本地工作台",
+                "is_admin": True,
+                "workbench_mode": True,
+            },
+        }
     return {
         "auth_required": True,
-        "authenticated": account is not None,
-        "user": account.public_dict() if account else None,
+        "authenticated": False,
+        "user": None,
+        **({"workbench_mode": True} if is_workbench_mode() else {}),
     }
 
 

@@ -9,11 +9,13 @@ from fastapi import HTTPException, Request
 
 from app.core.auth import SESSION_COOKIE, get_session_account
 from app.core.config import settings
+from app.core.runtime_mode import is_passwordless_workbench, is_workbench_mode
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 _PREFIX = "tenant__"
 _SEPARATOR = "__conv__"
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9_.@-]{3,128}$")
+LOCAL_TENANT_ID = "local"
 _active_tenant_id: ContextVar[str | None] = ContextVar("agenthub_tenant_id", default=None)
 
 
@@ -64,6 +66,8 @@ def request_user_id(request: Request) -> str:
     bearer = bearer_tenant_id(request.headers)
     if bearer:
         return bearer
+    if is_passwordless_workbench():
+        return LOCAL_TENANT_ID
     raise PermissionError("Authenticated tenant is required")
 
 
@@ -72,7 +76,11 @@ def request_account_id(request: Request) -> str | None:
     if state_user:
         return state_user
     account = get_session_account(request.cookies.get(SESSION_COOKIE))
-    return account.user_id if account else None
+    if account:
+        return account.user_id
+    if is_passwordless_workbench():
+        return LOCAL_TENANT_ID
+    return None
 
 
 def is_request_admin(request: Request) -> bool:
@@ -80,7 +88,9 @@ def is_request_admin(request: Request) -> bool:
     if state_admin is not None:
         return bool(state_admin)
     account = get_session_account(request.cookies.get(SESSION_COOKIE))
-    return bool(account and account.is_admin)
+    if account:
+        return bool(account.is_admin)
+    return is_passwordless_workbench()
 
 
 def require_admin(request: Request, detail: str = "仅管理员可执行此操作") -> None:
@@ -90,22 +100,34 @@ def require_admin(request: Request, detail: str = "仅管理员可执行此操�
     if state_admin is False:
         raise HTTPException(status_code=403, detail=detail)
     account = get_session_account(request.cookies.get(SESSION_COOKIE))
-    if account is None:
-        raise HTTPException(status_code=401, detail="请先登录")
-    if not account.is_admin:
-        raise HTTPException(status_code=403, detail=detail)
+    if account is not None:
+        if not account.is_admin:
+            raise HTTPException(status_code=403, detail=detail)
+        return
+    if is_passwordless_workbench():
+        return
+    raise HTTPException(status_code=401, detail="请先登录")
 
 
 def websocket_user_id(websocket) -> str | None:
     account = get_session_account(websocket.cookies.get(SESSION_COOKIE))
     if account:
         return account.tenant_id
-    return bearer_tenant_id(websocket.headers)
+    bearer = bearer_tenant_id(websocket.headers)
+    if bearer:
+        return bearer
+    if is_passwordless_workbench():
+        return LOCAL_TENANT_ID
+    return None
 
 
 def scope_conversation_id(user_id: str, conversation_id: str) -> str:
     if not _SAFE_ID.fullmatch(user_id) or not _SAFE_ID.fullmatch(conversation_id):
         raise ValueError("Invalid user or conversation ID")
+    if conversation_id.startswith(_PREFIX):
+        raise ValueError("Invalid conversation ID")
+    if user_id == LOCAL_TENANT_ID:
+        return conversation_id
     return f"{_PREFIX}{user_id}{_SEPARATOR}{conversation_id}"
 
 
@@ -122,4 +144,8 @@ def conversation_user_id(conversation_id: str) -> str | None:
 
 
 def belongs_to_user(conversation_id: str, user_id: str) -> bool:
+    if user_id == LOCAL_TENANT_ID:
+        return (not conversation_id.startswith(_PREFIX)) or conversation_id.startswith(
+            f"{_PREFIX}{LOCAL_TENANT_ID}{_SEPARATOR}"
+        )
     return conversation_id.startswith(f"{_PREFIX}{user_id}{_SEPARATOR}")

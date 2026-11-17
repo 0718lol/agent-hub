@@ -5,6 +5,7 @@ const INITIAL_STATE = {
   service: 'offline',
   model: 'demo',
   buildServices: 'limited',
+  workbench: false,
 }
 
 export function useReadiness() {
@@ -20,6 +21,7 @@ export function useReadiness() {
         service: data.readiness?.service || 'offline',
         model: data.readiness?.model || 'demo',
         buildServices: data.readiness?.build_services || 'limited',
+        workbench: Boolean(data.capabilities?.workbench),
       })
     } catch {
       setReadiness((current) => ({ ...current, loading: false, service: 'offline' }))

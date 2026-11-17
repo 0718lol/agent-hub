@@ -87,11 +87,33 @@ def init_db() -> None:
         logger.exception("Alembic migration failed")
         raise RuntimeError("Database migration failed; startup aborted") from exc
 
+    _ensure_workbench_schema()
     populate_database_defaults()
     try:
         purge_internal_noise_messages()
     except Exception as exc:
         logger.warning("Internal noise cleanup skipped: %s", exc)
+
+
+def _ensure_workbench_schema() -> None:
+    """Idempotently ensure workbench/handoff tables and columns exist across SQLite & PostgreSQL."""
+    from sqlalchemy import inspect as sa_inspect
+
+    SQLModel.metadata.create_all(engine)
+    insp = sa_inspect(engine)
+    conv_cols = {col["name"] for col in insp.get_columns("conversations")}
+    art_cols = {col["name"] for col in insp.get_columns("artifacts")}
+    with engine.begin() as conn:
+        if "workspace_path" not in conv_cols:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN workspace_path TEXT"))
+        if "source_project_id" not in conv_cols:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN source_project_id TEXT"))
+        if "version" not in art_cols:
+            conn.execute(text("ALTER TABLE artifacts ADD COLUMN version INTEGER NOT NULL DEFAULT 1"))
+        if "parent_id" not in art_cols:
+            conn.execute(text("ALTER TABLE artifacts ADD COLUMN parent_id INTEGER"))
+        if "content_hash" not in art_cols:
+            conn.execute(text("ALTER TABLE artifacts ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"))
 
 
 def populate_database_defaults() -> None:

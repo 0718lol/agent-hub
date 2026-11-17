@@ -70,6 +70,9 @@ from app.routers import (
     cron as cron_router,
 )
 from app.routers import (
+    handoff as handoff_router,
+)
+from app.routers import (
     knowledge as knowledge_router,
 )
 from app.routers import (
@@ -101,6 +104,9 @@ from app.routers import (
 )
 from app.routers import (
     webhook as webhook_router,
+)
+from app.routers import (
+    workbench as workbench_router,
 )
 from app.routers import (
     workflows as workflows_router,
@@ -175,17 +181,29 @@ app.add_middleware(
 # ---- API security middleware ----
 @app.middleware("http")
 async def api_security_middleware(request: Request, call_next):
+    from app.core.loopback_guard import verify_loopback_headers
+    from app.core.runtime_mode import is_passwordless_workbench
+
     path = request.url.path
+    if is_passwordless_workbench():
+        is_api_or_write = (
+            path.startswith("/api")
+            or path.startswith("/uploads")
+            or request.method not in ("GET", "HEAD", "OPTIONS")
+        )
+        loopback_err = verify_loopback_headers(request.headers, is_api_or_write=is_api_or_write)
+        if loopback_err:
+            return JSONResponse(status_code=403, content={"detail": loopback_err})
+
     if path in ("/", "/docs", "/openapi.json", "/redoc", "/api/health") or path.startswith("/api/auth/") or path.startswith("/api/webhook/callback/"):
         return await call_next(request)
     if not (path.startswith("/api") or path.startswith("/uploads")):
         return await call_next(request)
     from app.core.auth import SESSION_COOKIE, get_session_account
-    from app.core.tenancy import bearer_tenant_id
+    from app.core.tenancy import LOCAL_TENANT_ID, bearer_tenant_id, reset_current_tenant, set_current_tenant
 
     account = get_session_account(request.cookies.get(SESSION_COOKIE))
     if account:
-        from app.core.tenancy import reset_current_tenant, set_current_tenant
         request.state.auth_user_id = account.user_id
         request.state.tenant_id = account.tenant_id
         request.state.is_admin = account.is_admin
@@ -197,11 +215,20 @@ async def api_security_middleware(request: Request, call_next):
 
     api_tenant = bearer_tenant_id(request.headers)
     if api_tenant:
-        from app.core.tenancy import reset_current_tenant, set_current_tenant
         request.state.auth_user_id = None
         request.state.tenant_id = api_tenant
         request.state.is_admin = False
         token = set_current_tenant(api_tenant)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_tenant(token)
+
+    if is_passwordless_workbench():
+        request.state.auth_user_id = LOCAL_TENANT_ID
+        request.state.tenant_id = LOCAL_TENANT_ID
+        request.state.is_admin = True
+        token = set_current_tenant(LOCAL_TENANT_ID)
         try:
             return await call_next(request)
         finally:
@@ -228,6 +255,8 @@ app.include_router(auth_router.router, prefix="/api")
 app.include_router(admin_router.router, prefix="/api")
 app.include_router(agents_router.router, prefix="/api")
 app.include_router(artifacts_router.router, prefix="/api")
+app.include_router(handoff_router.router, prefix="/api")
+app.include_router(workbench_router.router, prefix="/api")
 app.include_router(uploads_router.router, prefix="/api")
 app.include_router(uploads_router.router)
 app.include_router(settings_router.router, prefix="/api")
@@ -318,9 +347,14 @@ async def health():
     except Exception:
         capabilities["browser_tools"] = False
 
+    from app.core.runtime_mode import is_workbench_mode
+    wb_active = is_workbench_mode()
+    capabilities["workbench"] = wb_active
+
     core_ok = checks.get("database") == "ok"
     return {
         "status": "ok" if core_ok else "error",
+        "mode": "workbench" if wb_active else "cloud",
         "checks": checks,
         "capabilities": capabilities,
         "agents": list(AGENTS.keys()),

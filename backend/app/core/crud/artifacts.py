@@ -4,6 +4,7 @@ Artifact CRUD operations.
 Handles saving, retrieving, and grouping code artifacts produced by
 agents during conversations.
 """
+import hashlib
 import re
 from datetime import UTC, datetime
 
@@ -53,12 +54,20 @@ def save_artifact(conversation_id: str, agent_id: str, language: str,
             name = f"code_snippet.{language}"
 
     with Session(_engine_mod.engine) as session:
+        previous = session.exec(
+            select(Artifact)
+            .where(Artifact.conversation_id == conversation_id, Artifact.name == name)
+            .order_by(Artifact.id.desc())
+        ).first()
         art = Artifact(
             conversation_id=conversation_id,
             agent_id=agent_id,
             name=name,
             language=language,
-            code=code
+            code=code,
+            version=(previous.version + 1) if previous else 1,
+            parent_id=previous.id if previous else None,
+            content_hash=hashlib.sha256(code.encode("utf-8")).hexdigest(),
         )
         session.add(art)
         session.commit()
@@ -121,14 +130,15 @@ def get_artifacts_grouped(
             statement = select(Artifact).where(
                 Artifact.conversation_id == conversation_id
             ).order_by(Artifact.created_at.asc())
+            rows = session.exec(statement).all()
         elif user_id:
-            prefix = f"tenant__{user_id}__conv__"
-            statement = select(Artifact).where(
-                Artifact.conversation_id.startswith(prefix)
-            ).order_by(Artifact.created_at.asc())
+            from app.core.tenancy import belongs_to_user
+
+            statement = select(Artifact).order_by(Artifact.created_at.asc())
+            rows = [row for row in session.exec(statement).all() if belongs_to_user(row.conversation_id, user_id)]
         else:
             statement = select(Artifact).order_by(Artifact.created_at.asc())
-        rows = session.exec(statement).all()
+            rows = session.exec(statement).all()
 
     grouped = {}
     for row in rows:
@@ -142,9 +152,12 @@ def get_artifacts_grouped(
         latest = versions[-1]
         history = []
         for idx, v in enumerate(versions):
-            v_num = f"v{idx + 1}"
+            v_num = f"v{v.get('version') or (idx + 1)}"
             history.append({
                 "version_label": v_num,
+                "version": v.get("version") or (idx + 1),
+                "parent_id": v.get("parent_id"),
+                "content_hash": v.get("content_hash") or "",
                 "id": v["id"],
                 "agent_id": v["agent_id"],
                 "created_at": v["created_at"],
@@ -165,6 +178,9 @@ def get_artifacts_grouped(
             "sandbox_output": latest["sandbox_output"],
             "created_at": latest["created_at"],
             "latest_id": latest["id"],
+            "version": latest.get("version") or len(versions),
+            "parent_id": latest.get("parent_id"),
+            "content_hash": latest.get("content_hash") or "",
             "total_versions": len(versions),
             "history": history[::-1],
         })

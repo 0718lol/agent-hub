@@ -117,6 +117,15 @@ def _is_ws_origin_allowed(websocket: WebSocket) -> bool:
 
 @router.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
+    from app.core.loopback_guard import verify_loopback_headers
+    from app.core.runtime_mode import is_passwordless_workbench
+
+    if is_passwordless_workbench():
+        loopback_err = verify_loopback_headers(websocket.headers, is_api_or_write=True)
+        if loopback_err:
+            await websocket.accept()
+            await websocket.close(code=4003, reason=loopback_err)
+            return
     if not _is_ws_origin_allowed(websocket):
         await websocket.accept()
         await websocket.close(code=4003, reason="Forbidden origin")

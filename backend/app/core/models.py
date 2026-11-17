@@ -48,6 +48,8 @@ class Conversation(SQLModel, table=True):
     goal_latest_artifact_id: int | None = None
     goal_pending_decision: str | None = None
     goal_next_action: str | None = None
+    workspace_path: str | None = Field(default=None)
+    source_project_id: str | None = Field(default=None)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str | None = Field(default=None)
 
@@ -176,7 +178,19 @@ class Artifact(SQLModel, table=True):
     name: str
     language: str
     code: str
+    version: int = Field(default=1)
+    parent_id: int | None = Field(default=None)
+    content_hash: str = Field(default="")
     quality_score: int | None = Field(default=None)
     sandbox_status: str = Field(default="untested")
     sandbox_output: str | None = Field(default=None)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
+class DeliveryRecord(SQLModel, table=True):
+    __tablename__ = "delivery_records"
+    id: str = Field(primary_key=True)
+    user_id: str = Field(index=True)
+    conversation_id: str = Field(index=True)
+    payload: str
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(), index=True)

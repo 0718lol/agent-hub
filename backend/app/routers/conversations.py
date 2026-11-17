@@ -39,6 +39,7 @@ class ConversationCreateRequest(BaseModel):
     agent_id: Optional[str] = None
     agents: Optional[list[str]] = None
     preview: str = ""
+    workspace_path: Optional[str] = None
 
 
 class ConversationUpdateRequest(BaseModel):
@@ -114,8 +115,19 @@ async def list_conversations(request: Request):
 @router.post("/conversations")
 async def create_conv(req: ConversationCreateRequest, request: Request):
     """创建新对话。"""
+    scoped = _scoped_id(request, req.id)
+    resolved_ws: str | None = None
+    if req.workspace_path and req.workspace_path.strip():
+        from app.core.runtime_mode import require_workbench_mode
+        from app.core.workspace import validate_local_workspace_path
+
+        require_workbench_mode()
+        try:
+            resolved_ws = str(validate_local_workspace_path(req.workspace_path, create=True))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     create_conversation(
-        conv_id=_scoped_id(request, req.id),
+        conv_id=scoped,
         conv_type=req.type,
         name=req.name,
         avatar=req.avatar or '',
@@ -123,7 +135,9 @@ async def create_conv(req: ConversationCreateRequest, request: Request):
         agents=req.agents,
         preview=req.preview,
     )
-    return {"status": "created", "id": req.id}
+    if resolved_ws:
+        update_conversation(scoped, {"workspace_path": resolved_ws})
+    return {"status": "created", "id": req.id, **({"workspace_path": resolved_ws} if resolved_ws else {})}
 
 
 @router.patch("/conversations/{conversation_id}")

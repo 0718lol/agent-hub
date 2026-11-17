@@ -309,9 +309,17 @@ class SystemMCPServer:
                     return {"isError": True, "content": [{"type": "text", "text": "Error: Path traversal protection triggered"}]}
 
 
-                # 1. Create pre-write checkpoint
                 from app.core.git_sandbox import git_checkpoint, git_rollback
-                await git_checkpoint(sandbox_dir, f"Pre-write: {sub_path}")
+                from app.core.workspace import is_managed_workspace
+
+                managed = is_managed_workspace(sandbox_dir)
+                prev_existed = os.path.isfile(target_file)
+                prev_bytes = b""
+                if managed:
+                    await git_checkpoint(sandbox_dir, f"Pre-write: {sub_path}")
+                elif prev_existed:
+                    with open(target_file, "rb") as rf:
+                        prev_bytes = rf.read()
 
                 # 2. Write the file physically
                 os.makedirs(os.path.dirname(target_file), exist_ok=True)
@@ -330,20 +338,28 @@ class SystemMCPServer:
                         error_msg = f"Python Syntax Error: {e}"
 
                 if not is_valid:
-                    # Trigger auto-healing rollback
-                    await git_rollback(sandbox_dir)
-                    return {"isError": True, "content": [{"type": "text", "text": f"❌ 写入失败！检测到代码语法缺陷，沙盒工作空间已安全自愈回滚。\n详情: {error_msg}"}]}
+                    if managed:
+                        await git_rollback(sandbox_dir)
+                    elif prev_existed:
+                        with open(target_file, "wb") as wf:
+                            wf.write(prev_bytes)
+                    elif os.path.exists(target_file):
+                        os.remove(target_file)
+                    return {"isError": True, "content": [{"type": "text", "text": f"❌ 写入失败！检测到代码语法缺陷，工作空间已安全回滚。\n详情: {error_msg}"}]}
 
-                # Create success checkpoint
-                await git_checkpoint(sandbox_dir, f"Success-write: {sub_path}")
-                return {"content": [{"type": "text", "text": f"Success: File successfully written to sandbox: {sub_path}"}]}
+                if managed:
+                    await git_checkpoint(sandbox_dir, f"Success-write: {sub_path}")
+                return {"content": [{"type": "text", "text": f"Success: File successfully written to workspace: {sub_path}"}]}
 
             elif tool_name == "workspace_run_command":
                 cmd = arguments.get("command", "")
 
-                # 1. Create pre-command checkpoint
                 from app.core.git_sandbox import git_checkpoint, git_rollback
-                await git_checkpoint(sandbox_dir, f"Pre-command: {cmd}")
+                from app.core.workspace import is_managed_workspace
+
+                managed = is_managed_workspace(sandbox_dir)
+                if managed:
+                    await git_checkpoint(sandbox_dir, f"Pre-command: {cmd}")
 
                 # 2. Execute command
                 enable_docker = os.environ.get("AGENTHUB_DOCKER_SANDBOX", "true").lower() == "true"
@@ -436,9 +452,9 @@ class SystemMCPServer:
                         )
                     except TimeoutError:
                         await safe_terminate_process_tree(proc)
-                        # 超时触发 Git 安全回滚自愈
-                        await git_rollback(sandbox_dir)
-                        return {"isError": True, "content": [{"type": "text", "text": f"❌ 指令执行失败！执行超过了物理资源配额硬超时限制（系统限制为 {settings.shell_timeout} 秒）。沙盒工作空间已安全自愈回滚。"}]}
+                        if managed:
+                            await git_rollback(sandbox_dir)
+                        return {"isError": True, "content": [{"type": "text", "text": f"❌ 指令执行失败！执行超过了物理资源配额硬超时限制（系统限制为 {settings.shell_timeout} 秒）。"}]}
                 finally:
                     # Physically clean up the wrapped script file so it doesn't pollute the git sandbox
                     if script_path and os.path.exists(script_path):
@@ -459,12 +475,12 @@ class SystemMCPServer:
 
                 # 3. Quality Gate check: Rollback on command failure (non-zero code)
                 if proc.returncode != 0:
-                    # Trigger auto-healing rollback
-                    await git_rollback(sandbox_dir)
-                    return {"isError": True, "content": [{"type": "text", "text": f"❌ 指令执行失败！沙盒工作空间已安全自动回滚至修改前状态以防止文件损坏。\n{result}"}]}
+                    if managed:
+                        await git_rollback(sandbox_dir)
+                    return {"isError": True, "content": [{"type": "text", "text": f"❌ 指令执行失败！\n{result}"}]}
 
-                # Create success checkpoint
-                await git_checkpoint(sandbox_dir, f"Success-command: {cmd}")
+                if managed:
+                    await git_checkpoint(sandbox_dir, f"Success-command: {cmd}")
                 return {"content": [{"type": "text", "text": result}]}
 
             else:

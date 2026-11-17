@@ -111,9 +111,9 @@ def unregister_tenant_tools(tenant_id: str, names: set[str]) -> None:
 
 
 def get_tool(name: str) -> AgentTool | None:
-    from app.core.tenancy import current_tenant_id
+    from app.core.tenancy import LOCAL_TENANT_ID, current_tenant_id, is_passwordless_workbench
 
-    tenant_id = current_tenant_id()
+    tenant_id = current_tenant_id() or (LOCAL_TENANT_ID if is_passwordless_workbench() else None)
     if tenant_id and name in TENANT_TOOL_REGISTRY.get(tenant_id, {}):
         return TENANT_TOOL_REGISTRY[tenant_id][name]
     return TOOL_REGISTRY.get(name)
@@ -135,10 +135,10 @@ def is_tool_enabled(name: str, tool: AgentTool | None = None) -> bool:
 
 def list_tools() -> list[dict]:
     """List all registered tools as dicts."""
-    from app.core.tenancy import current_tenant_id
+    from app.core.tenancy import LOCAL_TENANT_ID, current_tenant_id, is_passwordless_workbench
 
     tools = dict(TOOL_REGISTRY)
-    tenant_id = current_tenant_id()
+    tenant_id = current_tenant_id() or (LOCAL_TENANT_ID if is_passwordless_workbench() else None)
     if tenant_id:
         tools.update(TENANT_TOOL_REGISTRY.get(tenant_id, {}))
     result = []

@@ -12,9 +12,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENTHUB_")
 
     app_name: str = "AgentHub"
+    mode: str = "cloud"  # "cloud" | "workbench"
+    workbench_mode: bool = False
     debug: bool = True
     host: str = "0.0.0.0"  # nosec B104
     port: int = 8000
+    personal_ai_os_url: str = "http://127.0.0.1:8000"
+    personal_ai_os_dir: str = ""
 
     # CORS whitelist
     allowed_origins: list[str] = [
@@ -96,7 +100,15 @@ class Settings(BaseSettings):
     deployment_max_per_user: int = 20
 
     def validate_production_security(self) -> None:
-        """Reject production startup when required secrets are absent."""
+        """Reject unsafe startup configurations for both workbench and cloud modes."""
+        is_wb = bool(self.workbench_mode or str(self.mode or "").strip().lower() == "workbench")
+        if is_wb:
+            if (self.host or "").strip() in {"0.0.0.0", "::"} and not self.api_secret:  # nosec B104
+                raise RuntimeError(
+                    "Workbench mode cannot bind to 0.0.0.0 without AGENTHUB_API_SECRET; "
+                    "bind AGENTHUB_HOST=127.0.0.1 or switch AGENTHUB_MODE=cloud."
+                )
+            return
         if self.debug:
             return
         missing = []

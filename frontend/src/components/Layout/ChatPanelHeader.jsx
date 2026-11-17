@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, memo } from 'react'
-import { Code2, GitBranch, LayoutList, Menu, Search, PanelRightClose, MoreHorizontal, Share2, Building2, Wrench, BookOpen, Trash2 } from 'lucide-react'
+import { Code2, GitBranch, LayoutList, Menu, Search, PanelRightClose, MoreHorizontal, Share2, Building2, Wrench, BookOpen, Trash2, FolderGit2 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -16,7 +16,40 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
   const toggleSlidePanel = useCanvasStore((s) => s.toggleSlidePanel)
 
   const [moreOpen, setMoreOpen] = useState(false)
+  const [boundLabel, setBoundLabel] = useState('')
   const moreRef = useRef(null)
+  const workbenchEnabled = Boolean(readiness?.workbench)
+
+  useEffect(() => {
+    if (!convId || !workbenchEnabled) {
+      setBoundLabel('')
+      return
+    }
+    let cancelled = false
+    const syncWorkspace = () => {
+      fetch(`/api/conversations/${encodeURIComponent(convId)}/workspace`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (cancelled || !d) return
+          if (d.is_bound && d.bound_path) {
+            const parts = d.bound_path.split('/').filter(Boolean)
+            setBoundLabel(parts[parts.length - 1] || d.bound_path)
+          } else {
+            setBoundLabel('')
+          }
+        })
+        .catch(() => {})
+    }
+    syncWorkspace()
+    const onUpdated = (e) => {
+      if (!e.detail || e.detail.conversation_id === convId) syncWorkspace()
+    }
+    window.addEventListener('agenthub:workspace-updated', onUpdated)
+    return () => {
+      cancelled = true
+      window.removeEventListener('agenthub:workspace-updated', onUpdated)
+    }
+  }, [convId, workbenchEnabled])
 
   // 点击外部关闭菜单
   useEffect(() => {
@@ -86,6 +119,17 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
           <span className="chat-header-badge">{typingAgentIds.length} 人输入中</span>
         )}
         <ReadinessControl readiness={readiness} />
+        {workbenchEnabled && (
+          <button
+            type="button"
+            className="header-workspace-chip header-desktop-action"
+            onClick={() => window.dispatchEvent(new Event('agenthub:open-workbench'))}
+            title={boundLabel ? `已挂载本地目录：${boundLabel}（点击管理或联动知序）` : '挂载本机代码目录 / 联动知序'}
+          >
+            <FolderGit2 size={14} />
+            <span>{boundLabel || '绑定目录'}</span>
+          </button>
+        )}
         {onToggleOffice && (
           <button
             className="header-icon-btn header-desktop-action"
@@ -153,6 +197,19 @@ const ChatPanelHeader = memo(function ChatPanelHeader({ convId, onToggleSidebar,
           </button>
           {moreOpen && (
             <div className="header-popup more-popup">
+              {workbenchEnabled && (
+                <button
+                  type="button"
+                  className="header-popup-item"
+                  onClick={() => {
+                    window.dispatchEvent(new Event('agenthub:open-workbench'))
+                    setMoreOpen(false)
+                  }}
+                >
+                  <FolderGit2 size={16} />
+                  <span>{boundLabel ? `本地目录：${boundLabel}` : '项目目录 / 知序联动'}</span>
+                </button>
+              )}
               <button className="header-popup-item" onClick={() => { toggleSlidePanel('tools'); setMoreOpen(false) }}>
                 <Wrench size={16} />
                 <span>工具</span>

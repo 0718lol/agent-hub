@@ -62,6 +62,8 @@ def update_conversation(conversation_id: str, updates: dict) -> bool:
         "goal_latest_artifact_id",
         "goal_pending_decision",
         "goal_next_action",
+        "workspace_path",
+        "source_project_id",
     }
     with Session(_engine_mod.engine) as session:
         conversation = session.get(Conversation, conversation_id)
