@@ -89,34 +89,19 @@ export default function WebPreview() {
     }
   }, [])
 
-  // Update iframe content via postMessage (no flicker)
+  // Track debounced srcDoc loading indicator without sending wildcard cross-origin postMessage
   useEffect(() => {
-    if (!iframeRef.current || !html) return
-
-    // Skip if content hasn't changed
-    if (html === lastHtmlRef.current) return
+    if (!html || html === lastHtmlRef.current) return
     lastHtmlRef.current = html
 
-    // Debounce rapid updates (300ms)
     if (debounceRef.current) {
       clearTimeout(debounceRef.current)
     }
 
     setIsLoading(true)
     debounceRef.current = setTimeout(() => {
-      try {
-        if (iframeRef.current && iframeRef.current.contentWindow) {
-          iframeRef.current.contentWindow.postMessage(
-            { type: 'update', html },
-            '*'
-          )
-        }
-      } catch (e) {
-        // If postMessage fails, fall back to srcdoc
-        console.warn('postMessage failed, using srcdoc fallback:', e)
-      }
       setIsLoading(false)
-    }, 300)
+    }, 200)
 
     return () => {
       if (debounceRef.current) {

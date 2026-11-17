@@ -25,7 +25,8 @@ from pydantic import BaseModel, Field
 
 from app.adapters.base import AdapterConfig
 from app.adapters.registry import adapter_registry
-from app.core.tenancy import request_user_id
+from app.core.tenancy import is_request_admin, request_user_id, require_admin
+from app.tools.http_request import validate_outbound_url
 
 logger = get_logger = logging.getLogger("adapter_router")
 
@@ -160,6 +161,16 @@ async def get_adapter(agent_id: str, request: Request):
 @router.post("/adapters")
 async def create_or_update_adapter(req: AdapterCreateRequest, request: Request):
     """创建或更新适配器配置。"""
+    if req.adapter_type == "codex":
+        require_admin(request, "仅管理员可配置宿主级 Codex 适配器")
+    if req.api_url.strip():
+        ssrf_err = validate_outbound_url(
+            req.api_url.strip(),
+            allow_loopback=is_request_admin(request),
+            resolve_dns=False,
+        )
+        if ssrf_err:
+            raise HTTPException(status_code=422, detail=ssrf_err)
     tenant_id = request_user_id(request)
     previous = adapter_registry.get_config(tenant_id, req.agent_id) or {}
     config_dict = {
@@ -186,6 +197,9 @@ async def create_or_update_adapter(req: AdapterCreateRequest, request: Request):
 async def delete_adapter(agent_id: str, request: Request):
     """删除适配器。"""
     tenant_id = request_user_id(request)
+    existing_cfg = adapter_registry.get_config(tenant_id, agent_id) or {}
+    if existing_cfg.get("adapter_type") == "codex":
+        require_admin(request, "仅管理员可移除宿主级 Codex 适配器")
     adapter_registry.unregister(tenant_id, agent_id)
     adapter_registry.remove_config(tenant_id, agent_id)
     return {"status": "deleted", "agent_id": agent_id}
@@ -199,6 +213,13 @@ async def test_adapter(agent_id: str, req: AdapterTestRequest, request: Request)
     adapter = adapter_registry.get(tenant_id, agent_id)
     if not adapter:
         raise HTTPException(status_code=404, detail=f"Adapter not found: {agent_id}")
+    if getattr(adapter, "adapter_type", "") == "codex":
+        require_admin(request, "仅管理员可测试宿主级 Codex 适配器")
+    api_url = (getattr(getattr(adapter, "config", None), "api_url", "") or "").strip()
+    if api_url:
+        ssrf_err = validate_outbound_url(api_url, allow_loopback=is_request_admin(request))
+        if ssrf_err:
+            return {"status": "error", "error": ssrf_err}
 
     valid, err = adapter.validate_config()
     if not valid:
@@ -234,10 +255,18 @@ PROXY_PORT = 4097
 OPENCODE_PORT = 4098
 
 
+_PROXY_SAFE_ENV_KEYS = (
+    "PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+    "XDG_CONFIG_HOME", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT", "WINDIR",
+    "LANG", "LC_ALL", "NODE_ENV",
+)
+
+
 @router.post("/proxy/start")
-async def start_proxy():
-    """启动本地 Agent 代理（OpenCode serve + Node.js proxy）。"""
-    if "proxy" in _proxy_processes:
+async def start_proxy(request: Request):
+    """启动本地 Agent 代理（OpenCode serve + Node.js proxy，仅管理员可用）。"""
+    require_admin(request, "仅管理员可启动宿主级本地代理")
+    if "proxy" in _proxy_processes and _proxy_processes["proxy"].poll() is None:
         return {"status": "already_running", "port": PROXY_PORT}
 
     # 项目根目录
@@ -248,27 +277,28 @@ async def start_proxy():
         return {"error": f"代理脚本不存在: {proxy_script}"}
 
     try:
-        env = dict(os.environ)
+        env = {k: os.environ[k] for k in _PROXY_SAFE_ENV_KEYS if os.environ.get(k)}
         si = subprocess.STARTUPINFO() if sys.platform == "win32" else None
         if si:
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-        # 清理可能残留的旧进程（端口为固定常量，非用户输入）
-        for port in [OPENCODE_PORT, PROXY_PORT]:
-            try:
-                # nosec B602: 固定端口号，无注入风险；Windows 需 shell 执行管道命令
-                out = subprocess.check_output(
-                    f'netstat -ano | findstr ":{port}" | findstr LISTEN',
-                    shell=True, text=True, stderr=subprocess.DEVNULL,
-                ).strip()  # nosec B602
-                if out:
-                    pid = out.split()[-1]
-                    if pid.isdigit():
-                        subprocess.run(["taskkill", "/F", "/PID", pid],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    await asyncio.sleep(1)
-            except Exception:
-                pass
+        # 清理可能残留的旧进程（仅在 Windows 下按固定端口清理）
+        if sys.platform == "win32":
+            for port in [OPENCODE_PORT, PROXY_PORT]:
+                try:
+                    # nosec B602: 固定端口号，无注入风险
+                    out = subprocess.check_output(
+                        f'netstat -ano | findstr ":{port}" | findstr LISTEN',
+                        shell=True, text=True, stderr=subprocess.DEVNULL,
+                    ).strip()  # nosec B602
+                    if out:
+                        pid = out.split()[-1]
+                        if pid.isdigit():
+                            subprocess.run(["taskkill", "/F", "/PID", pid],
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        await asyncio.sleep(1)
+                except Exception:
+                    pass
 
         # 1. 启动 opencode serve（参数为固定常量，使用列表避免 shell 注入）
         opencode_proc = subprocess.Popen(
@@ -282,19 +312,18 @@ async def start_proxy():
         if opencode_proc.poll() is not None:
             return {"error": "opencode serve 启动失败，请检查 OpenCode 是否已安装"}
 
-        # 2. 启动 Node.js 代理（脚本路径来自代码常量，非用户输入）
+        # 2. 启动 Node.js 代理（使用 DEVNULL 避免长生命周期未消费 PIPE 缓冲区死锁）
         proxy_proc = subprocess.Popen(
             ["node", proxy_script, "--port", str(PROXY_PORT),
              "--opencode-url", f"http://127.0.0.1:{OPENCODE_PORT}"],
             env=env, cwd=project_root, startupinfo=si,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         _proxy_processes["proxy"] = proxy_proc
         await asyncio.sleep(2)
 
         if proxy_proc.poll() is not None:
-            stderr = proxy_proc.stderr.read().decode(errors="ignore")
-            return {"error": f"代理启动失败: {stderr[:300]}"}
+            return {"error": "代理启动失败，请检查 Node.js 环境与端口占用"}
 
         return {"status": "started", "port": PROXY_PORT}
 
@@ -305,8 +334,9 @@ async def start_proxy():
 
 
 @router.post("/proxy/stop")
-async def stop_proxy():
-    """停止本地 Agent 代理。"""
+async def stop_proxy(request: Request):
+    """停止本地 Agent 代理（仅管理员可用）。"""
+    require_admin(request, "仅管理员可停止宿主级本地代理")
     stopped = []
     for name, proc in _proxy_processes.items():
         try:

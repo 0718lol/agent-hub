@@ -201,13 +201,19 @@ def search_messages(
 
 @db_write_transaction
 def clear_messages(conversation_id: str):
+    from app.core.models import ProjectEventStream
+
     with Session(_engine_mod.engine) as session:
         statement = select(Message).where(
             Message.conversation_id == conversation_id
         )
-        results = session.exec(statement).all()
-        for msg in results:
+        for msg in session.exec(statement).all():
             session.delete(msg)
+        ev_statement = select(ProjectEventStream).where(
+            ProjectEventStream.conversation_id == conversation_id
+        )
+        for ev in session.exec(ev_statement).all():
+            session.delete(ev)
         session.commit()
 
 

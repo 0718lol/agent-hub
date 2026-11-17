@@ -1,22 +1,42 @@
 """Git integration tools for Agent workflow.
 
 Provides git_commit, git_push, and create_pr tools that Agents can use
-to commit code, push to remote, and create Pull Requests.
+inside an isolated tenant conversation sandbox workspace.
 """
-import asyncio
+from __future__ import annotations
+
 import logging
 import os
 import subprocess
 
-from app.tools.registry import AgentTool, register_tool
+from app.core.workspace import resolve_workspace
+from app.tools.registry import AgentTool, ToolResult, register_tool
 
 logger = logging.getLogger("git_tools")
 
-# Project root directory
+# Fallback directory used only when direct unit tests call execute() without conversation_id
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 
-def _run_git(args: list[str], cwd: str = None, timeout: int = 30) -> tuple[int, str, str]:
+def _resolve_cwd(conversation_id: str | None) -> str | None:
+    if not conversation_id:
+        return None
+    ws = resolve_workspace(conversation_id)
+    if ws is None:
+        return None
+    os.makedirs(str(ws), exist_ok=True)
+    return str(ws)
+
+
+def _to_tool_result(raw: dict) -> ToolResult:
+    return ToolResult(
+        success=bool(raw.get("success")),
+        data=raw,
+        error=str(raw.get("error") or ""),
+    )
+
+
+def _run_git(args: list[str], cwd: str | None = None, timeout: int = 30) -> tuple[int, str, str]:
     """Run a git command safely. Returns (returncode, stdout, stderr)."""
     cmd = ["git"] + args
     try:
@@ -39,7 +59,7 @@ def _run_git(args: list[str], cwd: str = None, timeout: int = 30) -> tuple[int, 
 class GitCommitTool(AgentTool):
     """Commit code changes to git."""
     name = "git_commit"
-    description = "Stage and commit files to git repository"
+    description = "Stage and commit files to the conversation workspace git repository"
     parameters = {
         "type": "object",
         "properties": {
@@ -52,18 +72,42 @@ class GitCommitTool(AgentTool):
                 "items": {"type": "string"},
                 "description": "Files to stage (default: all changes)",
             },
+            "conversation_id": {
+                "type": "string",
+                "description": "Conversation ID (auto-injected)",
+            },
         },
         "required": ["message"],
     }
 
-    async def execute(self, message: str, files: list[str] = None) -> dict:
+    async def validate_and_execute(self, params: dict) -> ToolResult:
+        conv_id = str(params.get("conversation_id") or "").strip()
+        if not conv_id:
+            return ToolResult(success=False, error="conversation_id is required for workspace git operations")
+        raw = await self.execute(
+            message=str(params.get("message") or ""),
+            files=params.get("files"),
+            conversation_id=conv_id,
+        )
+        return _to_tool_result(raw)
+
+    async def execute(
+        self,
+        message: str = "",
+        files: list[str] | None = None,
+        conversation_id: str | None = None,
+    ) -> dict:
         """Stage files and commit."""
+        if isinstance(message, dict):
+            return (await self.validate_and_execute(message)).data
         if not message or not message.strip():
             return {"success": False, "error": "Commit message is required"}
 
-        # Stage files
+        cwd = _resolve_cwd(conversation_id)
+        if conversation_id and cwd is None:
+            return {"success": False, "error": "Invalid conversation workspace"}
+
         if files:
-            # Validate file paths (no traversal)
             for f in files:
                 if ".." in f or f.startswith("/"):
                     return {"success": False, "error": f"Invalid file path: {f}"}
@@ -71,19 +115,17 @@ class GitCommitTool(AgentTool):
         else:
             stage_args = ["add", "."]
 
-        code, stdout, stderr = _run_git(stage_args)
+        code, _stdout, stderr = _run_git(stage_args, cwd=cwd)
         if code != 0:
             return {"success": False, "error": f"git add failed: {stderr}"}
 
-        # Commit
-        code, stdout, stderr = _run_git(["commit", "-m", message])
+        code, stdout, stderr = _run_git(["commit", "-m", message], cwd=cwd)
         if code != 0:
             if "nothing to commit" in stderr or "nothing to commit" in stdout:
                 return {"success": True, "message": "Nothing to commit", "commit_hash": None}
             return {"success": False, "error": f"git commit failed: {stderr}"}
 
-        # Get commit hash
-        code, hash_out, _ = _run_git(["rev-parse", "HEAD"])
+        code, hash_out, _ = _run_git(["rev-parse", "HEAD"], cwd=cwd)
         commit_hash = hash_out if code == 0 else "unknown"
 
         logger.info(f"Git commit: {commit_hash[:8]} - {message}")
@@ -97,7 +139,7 @@ class GitCommitTool(AgentTool):
 class GitPushTool(AgentTool):
     """Push commits to remote."""
     name = "git_push"
-    description = "Push committed changes to remote repository"
+    description = "Push committed changes from conversation workspace to remote repository"
     parameters = {
         "type": "object",
         "properties": {
@@ -105,18 +147,42 @@ class GitPushTool(AgentTool):
                 "type": "string",
                 "description": "Branch to push (default: current branch)",
             },
+            "conversation_id": {
+                "type": "string",
+                "description": "Conversation ID (auto-injected)",
+            },
         },
     }
 
-    async def execute(self, branch: str = None) -> dict:
+    async def validate_and_execute(self, params: dict) -> ToolResult:
+        conv_id = str(params.get("conversation_id") or "").strip()
+        if not conv_id:
+            return ToolResult(success=False, error="conversation_id is required for workspace git operations")
+        raw = await self.execute(
+            branch=params.get("branch"),
+            conversation_id=conv_id,
+        )
+        return _to_tool_result(raw)
+
+    async def execute(
+        self,
+        branch: str | None = None,
+        conversation_id: str | None = None,
+    ) -> dict:
         """Push to remote."""
+        if isinstance(branch, dict):
+            return (await self.validate_and_execute(branch)).data
+        cwd = _resolve_cwd(conversation_id)
+        if conversation_id and cwd is None:
+            return {"success": False, "error": "Invalid conversation workspace"}
+
         args = ["push"]
         if branch:
             args.extend(["origin", branch])
         else:
             args.extend(["origin", "HEAD"])
 
-        code, stdout, stderr = _run_git(args, timeout=60)
+        code, _stdout, stderr = _run_git(args, cwd=cwd, timeout=60)
         if code != 0:
             return {"success": False, "error": f"git push failed: {stderr}"}
 
@@ -127,7 +193,7 @@ class GitPushTool(AgentTool):
 class CreatePRTool(AgentTool):
     """Create a GitHub Pull Request."""
     name = "create_pr"
-    description = "Create a Pull Request on GitHub"
+    description = "Create a Pull Request on GitHub for the conversation workspace"
     parameters = {
         "type": "object",
         "properties": {
@@ -147,31 +213,58 @@ class CreatePRTool(AgentTool):
                 "type": "string",
                 "description": "Target branch (default: main)",
             },
+            "conversation_id": {
+                "type": "string",
+                "description": "Conversation ID (auto-injected)",
+            },
         },
         "required": ["title"],
     }
 
-    async def execute(self, title: str, body: str = "", branch: str = None, base: str = "main") -> dict:
+    async def validate_and_execute(self, params: dict) -> ToolResult:
+        conv_id = str(params.get("conversation_id") or "").strip()
+        if not conv_id:
+            return ToolResult(success=False, error="conversation_id is required for workspace git operations")
+        raw = await self.execute(
+            title=str(params.get("title") or ""),
+            body=str(params.get("body") or ""),
+            branch=params.get("branch"),
+            base=str(params.get("base") or "main"),
+            conversation_id=conv_id,
+        )
+        return _to_tool_result(raw)
+
+    async def execute(
+        self,
+        title: str = "",
+        body: str = "",
+        branch: str | None = None,
+        base: str = "main",
+        conversation_id: str | None = None,
+    ) -> dict:
         """Create a PR using GitHub CLI (gh)."""
+        if isinstance(title, dict):
+            return (await self.validate_and_execute(title)).data
         if not title or not title.strip():
             return {"success": False, "error": "PR title is required"}
 
-        # Get current branch if not specified
+        cwd = _resolve_cwd(conversation_id)
+        if conversation_id and cwd is None:
+            return {"success": False, "error": "Invalid conversation workspace"}
+
         if not branch:
-            code, branch_out, _ = _run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+            code, branch_out, _ = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)
             if code != 0:
                 return {"success": False, "error": "Could not determine current branch"}
             branch = branch_out
 
-        # Push first
-        push_result = await GitPushTool().execute(branch)
+        push_result = await GitPushTool().execute(branch=branch, conversation_id=conversation_id)
         if not push_result.get("success"):
             return {"success": False, "error": f"Push failed: {push_result.get('error')}"}
 
-        # Create PR using gh CLI
         try:
             cmd = ["gh", "pr", "create", "--title", title, "--body", body or "", "--base", base, "--head", branch]
-            result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, cwd=cwd or PROJECT_ROOT, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
                 return {"success": False, "error": f"PR creation failed: {result.stderr.strip()}"}
 

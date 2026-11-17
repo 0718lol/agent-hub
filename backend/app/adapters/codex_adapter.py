@@ -22,10 +22,15 @@ from app.core.tenant_config import get_tenant_json, set_tenant_json
 logger = logging.getLogger("codex_adapter")
 
 DEFAULT_APP_BINARY = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
-DEFAULT_WORKSPACE = Path(__file__).resolve().parents[3]
+DEFAULT_WORKSPACE = Path(__file__).resolve().parents[3] / "agenthub_export" / "_codex_workspace"
 ALLOWED_SANDBOXES = {"read-only", "workspace-write"}
 SESSION_CONFIG_KEY = "codex_sessions"
 MAX_ERROR_LENGTH = 500
+_STRIPPED_ENV_KEYS = frozenset({
+    "DATABASE_URL",
+    "REDIS_PASSWORD",
+    "POSTGRES_PASSWORD",
+})
 
 
 class CodexAdapter(AgentAdapter):
@@ -40,8 +45,11 @@ class CodexAdapter(AgentAdapter):
         self.tenant_id = str(config.extra.get("_tenant_id", ""))
         self.binary = self._resolve_binary(str(config.extra.get("codex_path", "")))
         raw_workspace = str(config.extra.get("workspace", "")).strip()
-        self.workspace = Path(raw_workspace).expanduser() if raw_workspace else DEFAULT_WORKSPACE
-        self.workspace = self.workspace.resolve()
+        if raw_workspace:
+            self.workspace = Path(raw_workspace).expanduser().resolve()
+        else:
+            DEFAULT_WORKSPACE.mkdir(parents=True, exist_ok=True)
+            self.workspace = DEFAULT_WORKSPACE.resolve()
         raw_sandbox = str(config.extra.get("sandbox", "workspace-write"))
         self.sandbox = raw_sandbox if raw_sandbox in ALLOWED_SANDBOXES else "workspace-write"
         self.model = (config.model or "").strip()
@@ -287,7 +295,13 @@ class CodexAdapter(AgentAdapter):
 
     @staticmethod
     def _subprocess_env() -> dict[str, str]:
-        return {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
+        scrubbed = {
+            k: v for k, v in os.environ.items()
+            if not k.startswith("AGENTHUB_") and k not in _STRIPPED_ENV_KEYS
+        }
+        scrubbed["NO_COLOR"] = "1"
+        scrubbed["TERM"] = "dumb"
+        return scrubbed
 
     @classmethod
     def _clean_cli_output(cls, value: str) -> str:

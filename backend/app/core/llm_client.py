@@ -364,13 +364,26 @@ def get_backup_provider_config(primary_provider: str) -> dict | None:
 class ResilienceManager:
     """Handles automatic retries, backoff, and circuit breaking/failover for LLM calls."""
 
+    _MAX_BREAKERS = 2048
+
     def __init__(self):
         self.breakers = {}
 
-    def get_breaker(self, provider: str) -> CircuitBreaker:
-        if provider not in self.breakers:
-            self.breakers[provider] = CircuitBreaker(provider)
-        return self.breakers[provider]
+    def get_breaker(self, provider: str, base_url: str = "", tenant_id: str | None = None) -> CircuitBreaker:
+        import hashlib
+
+        from app.core.tenancy import current_tenant_id
+
+        active_tenant = tenant_id if tenant_id is not None else (current_tenant_id() or "default")
+        normalized_url = (base_url or "").rstrip("/").lower()
+        url_tag = hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()[:12] if normalized_url else "std"
+        breaker_key = f"{active_tenant}:{provider}:{url_tag}"
+        if breaker_key not in self.breakers:
+            if len(self.breakers) >= self._MAX_BREAKERS:
+                oldest = next(iter(self.breakers))
+                self.breakers.pop(oldest, None)
+            self.breakers[breaker_key] = CircuitBreaker(breaker_key)
+        return self.breakers[breaker_key]
 
     async def execute_failover(self, client_instance, messages: list[dict], system: str,
                                enabled_tools: list[str] | None = None,
@@ -381,7 +394,7 @@ class ResilienceManager:
         # Tier 2: Backup Cloud Model (e.g. OpenAI GPT-4o-mini if Claude fails)
         if backup_cfg:
             backup_provider = backup_cfg["provider"]
-            backup_breaker = self.get_breaker(backup_provider)
+            backup_breaker = self.get_breaker(backup_provider, backup_cfg.get("base_url", ""))
             if await backup_breaker.allow_request():
                 failover_notice = f"⚠️ [主模型服务连接已熔断，已自动降级 Failover 路由至备份云服务 {backup_provider} ({backup_cfg['model']})]\n\n"
                 yield failover_notice
@@ -436,7 +449,7 @@ class ResilienceManager:
                                  response_format: dict | None = None) -> AsyncGenerator[str, None]:
         provider = client_instance.provider
         model = client_instance.model
-        breaker = self.get_breaker(provider)
+        breaker = self.get_breaker(provider, getattr(client_instance, "base_url", ""))
 
         # Access active step context variable to start LLM span
         from app.core.metrics import active_step_var
@@ -473,6 +486,7 @@ class ResilienceManager:
         backoffs = [1.5, 3.0, 6.0]
 
         for attempt in range(max_retries):
+            yielded_any = False
             try:
                 try:
                     gen = stream_func(messages, system, enabled_tools, response_format)
@@ -491,6 +505,7 @@ class ResilienceManager:
                     raise e
 
                 await breaker.record_success()
+                yielded_any = True
                 output_chunks.append(first_chunk)
                 yield first_chunk
 
@@ -511,12 +526,26 @@ class ResilienceManager:
             except Exception as e:
                 logger.error(f"LLM attempt {attempt + 1} failed for {provider}: {type(e).__name__}: {e}")
 
+                # Never retry and concatenate a second response if partial chunks were already streamed
+                if yielded_any:
+                    err_msg = f"\n[LLM 流式传输中断: {type(e).__name__}: {str(e)[:150]}]"
+                    output_chunks.append(err_msg)
+                    yield err_msg
+                    if span:
+                        generated_text = "".join(output_chunks)
+                        span.finish(
+                            output_data=generated_text,
+                            status="error",
+                            metadata={"error": type(e).__name__, "model": model, "provider": provider, "mid_stream": True}
+                        )
+                    return
+
                 retriable = True
                 if isinstance(e, LLMAPIError) and e.status_code != 429 and e.status_code < 500:
                     retriable = False
 
                 if not retriable:
-                    await breaker.record_failure()
+                    # Do NOT trip circuit breaker on client 4xx (invalid API key, bad request, unsupported image)
                     err_msg = f"\n[LLM 终端错误 (不可重试): {e!s}]"
                     output_chunks.append(err_msg)
                     yield err_msg
@@ -624,65 +653,48 @@ class LLMClient:
     async def _openai_stream_fallback_ollama(self, messages: list[dict], system: str,
                                              enabled_tools: list[str] | None = None,
                                              response_format: dict | None = None) -> AsyncGenerator[str, None]:
-        original_provider = self.provider
-        original_base_url = self.base_url
-        original_model = self.model
-        original_api_key = self.api_key
-
-        self.provider = "ollama"
-        self.base_url = "http://127.0.0.1:11434/v1"
-        self.model = "qwen2.5-coder:7b"
-        self.api_key = "ollama"
-
+        fallback = LLMClient()
+        fallback.configure(
+            provider="ollama",
+            api_key="ollama",
+            base_url="http://127.0.0.1:11434/v1",
+            model="qwen2.5-coder:7b",
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
         try:
-            async for chunk in self._openai_stream(
+            async for chunk in fallback._openai_stream(
                 messages, system, enabled_tools, response_format
             ):
                 yield chunk
         except Exception as e:
             yield f"\n[Ollama 本地降级重定向调用失败: {type(e).__name__}: {str(e)[:150]}]"
-        finally:
-            self.provider = original_provider
-            self.base_url = original_base_url
-            self.model = original_model
-            self.api_key = original_api_key
 
     async def _stream_fallback_provider(self, backup_config: dict, messages: list[dict], system: str,
                                         enabled_tools: list[str] | None = None,
                                         response_format: dict | None = None) -> AsyncGenerator[str, None]:
-        original_provider = self.provider
-        original_base_url = self.base_url
-        original_model = self.model
-        original_api_key = self.api_key
-        original_temp = self.temperature
-        original_tokens = self.max_tokens
-
-        self.provider = backup_config["provider"]
-        self.base_url = backup_config["base_url"]
-        self.model = backup_config["model"]
-        self.api_key = backup_config["api_key"]
-
+        fallback = LLMClient()
+        fallback.configure(
+            provider=backup_config["provider"],
+            api_key=backup_config["api_key"],
+            base_url=backup_config["base_url"],
+            model=backup_config["model"],
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
         try:
-            # Dynamically route stream based on fallback provider
-            if self.provider == "anthropic":
-                async for chunk in self._anthropic_stream(
+            if fallback.provider == "anthropic":
+                async for chunk in fallback._anthropic_stream(
                     messages, system, enabled_tools, response_format
                 ):
                     yield chunk
             else:
-                async for chunk in self._openai_stream(
+                async for chunk in fallback._openai_stream(
                     messages, system, enabled_tools, response_format
                 ):
                     yield chunk
         except Exception as e:
-            yield f"\n[云端备份提供商 {self.provider} 降级调用失败: {type(e).__name__}: {str(e)[:150]}]"
-        finally:
-            self.provider = original_provider
-            self.base_url = original_base_url
-            self.model = original_model
-            self.api_key = original_api_key
-            self.temperature = original_temp
-            self.max_tokens = original_tokens
+            yield f"\n[云端备份提供商 {fallback.provider} 降级调用失败: {type(e).__name__}: {str(e)[:150]}]"
 
     async def chat_stream(self, messages: list[dict], system: str = "",
                           enabled_tools: list[str] | None = None,

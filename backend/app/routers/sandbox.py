@@ -2,12 +2,13 @@
 import logging
 import re
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from app.core.llm_client import llm_client
 from app.core.metrics import metrics
 from app.core.sandbox import execute_code
+from app.core.tenancy import current_tenant_id
 
 logger = logging.getLogger("routers.sandbox")
 router = APIRouter(tags=["sandbox"])
@@ -21,13 +22,15 @@ class CodeRunRequest(BaseModel):
 
 
 @router.post("/sandbox/run")
-async def sandbox_run(req: CodeRunRequest):
+async def sandbox_run(req: CodeRunRequest, request: Request):
     """Execute code in a sandboxed subprocess and return results."""
+    tenant_quota = getattr(getattr(request, "state", None), "tenant_id", None) or current_tenant_id()
     result = await execute_code(
         code=req.code,
         language=req.language,
         timeout=max(1, min(req.timeout, 30)),
         stdin_data=req.stdin,
+        quota_key=tenant_quota,
     )
     metrics.record_sandbox(req.language, result.status, result.duration_ms)
     return result.to_dict()

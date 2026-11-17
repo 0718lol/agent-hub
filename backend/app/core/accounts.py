@@ -46,6 +46,7 @@ class AccountIdentity:
     tenant_id: str
     username: str
     is_admin: bool
+    password_tag: str = ""
 
     def public_dict(self) -> dict:
         return {
@@ -97,12 +98,19 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
+def _password_tag(password_hash: str) -> str:
+    if not password_hash:
+        return ""
+    return hashlib.sha256(password_hash.encode("utf-8")).hexdigest()[:16]
+
+
 def _identity(user: User) -> AccountIdentity:
     return AccountIdentity(
         user_id=user.id,
         tenant_id=user.tenant_id,
         username=user.username,
         is_admin=bool(user.is_admin),
+        password_tag=_password_tag(user.password_hash),
     )
 
 

@@ -188,22 +188,30 @@ async def delete_messages(conversation_id: str, request: Request):
 
 @router.patch("/conversations/{conversation_id}/messages/{message_id}")
 async def pin_message(conversation_id: str, message_id: int, payload: MessagePinRequest, request: Request):
+    from app.core.database import async_invalidate_message_cache
+
+    scoped_id = _scoped_id(request, conversation_id)
     updated = await asyncio.to_thread(
         update_message_pin,
-        _scoped_id(request, conversation_id),
+        scoped_id,
         message_id,
         payload.pinned,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="消息不存在")
+    await async_invalidate_message_cache(scoped_id)
     return {"status": "ok"}
 
 
 @router.delete("/conversations/{conversation_id}/messages/{message_id}")
 async def remove_message(conversation_id: str, message_id: int, request: Request):
-    deleted = await asyncio.to_thread(delete_message, _scoped_id(request, conversation_id), message_id)
+    from app.core.database import async_invalidate_message_cache
+
+    scoped_id = _scoped_id(request, conversation_id)
+    deleted = await asyncio.to_thread(delete_message, scoped_id, message_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="消息不存在")
+    await async_invalidate_message_cache(scoped_id)
     return {"status": "deleted"}
 
 

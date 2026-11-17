@@ -163,12 +163,15 @@ async def async_get_messages_cached(conversation_id, limit=100, before_id=None):
 
 async def async_get_conversations_cached():
     from app.core.cache import cache
-    cached = await cache.get_json("conv:list")
+    from app.core.tenancy import current_tenant_id
+
+    cache_key = f"conv:list:{current_tenant_id() or 'global'}"
+    cached = await cache.get_json(cache_key)
     if cached is not None:
         return cached
     result = await asyncio.to_thread(get_conversations)  # noqa: F405
     if result:
-        await cache.set_json("conv:list", result, ttl=60)
+        await cache.set_json(cache_key, result, ttl=60)
     return result
 
 
@@ -178,17 +181,21 @@ async def async_clear_messages_cached(conversation_id):
     return result
 
 
+async def async_invalidate_message_cache(conversation_id: str) -> None:
+    await _async_invalidate_cache(f"msg:{conversation_id}:*")
+
+
 async def async_create_conversation_cached(conv_id, conv_type, name, avatar, agent_id=None, agents=None, preview=""):
     result = await asyncio.to_thread(
         create_conversation, conv_id, conv_type, name, avatar, agent_id, agents, preview  # noqa: F405
     )
-    await _async_invalidate_cache("conv:list")
+    await _async_invalidate_cache("conv:list*")
     return result
 
 
 async def async_delete_custom_agent_cached(agent_id, user_id=None):
     result = await asyncio.to_thread(delete_custom_agent, agent_id, user_id)  # noqa: F405
-    await _async_invalidate_cache("conv:list")
+    await _async_invalidate_cache("conv:list*")
     return result
 
 

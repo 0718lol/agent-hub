@@ -37,18 +37,10 @@ async def execute_code(
     language: str = "python",
     timeout: int = DEFAULT_TIMEOUT,
     stdin_data: str = "",
+    quota_key: str | None = None,
 ) -> ExecutionResult:
     """
     Execute code in a secure sandboxed execution rail.
-
-    Args:
-        code: Source code to execute
-        language: 'python' | 'javascript' | 'shell'
-        timeout: Max execution time in seconds
-        stdin_data: Optional stdin input
-
-    Returns:
-        ExecutionResult with stdout, stderr, exit_code, timing
     """
     from app.core.sandbox_manager import sandbox_manager
 
@@ -57,7 +49,8 @@ async def execute_code(
         code=code,
         language=language,
         timeout=timeout,
-        stdin_data=stdin_data
+        stdin_data=stdin_data,
+        quota_key=quota_key,
     )
 
     # Wrap the output dictionary into the standard backward-compatible ExecutionResult instance

@@ -1,6 +1,7 @@
 """Webhook Gateway Manager — Simulated & Production Multi-channel Interactive Webhook System."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -9,6 +10,15 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger("webhook_gateway")
+_MAX_SIMULATED_MESSAGES = 200
+_MAX_TELEGRAM_TOKENS = 1000
+
+
+def _telegram_conv_token(conversation_id: str) -> str:
+    if len(conversation_id) <= 20:
+        return conversation_id
+    return "tg_" + hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()[:16]
+
 
 class WebhookGatewayManager:
     """Manages outgoing HIL notifications and incoming interactive callbacks for Slack & Telegram."""
@@ -18,6 +28,7 @@ class WebhookGatewayManager:
         self.telegram_token = os.environ.get("AGENTHUB_TELEGRAM_BOT_TOKEN") or None
         self.telegram_chat_id = os.environ.get("AGENTHUB_TELEGRAM_CHAT_ID") or None
         self.simulated_sent_messages: list[dict[str, Any]] = []
+        self._telegram_tokens: dict[str, str] = {}
 
     def register_channels(self, slack_url: str | None = None, telegram_token: str | None = None, telegram_chat_id: str | None = None):
         """Register active integration channels."""
@@ -47,6 +58,8 @@ class WebhookGatewayManager:
             "telegram_payload": telegram_payload
         }
         self.simulated_sent_messages.append(simulated_msg)
+        if len(self.simulated_sent_messages) > _MAX_SIMULATED_MESSAGES:
+            del self.simulated_sent_messages[:-_MAX_SIMULATED_MESSAGES]
         logger.info(f"[WebhookGateway] Simulated HIL notification queued for conversation {conversation_id}")
 
         # Deliver through configured channels. An unavailable channel must not
@@ -148,6 +161,12 @@ class WebhookGatewayManager:
 
     def _format_telegram_message(self, conversation_id: str, question: str, options: list[dict[str, Any]]) -> dict[str, Any]:
         """Construct Telegram inline keyboard markup payload with buttons."""
+        compact_id = _telegram_conv_token(conversation_id)
+        if len(self._telegram_tokens) >= _MAX_TELEGRAM_TOKENS:
+            oldest = next(iter(self._telegram_tokens))
+            self._telegram_tokens.pop(oldest, None)
+        self._telegram_tokens[compact_id] = conversation_id
+
         keyboard_buttons = []
         for opt in options:
             label = opt["label"]
@@ -159,7 +178,7 @@ class WebhookGatewayManager:
             keyboard_buttons.append({
                 "text": btn_text,
                 "callback_data": json.dumps({
-                    "c_id": conversation_id[:20],
+                    "c_id": compact_id,
                     "act": label[:20]
                 })
             })
@@ -230,16 +249,15 @@ class WebhookGatewayManager:
         """
         from app.tools.judge_tools import _pending_interactions
 
+        mapped_conv_id = self._telegram_tokens.get(conversation_id, conversation_id)
         target_conv_id = None
-        if fuzzy:
-            # Match the prefix for Telegram callback character constraints
+        if mapped_conv_id in _pending_interactions:
+            target_conv_id = mapped_conv_id
+        elif fuzzy:
             for cid in _pending_interactions:
-                if cid.startswith(conversation_id):
+                if _telegram_conv_token(cid) == conversation_id or cid.startswith(conversation_id):
                     target_conv_id = cid
                     break
-        else:
-            if conversation_id in _pending_interactions:
-                target_conv_id = conversation_id
 
         if target_conv_id:
             fut = _pending_interactions[target_conv_id]
@@ -252,20 +270,28 @@ class WebhookGatewayManager:
         # Recovery Path: Check database checkpointer for Resilient State Resumption
         try:
             from app.core.database import get_pending_hil_checkpoint, get_pending_hil_checkpoint_fuzzy
-            if fuzzy:
+            checkpoint = get_pending_hil_checkpoint(mapped_conv_id)
+            if not checkpoint and fuzzy:
                 checkpoint = get_pending_hil_checkpoint_fuzzy(conversation_id)
-            else:
-                checkpoint = get_pending_hil_checkpoint(conversation_id)
 
             if checkpoint:
-                logger.info(f"[WebhookGateway] Resilient recovery triggered. Restoring state checkpoint from database for conversation {checkpoint['conversation_id']}")
+                restored_conv_id = checkpoint["conversation_id"]
+                logger.info(f"[WebhookGateway] Resilient recovery triggered. Restoring state checkpoint from database for conversation {restored_conv_id}")
+                from app.core.tenancy import conversation_user_id, reset_current_tenant, set_current_tenant
                 from app.routers.ws import create_tracked_task
                 from app.services.agent_orchestrator import resume_graph_from_checkpoint
 
-                # Run the resumption flow with strong tracking to avoid GC premature collection
+                async def _resume_with_tenant():
+                    owner = conversation_user_id(restored_conv_id)
+                    tok = set_current_tenant(owner)
+                    try:
+                        await resume_graph_from_checkpoint(restored_conv_id, action)
+                    finally:
+                        reset_current_tenant(tok)
+
                 create_tracked_task(
-                    resume_graph_from_checkpoint(checkpoint["conversation_id"], action),
-                    name=f"webhook_resume_{checkpoint['conversation_id']}"
+                    _resume_with_tenant(),
+                    name=f"webhook_resume_{restored_conv_id}"
                 )
                 return True
         except Exception as db_ex:

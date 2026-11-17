@@ -59,14 +59,18 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
     fetch('/api/ollama/models')
       .then((r) => r.json())
       .then((d) => {
-        if (d.status === 'ok') {
+        if (Array.isArray(d)) {
+          setOllamaModels(d)
+          if (d.length > 0 && (!model || !d.includes(model))) { setModel(d[0]) }
+          else if (d.length === 0) { setOllamaError('未在本地 Ollama 中发现已下载的模型，请先运行 "ollama run <model>"') }
+        } else if (d && d.status === 'ok') {
           setOllamaModels(d.models || [])
           if (d.models && d.models.length > 0) {
             if (!model || !d.models.includes(model)) { setModel(d.models[0]) }
           } else {
             setOllamaError('未在本地 Ollama 中发现已下载的模型，请先运行 "ollama run <model>"')
           }
-        } else { setOllamaError(d.message || '无法获取本地模型列表') }
+        } else { setOllamaError(d?.message || '无法获取本地模型列表') }
       })
       .catch(() => { setOllamaError('无法连接到后端或本地 Ollama 服务没有运行') })
       .finally(() => { setOllamaLoading(false) })
@@ -354,7 +358,7 @@ export default function SettingsPanel({ onClose, defaultTab, editAgentId }) {
     try {
       let params = {}
       if (rtTestParams.trim()) { params = JSON.parse(rtTestParams) }
-      const resp = await fetch(`/api/runtime-tools/${rtTestName}/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) })
+      const resp = await fetch(`/api/runtime-tools/${rtTestName}/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ params }) })
       const d = await resp.json()
       setRtTestResult(d)
     } catch (e) { setRtTestResult({ error: '请求失败: ' + e.message }) }

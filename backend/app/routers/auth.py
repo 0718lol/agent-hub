@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import ipaddress
 import math
 import time
 from dataclasses import dataclass
@@ -11,10 +12,12 @@ from pydantic import BaseModel
 
 from app.core.accounts import (
     AccountError,
+    AccountIdentity,
     InvalidCredentialsError,
     UsernameTakenError,
     authenticate,
     create_account,
+    get_account,
     update_password,
 )
 from app.core.auth import (
@@ -23,6 +26,7 @@ from app.core.auth import (
     create_session_token,
     get_session_account,
     get_session_secret,
+    revoke_session_token,
 )
 from app.core.config import settings
 
@@ -53,10 +57,14 @@ class PasswordChangeRequest(BaseModel):
     new_password: str
 
 
-def _set_session(response: Response, user_id: str) -> None:
+def _set_session(response: Response, account: AccountIdentity) -> None:
     response.set_cookie(
         SESSION_COOKIE,
-        create_session_token(get_session_secret(settings.api_secret), user_id=user_id),
+        create_session_token(
+            get_session_secret(settings.api_secret),
+            user_id=account.user_id,
+            password_tag=account.password_tag,
+        ),
         max_age=SESSION_TTL_SECONDS,
         httponly=True,
         secure=not settings.debug,
@@ -65,13 +73,53 @@ def _set_session(response: Response, user_id: str) -> None:
     )
 
 
+_TRUSTED_PROXY_NETS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+)
+
+
+def _is_trusted_proxy_ip(host: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(host)
+        return any(addr in net for net in _TRUSTED_PROXY_NETS)
+    except ValueError:
+        return False
+
+
+def _extract_client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
+    if not _is_trusted_proxy_ip(peer):
+        return peer
+    real_ip = (request.headers.get("x-real-ip") or "").strip()
+    if real_ip:
+        try:
+            ipaddress.ip_address(real_ip)
+            return real_ip
+        except ValueError:
+            pass
+    xff = (request.headers.get("x-forwarded-for") or "").strip()
+    if xff:
+        first_hop = xff.split(",")[0].strip()
+        try:
+            ipaddress.ip_address(first_hop)
+            return first_hop
+        except ValueError:
+            pass
+    return peer
+
+
 def _rate_key(prefix: str, value: str) -> str:
     digest = hashlib.sha256(value.encode()).hexdigest()[:32]
     return f"{prefix}:{digest}"
 
 
 async def _record_auth_attempt(request: Request, username: str | None = None) -> str | None:
-    address = request.client.host if request.client else "unknown"
+    address = _extract_client_ip(request)
     now = time.monotonic()
     if username is None:
         identity_key = None
@@ -139,7 +187,7 @@ async def register(payload: CredentialsRequest, request: Request, response: Resp
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AccountError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    _set_session(response, account.user_id)
+    _set_session(response, account)
     return {"status": "ok", "user": account.public_dict()}
 
 
@@ -151,13 +199,14 @@ async def login(payload: CredentialsRequest, request: Request, response: Respons
     except InvalidCredentialsError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     await _clear_login_identity(identity_key)
-    _set_session(response, account.user_id)
+    _set_session(response, account)
     return {"status": "ok", "user": account.public_dict()}
 
 
 @router.post("/auth/change-password")
-async def change_password(payload: PasswordChangeRequest, request: Request):
-    account = get_session_account(request.cookies.get(SESSION_COOKIE))
+async def change_password(payload: PasswordChangeRequest, request: Request, response: Response):
+    raw_token = request.cookies.get(SESSION_COOKIE)
+    account = get_session_account(raw_token)
     if account is None:
         raise HTTPException(status_code=401, detail="请先登录")
     try:
@@ -171,10 +220,16 @@ async def change_password(payload: PasswordChangeRequest, request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except AccountError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    revoke_session_token(raw_token)
+    refreshed = await asyncio.to_thread(get_account, account.user_id)
+    if refreshed is not None:
+        _set_session(response, refreshed)
     return {"status": "ok"}
 
 
 @router.post("/auth/logout")
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
+    revoke_session_token(request.cookies.get(SESSION_COOKIE))
     response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
+    response.headers["Clear-Site-Data"] = '"cookies"'
     return {"status": "ok"}

@@ -41,11 +41,21 @@ async def list_runtime_tools():
 
 
 @router.post("/runtime-tools/{tool_name}/test")
-async def test_runtime_tool(tool_name: str, request: Request, body: ToolTestRequest = ToolTestRequest()):
-    """Manually test an executable tool with given params."""
+async def test_runtime_tool(tool_name: str, request: Request):
+    """Manually test an executable tool with given params (supports both {'params': {...}} and flat JSON)."""
     from app.tools import execute_tool_call, get_tool
 
-    params = dict(body.params)
+    try:
+        raw_body = await request.json()
+    except Exception:
+        raw_body = {}
+    if not isinstance(raw_body, dict):
+        raise HTTPException(status_code=422, detail="Request body must be a JSON object")
+
+    if "params" in raw_body and isinstance(raw_body["params"], dict) and set(raw_body.keys()) <= {"params"}:
+        params = dict(raw_body["params"])
+    else:
+        params = dict(raw_body)
     tool = get_tool(tool_name)
     if tool and "conversation_id" in tool.parameters.get("properties", {}):
         user_id = request_user_id(request)

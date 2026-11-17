@@ -5,7 +5,7 @@ import hmac
 import re
 from contextvars import ContextVar, Token
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from app.core.auth import SESSION_COOKIE, get_session_account
 from app.core.config import settings
@@ -73,6 +73,27 @@ def request_account_id(request: Request) -> str | None:
         return state_user
     account = get_session_account(request.cookies.get(SESSION_COOKIE))
     return account.user_id if account else None
+
+
+def is_request_admin(request: Request) -> bool:
+    state_admin = getattr(getattr(request, "state", None), "is_admin", None)
+    if state_admin is not None:
+        return bool(state_admin)
+    account = get_session_account(request.cookies.get(SESSION_COOKIE))
+    return bool(account and account.is_admin)
+
+
+def require_admin(request: Request, detail: str = "仅管理员可执行此操作") -> None:
+    state_admin = getattr(getattr(request, "state", None), "is_admin", None)
+    if state_admin is True:
+        return
+    if state_admin is False:
+        raise HTTPException(status_code=403, detail=detail)
+    account = get_session_account(request.cookies.get(SESSION_COOKIE))
+    if account is None:
+        raise HTTPException(status_code=401, detail="请先登录")
+    if not account.is_admin:
+        raise HTTPException(status_code=403, detail=detail)
 
 
 def websocket_user_id(websocket) -> str | None:

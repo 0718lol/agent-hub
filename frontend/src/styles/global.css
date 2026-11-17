@@ -2937,3 +2937,43 @@ body {
 .spin-slow {
   animation: spin-slow 4s linear infinite;
 }
+
+/* ================================================================
+   RESPONSIVE MARKDOWN DATA TABLES
+   ================================================================ */
+.table-wrapper {
+  overflow: auto;
+  max-inline-size: 100%;
+  max-block-size: min(500px, 80vh);
+  container-type: inline-size;
+  margin-block: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.table-wrapper table {
+  inline-size: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-xs);
+}
+
+.table-wrapper thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  background: var(--bg-secondary);
+}
+
+.table-wrapper th,
+.table-wrapper td {
+  padding: 8px 12px;
+  text-align: start;
+  border-block-end: 1px solid var(--border-light);
+}
+
+.table-wrapper th {
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}

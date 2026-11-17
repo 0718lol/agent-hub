@@ -118,8 +118,9 @@ class SubprocessSandbox(BaseSandbox):
                 # CPU limit: timeout + 2 seconds buffer
                 cpu_limit_secs = int(timeout) + 2
                 memory_kb = settings.shell_memory_limit_mb * 1024
+                vmem_clause = f"ulimit -v {memory_kb} && " if sys.platform.startswith("linux") else ""
                 # We use shlex.join to construct a perfectly shell-escaped execute command
-                exec_str = f"ulimit -t {cpu_limit_secs} && ulimit -v {memory_kb} && exec {shlex.join(cmd)}"
+                exec_str = f"ulimit -t {cpu_limit_secs} && {vmem_clause}exec {shlex.join(cmd)}"
                 proc = await asyncio.create_subprocess_exec(
                     "sh", "-c", exec_str,
                     stdout=asyncio.subprocess.PIPE,
@@ -365,6 +366,19 @@ class DockerSandbox(BaseSandbox):
         except Exception as exc:
             _logger.warning("Failed to remove sandbox container %s: %s", container_name, exc)
 
+    @staticmethod
+    def _inline_runner(language: str, code: str) -> list[str]:
+        lang_key = language.lower().strip()
+        if lang_key in ("python", "py"):
+            return ["python", "-u", "-c", code]
+        if lang_key in ("javascript", "js"):
+            return ["node", "-e", code]
+        if lang_key in ("typescript", "ts"):
+            return ["tsx", "-e", code]
+        if lang_key in ("shell", "bash", "sh"):
+            return ["sh", "-c", code]
+        raise ValueError(f"Docker sandbox unsupported language: {language}")
+
     async def _execute_container(
         self,
         code: str,
@@ -373,6 +387,7 @@ class DockerSandbox(BaseSandbox):
         *,
         workspace: str | Path | None,
         network: str,
+        stdin_data: str = "",
         mounts: tuple[str, ...] = (),
         environment: tuple[tuple[str, str], ...] = (),
         runtime_bootstrap: tuple[str, ...] = (),
@@ -389,6 +404,7 @@ class DockerSandbox(BaseSandbox):
         runner = self._runner(language)
         bootstrap_parts: list[str] = []
         command = code
+        env_items = list(environment)
         if workspace is not None:
             archive_path = await asyncio.to_thread(
                 self._create_workspace_archive,
@@ -405,8 +421,14 @@ class DockerSandbox(BaseSandbox):
                 runner[-1] = COMMAND_PATH
             else:
                 runner.append(COMMAND_PATH)
+        elif stdin_data:
+            runner = self._inline_runner(language, command)
         if bootstrap_parts:
-            bootstrap_parts.append(f"exec {shlex.join(runner)}")
+            if stdin_data:
+                env_items.append(("AGENTHUB_STDIN", stdin_data))
+                bootstrap_parts.append(f'printf "%s" "$AGENTHUB_STDIN" | {shlex.join(runner)}')
+            else:
+                bootstrap_parts.append(f"exec {shlex.join(runner)}")
             runner = ["sh", "-lc", " && ".join(bootstrap_parts)]
 
         options = [
@@ -423,7 +445,7 @@ class DockerSandbox(BaseSandbox):
             "-e", "PYTHONDONTWRITEBYTECODE=1",
             "-e", "HOME=/tmp",
         ]
-        for key, value in environment:
+        for key, value in env_items:
             options.extend(["-e", f"{key}={value}"])
         for mount in mounts:
             options.extend(["--mount", mount])
@@ -442,11 +464,12 @@ class DockerSandbox(BaseSandbox):
                 stdin=asyncio.subprocess.PIPE,
             )
             try:
-                input_bytes = (
-                    await asyncio.to_thread(archive_path.read_bytes)
-                    if archive_path is not None
-                    else command.encode("utf-8")
-                )
+                if archive_path is not None:
+                    input_bytes = await asyncio.to_thread(archive_path.read_bytes)
+                elif stdin_data:
+                    input_bytes = stdin_data.encode("utf-8")
+                else:
+                    input_bytes = command.encode("utf-8")
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(input=input_bytes),
                     timeout=timeout,
@@ -623,16 +646,16 @@ class DockerSandbox(BaseSandbox):
             path_parts.append("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
             environment.append(("PATH", ":".join(path_parts)))
         bootstrap = tuple(plan.runtime_bootstrap for plan in plans if plan.runtime_bootstrap)
-        command = code + ("\n" + stdin_data if stdin_data else "")
         active_names = {plan.volume_name for plan in plans}
         self._active_dependency_volumes.update(active_names)
         try:
             return await self._execute_container(
-                command,
+                code,
                 language,
                 timeout,
                 workspace=workspace,
                 network="none",
+                stdin_data=stdin_data,
                 mounts=mounts,
                 environment=tuple(environment),
                 runtime_bootstrap=bootstrap,

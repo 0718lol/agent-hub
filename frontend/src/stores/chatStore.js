@@ -46,6 +46,8 @@ const FALLBACK_CONVERSATIONS = [
   { id: 'conv_group_demo', type: 'group', name: 'Demo 项目群', avatar: null, agents: ['agent_pm', 'agent_frontend', 'agent_backend', 'agent_tester', 'agent_devops', 'agent_designer'], messages: [], pinned: false, unread: false, updatedAt: Date.now() - 7000 },
 ]
 
+const BUILTIN_CONVERSATION_IDS = new Set(FALLBACK_CONVERSATIONS.map((c) => c.id))
+
 async function patchConversation(conversationId, updates) {
   const response = await fetch(`/api/conversations/${conversationId}`, {
     method: 'PATCH',
@@ -246,7 +248,7 @@ export const useChatStore = create((set, get) => ({
   addMessage: (conversationId, message) => {
     if (isInternalNoiseMessage(message)) return
     const conversation = get().conversations.find((item) => item.id === conversationId)
-    const autoName = message.sender === 'user' && conversation?.messages.length === 0
+    const autoName = message.sender === 'user' && conversation?.messages.length === 0 && !BUILTIN_CONVERSATION_IDS.has(conversationId)
       ? generateConvName(message.content?.text || '')
       : null
     set((state) => ({

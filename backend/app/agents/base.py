@@ -1,6 +1,9 @@
 import asyncio
+import base64
 import json
 import logging
+import mimetypes
+import os
 import re
 from collections.abc import AsyncGenerator
 
@@ -13,6 +16,105 @@ logger = logging.getLogger("base_agent")
 _MAX_HISTORY_CHARS = 12000
 # Maximum tool call rounds per reply (prevent infinite loops)
 _MAX_TOOL_ROUNDS = 5
+_MAX_TOOLS_PER_ROUND = 8
+_MAX_IMAGE_ATTACHMENT_BYTES = 4 * 1024 * 1024
+
+_WORKSPACE_SCOPED_TOOLS = frozenset({
+    "file_read",
+    "file_write",
+    "file_list",
+    "browser_action",
+    "workspace_capture_screenshot",
+    "safe_python_executor",
+    "file_view_windowed",
+    "file_edit_line",
+    "file_patch_block",
+    "run_stateful_command",
+    "e2b_python_interpreter",
+    "git_commit",
+    "git_push",
+    "create_pr",
+    "user_interaction_judge",
+})
+
+
+def _resolve_owned_upload_path(stored_name: str, conversation_id: str | None) -> str | None:
+    if not stored_name or ".." in stored_name or "/" in stored_name or "\\" in stored_name:
+        return None
+    from app.core.file_storage import UPLOAD_DIR, FileStorageManager
+    from app.core.tenancy import conversation_user_id, current_tenant_id
+
+    owner = conversation_user_id(conversation_id or "") or current_tenant_id()
+    if owner:
+        allowed = stored_name.startswith(f"tenantfile__{owner}__") or (
+            owner == "api-client" and not stored_name.startswith("tenantfile__")
+        )
+        if not allowed:
+            return None
+    elif stored_name.startswith("tenantfile__"):
+        return None
+
+    if not FileStorageManager.exists(stored_name):
+        return None
+    abs_path = os.path.realpath(FileStorageManager.get_absolute_path(stored_name))
+    real_upload = os.path.realpath(UPLOAD_DIR)
+    if os.path.commonpath([real_upload, abs_path]) != real_upload:
+        return None
+    return abs_path
+
+
+def _enrich_user_content(
+    message: str,
+    attachments: list | None,
+    conversation_id: str | None = None,
+) -> str | list[dict]:
+    if not attachments:
+        return message
+    text_blocks: list[str] = []
+    image_blocks: list[dict] = []
+    for att in attachments[:10]:
+        if not isinstance(att, dict):
+            continue
+        orig_name = str(att.get("original_name") or att.get("name") or "attachment")[:120]
+        stored_name = str(att.get("stored_name") or "").strip()
+        if not stored_name and isinstance(att.get("url"), str) and att["url"].startswith("/uploads/"):
+            stored_name = att["url"].removeprefix("/uploads/").strip()
+
+        is_image = bool(att.get("is_image")) or str(att.get("content_type") or "").startswith("image/")
+        if is_image and stored_name:
+            path = _resolve_owned_upload_path(stored_name, conversation_id)
+            if path and os.path.getsize(path) <= _MAX_IMAGE_ATTACHMENT_BYTES:
+                mime = str(att.get("content_type") or mimetypes.guess_type(path)[0] or "image/png")
+                if not mime.startswith("image/"):
+                    mime = "image/png"
+                with open(path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("ascii")
+                image_blocks.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                })
+                text_blocks.append(f"[已附图片: {orig_name}]")
+            continue
+
+        extracted = str(att.get("extracted_text") or "").strip()
+        if not extracted and stored_name:
+            path = _resolve_owned_upload_path(stored_name, conversation_id)
+            if path and os.path.getsize(path) <= 512 * 1024:
+                with open(path, "rb") as f:
+                    raw = f.read(16_384)
+                if b"\x00" not in raw[:2048]:
+                    extracted = raw.decode("utf-8", errors="replace").strip()
+        if extracted:
+            text_blocks.append(f"[附件: {orig_name}]\n{extracted[:4000]}")
+        else:
+            text_blocks.append(f"[附件: {orig_name} (二进制文件)]")
+
+    combined_text = message
+    if text_blocks:
+        combined_text = (message + "\n\n" + "\n\n".join(text_blocks)).strip()
+    if image_blocks:
+        return [{"type": "text", "text": combined_text}, *image_blocks]
+    return combined_text
 
 
 def _without_explicit_thinking(prompt: str) -> str:
@@ -41,18 +143,37 @@ class BaseAgent:
     # Runtime tools enabled for this agent (None = all enabled tools)
     enabled_tools: list[str] | None = None
 
-    async def stream_reply(self, message: str, context: list | None = None,
-                           history: list | None = None, conversation_id: str | None = None) -> AsyncGenerator[str, None]:
+    async def stream_reply(
+        self,
+        message: str,
+        context: list | None = None,
+        history: list | None = None,
+        conversation_id: str | None = None,
+        attachments: list | None = None,
+    ) -> AsyncGenerator[str, None]:
         if llm_client.is_configured() and self.system_prompt:
+            enriched_user = _enrich_user_content(message, attachments, conversation_id)
             if conversation_id:
                 from app.core.event_stream import MessageEvent, event_stream_manager
                 stream = event_stream_manager.get_stream(conversation_id)
-                has_user_prompt = any(isinstance(ev, MessageEvent) and ev.sender == "user" and ev.content == message for ev in stream)
+                event_text = enriched_user if isinstance(enriched_user, str) else message
+                has_user_prompt = any(
+                    isinstance(ev, MessageEvent) and ev.sender == "user" and ev.content == event_text
+                    for ev in stream
+                )
                 if not has_user_prompt:
-                    event_stream_manager.append_event(conversation_id, MessageEvent(sender="user", content=message))
+                    event_stream_manager.append_event(
+                        conversation_id,
+                        MessageEvent(sender="user", content=event_text),
+                    )
                 messages = event_stream_manager.compile_to_messages(conversation_id)
+                if isinstance(enriched_user, list):
+                    if messages and messages[-1].get("role") == "user":
+                        messages[-1] = {"role": "user", "content": enriched_user}
+                    else:
+                        messages.append({"role": "user", "content": enriched_user})
             else:
-                messages = self._build_messages(message, context, history)
+                messages = self._build_messages(message, context, history, attachments=attachments)
             # Structured layered prompt injection
             task_type = prompt_engine.detect_task_type(message, self.agent_id)
             prompt_context = {"task_type": task_type, "conversation_id": conversation_id}
@@ -60,10 +181,11 @@ class BaseAgent:
             if llm_client.thinking_mode == "disabled":
                 full_prompt = _without_explicit_thinking(full_prompt)
 
-            # Inject tool descriptions into system prompt
-            tools_prompt = self._get_tools_prompt()
-            if tools_prompt:
-                full_prompt = full_prompt + tools_prompt
+            # Only inject text tool schemas when provider does not receive native tools JSON schema
+            if getattr(llm_client, "provider", "openai") in ("ollama", "opencode", "claude_code"):
+                tools_prompt = self._get_tools_prompt()
+                if tools_prompt:
+                    full_prompt = full_prompt + tools_prompt
 
             # Stream with tool call interception loop
             round_count = 0
@@ -78,75 +200,92 @@ class BaseAgent:
                     yield chunk
 
                 # Check if output contains tool_call tags
-                from app.tools.registry import execute_tool_call, parse_tool_calls
+                from app.tools.registry import execute_tool_call, get_tool, parse_tool_calls
                 tool_calls = parse_tool_calls(accumulated)
 
                 if conversation_id:
                     from app.core.event_stream import ActionCallEvent, ThoughtEvent, event_stream_manager
                     if tool_calls:
-                        tool_name, params, start_pos, _end_pos = tool_calls[0]
-                        thought_text = accumulated[:start_pos]
+                        first_start = tool_calls[0][2]
+                        thought_text = accumulated[:first_start]
                         if thought_text.strip():
-                            event_stream_manager.append_event(conversation_id, ThoughtEvent(agent_id=self.agent_id, content=thought_text))
-                        event_stream_manager.append_event(conversation_id, ActionCallEvent(tool_name=tool_name, params=params))
+                            event_stream_manager.append_event(
+                                conversation_id,
+                                ThoughtEvent(agent_id=self.agent_id, content=thought_text),
+                            )
+                        for t_name, t_params, _s, _e in tool_calls[:_MAX_TOOLS_PER_ROUND]:
+                            event_stream_manager.append_event(
+                                conversation_id,
+                                ActionCallEvent(tool_name=t_name, params=t_params),
+                            )
                     else:
-                        event_stream_manager.append_event(conversation_id, ThoughtEvent(agent_id=self.agent_id, content=accumulated))
+                        event_stream_manager.append_event(
+                            conversation_id,
+                            ThoughtEvent(agent_id=self.agent_id, content=accumulated),
+                        )
 
                 if not tool_calls or round_count >= _MAX_TOOL_ROUNDS:
                     break  # No tool calls or max rounds reached
 
                 round_count += 1
-                # Execute the first tool call found
-                tool_name, params, start_pos, _end_pos = tool_calls[0]
+                observations: list[str] = []
+                all_obs_images: list[str] = []
 
-                # Workspace tools must use the active conversation even if the model supplied an ID.
-                if conversation_id and tool_name in {
-                    "file_read", "file_write", "file_list", "browser_action", "file_view_windowed",
-                    "file_edit_line", "file_patch_block", "run_stateful_command", "e2b_python_interpreter",
-                }:
-                    params["conversation_id"] = conversation_id
+                for tool_name, params, _start_pos, _end_pos in tool_calls[:_MAX_TOOLS_PER_ROUND]:
+                    if not isinstance(params, dict):
+                        params = {}
+                    # Mandatory tenant workspace scoping: overwrite conversation_id on any tool that accepts it
+                    tool_obj = get_tool(tool_name)
+                    accepts_conv = bool(
+                        tool_obj
+                        and "conversation_id" in (tool_obj.parameters or {}).get("properties", {})
+                    )
+                    if conversation_id and (tool_name in _WORKSPACE_SCOPED_TOOLS or accepts_conv):
+                        params["conversation_id"] = conversation_id
 
-                logger.info(f"Agent '{self.agent_id}' calling tool: {tool_name}({params})")
-                result = await execute_tool_call(tool_name, params)
+                    logger.info(f"Agent '{self.agent_id}' calling tool: {tool_name}({params})")
+                    result = await execute_tool_call(tool_name, params)
 
-                # Format tool result for display
-                result_text = self._format_tool_result(tool_name, result)
-                yield f"\n\n> 🔧 **工具调用**: `{tool_name}`\n{result_text}\n\n"
+                    result_text = self._format_tool_result(tool_name, result)
+                    yield f"\n\n> 🔧 **工具调用**: `{tool_name}`\n{result_text}\n\n"
 
-                # Add assistant output + tool result to messages for next round
-                if conversation_id:
-                    from app.core.event_stream import ObservationEvent, event_stream_manager
-                    obs_output = result.data if result.success else result.error
-                    obs_images = []
+                    obs_output = result.data if result.success else {"error": result.error}
+                    obs_images: list[str] = []
                     if result.success and isinstance(result.data, dict):
                         if "images" in result.data:
-                            obs_images = result.data["images"]
-                        elif "screenshot_base64" in result.data:
+                            obs_images = [img for img in result.data["images"] if img]
+                        elif result.data.get("screenshot_base64"):
                             obs_images = [result.data["screenshot_base64"]]
-                        elif "screenshot" in result.data:
+                        elif result.data.get("screenshot"):
                             obs_images = [result.data["screenshot"]]
-                    event_stream_manager.append_event(
-                        conversation_id,
-                        ObservationEvent(tool_name=tool_name, success=result.success, output=obs_output, images=obs_images)
+
+                    if conversation_id:
+                        from app.core.event_stream import ObservationEvent, event_stream_manager
+                        event_stream_manager.append_event(
+                            conversation_id,
+                            ObservationEvent(
+                                tool_name=tool_name,
+                                success=result.success,
+                                output=result.data if result.success else result.error,
+                                images=obs_images,
+                            ),
+                        )
+                    observations.append(
+                        f"[工具结果: {tool_name}]\n{json.dumps(obs_output, ensure_ascii=False, indent=2)}"
                     )
-                    messages.append({"role": "assistant", "content": accumulated})
-                    observation = (
-                        f"[工具结果: {tool_name}]\n"
-                        f"{json.dumps(obs_output, ensure_ascii=False, indent=2)}\n\n"
-                        "请基于以上工具结果继续回复用户。"
+                    all_obs_images.extend(obs_images)
+
+                messages.append({"role": "assistant", "content": accumulated})
+                combined_observation = "\n\n".join(observations) + "\n\n请基于以上工具结果继续回复用户。"
+                if all_obs_images:
+                    observation_content: list[dict] = [{"type": "text", "text": combined_observation}]
+                    observation_content.extend(
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image}"}}
+                        for image in all_obs_images
                     )
-                    if obs_images:
-                        observation_content = [{"type": "text", "text": observation}]
-                        observation_content.extend({
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{image}"},
-                        } for image in obs_images if image)
-                        messages.append({"role": "user", "content": observation_content})
-                    else:
-                        messages.append({"role": "user", "content": observation})
+                    messages.append({"role": "user", "content": observation_content})
                 else:
-                    messages.append({"role": "assistant", "content": accumulated})
-                    messages.append({"role": "user", "content": f"[工具结果: {tool_name}]\n{json.dumps(result.data if result.success else {'error': result.error}, ensure_ascii=False, indent=2)}\n\n请基于以上工具结果继续回复用户。"})
+                    messages.append({"role": "user", "content": combined_observation})
         else:
             reply = self._generate_reply(message, context)
             # Mock mode should still feel streamed, but character-by-character
@@ -269,19 +408,12 @@ class BaseAgent:
 
         # Avoid duplicating the current user message when history already includes it
         if not (messages and messages[-1].get("role") == "user"
-                and messages[-1].get("content") == message):
-            enhanced_message = message
-            if attachments:
-                file_contexts = []
-                for att in attachments:
-                    extracted = att.get("extracted_text", "")
-                    if extracted:
-                        file_contexts.append(
-                            f"[文件: {att.get('original_name', 'unknown')}]\n{extracted[:2000]}"
-                        )
-                if file_contexts:
-                    enhanced_message = message + "\n\n" + "\n\n".join(file_contexts)
-            messages.append({"role": "user", "content": enhanced_message})
+                and messages[-1].get("content") == message and not attachments):
+            enhanced_message = _enrich_user_content(message, attachments)
+            if messages and messages[-1].get("role") == "user" and messages[-1].get("content") == message:
+                messages[-1] = {"role": "user", "content": enhanced_message}
+            else:
+                messages.append({"role": "user", "content": enhanced_message})
         return messages
 
     def _generate_reply(self, message: str, context: list | None = None) -> str:

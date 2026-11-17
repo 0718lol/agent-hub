@@ -101,11 +101,12 @@ class StateGraph:
     inspired by LangGraph, tailored for AgentHub's WebSocket-driven DAG Canvas.
     """
 
-    def __init__(self):
+    def __init__(self, max_steps: int = 25):
         self.nodes: dict[str, Callable[[dict], Any]] = {}
         self.edges: dict[str, str] = {}
         self.conditional_edges: dict[str, Callable[[dict], str]] = {}
         self.guards: dict[str, list[Any]] = {}
+        self.max_steps = max(1, max_steps)
 
     def add_node(self, name: str, func: Callable[[dict], Any]):
         self.nodes[name] = func
@@ -147,10 +148,22 @@ class StateGraph:
 
         logger.info(f"[StateGraph] Starting execution from {current_node}")
 
+        step_count = 0
         while current_node and current_node != "END":
             if stop_event and stop_event.is_set():
                 logger.info("[StateGraph] Cancelled due to stop_event")
                 break
+            if step_count >= self.max_steps:
+                logger.warning(f"[StateGraph] Reached max_steps={self.max_steps}, stopping graph execution")
+                await manager.broadcast(conversation_id, {
+                    "type": "message",
+                    "conversation_id": conversation_id,
+                    "sender": "system",
+                    "content": {"text": f"⚠️ 状态图已达到最大步数上限 ({self.max_steps})，已自动安全终止以防死循环。"},
+                    "stream": False,
+                })
+                break
+            step_count += 1
 
             # 1. Update node status to active ('doing')
             await manager.broadcast(conversation_id, {

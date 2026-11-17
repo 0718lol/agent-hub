@@ -31,12 +31,36 @@ const MD_COMPONENTS = {
   h3: ({ children }) => <div style={{ fontSize: 14, margin: '0.4em 0 0.2em', fontWeight: 600 }}>{children}</div>,
   strong: ({ children }) => <strong style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{children}</strong>,
   em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
-  code: ({ children }) => (
-    <code style={{
-      background: 'rgba(99,102,241,0.16)', color: 'var(--accent)',
-      padding: '1px 6px', borderRadius: 4,
-      fontSize: '0.9em', fontFamily: 'Consolas, Monaco, monospace',
-    }}>{children}</code>
+  pre: ({ children }) => (
+    <pre style={{
+      background: 'rgba(15, 23, 42, 0.72)',
+      border: '1px solid var(--border)',
+      borderRadius: 6,
+      padding: '10px 12px',
+      margin: '0.45em 0',
+      overflowX: 'auto',
+      fontSize: '0.88em',
+      lineHeight: 1.5,
+      fontFamily: 'Consolas, Monaco, monospace',
+    }}>{children}</pre>
+  ),
+  code: ({ className, children }) => {
+    const isBlock = Boolean(className && className.startsWith('language-')) || String(children).includes('\n')
+    if (isBlock) {
+      return <code className={className} style={{ fontFamily: 'Consolas, Monaco, monospace' }}>{children}</code>
+    }
+    return (
+      <code style={{
+        background: 'rgba(99,102,241,0.16)', color: 'var(--accent)',
+        padding: '1px 6px', borderRadius: 4,
+        fontSize: '0.9em', fontFamily: 'Consolas, Monaco, monospace',
+      }}>{children}</code>
+    )
+  },
+  table: ({ children }) => (
+    <div tabIndex={0} role="region" aria-label="数据表格" className="table-wrapper">
+      <table>{children}</table>
+    </div>
   ),
   blockquote: ({ children }) => (
     <blockquote style={{
@@ -317,25 +341,13 @@ export default function MessageBubble({ message, conversationId, isPinned, isLas
     })
   }
 
-  // Markdown 渲染组件配置
-  const markdownComponents = {
-    code({ node, inline, className, children, ...props }) {
-      const match = /language-(\w+)/.exec(className || '')
-      const codeStr = String(children).replace(/\n$/, '')
-      if (!inline && match) {
-        return <CodeHiddenNotice streaming={message.streaming} />
-      }
-      return <code className="markdown-inline-code" {...props}>{children}</code>
-    },
-    table({ children }) {
-      return <div className="markdown-table-wrap"><table>{children}</table></div>
-    },
-    a({ children, href, ...props }) {
-      return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
-    },
-  }
-
   const renderText = (t) => {
+    if (isUser) {
+      const trimmedUser = String(t || '').trim()
+      if (!trimmedUser) return null
+      return <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{trimmedUser}</ReactMarkdown>
+    }
+
     let clean = t.replace(/\[thinking\][\s\S]*?\[\/thinking\]/g, '')
     clean = clean.replace(/\[assign:\w+\]/g, '')
     clean = clean.replace(/```[\s\S]*?```/g, '\n[artifact_code]\n')
@@ -445,7 +457,7 @@ export default function MessageBubble({ message, conversationId, isPinned, isLas
         )
       }
 
-      return <ReactMarkdown key={i} components={MD_COMPONENTS}>{part}</ReactMarkdown>
+      return <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{part}</ReactMarkdown>
     })
   }
 

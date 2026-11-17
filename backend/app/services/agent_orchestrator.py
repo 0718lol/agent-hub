@@ -87,7 +87,7 @@ def _image_capability_error(text: str) -> bool:
 
 
 def _looks_like_code_stream(text: str) -> bool:
-    """Detect partial code so it is not shown as conversational progress."""
+    """Detect partial HTML/code deliverables so raw markup is not flashed before extraction."""
     stripped = text.strip()
     if not stripped:
         return False
@@ -101,18 +101,13 @@ def _looks_like_code_stream(text: str) -> bool:
         "</style",
         "<script",
         "</script",
-        "{",
-        "}",
-        "const ",
-        "let ",
-        "function ",
         "@keyframes",
     )
     lowered = stripped.lower()
     if any(marker in lowered for marker in code_markers):
         return True
-    css_like = re.search(r'(^|\n)\s*[\w.#:[\]-]+\s*\{[^}]*$', stripped)
-    html_like = re.search(r'<[a-z][\w-]*(\s+[^>]*)?>?', stripped, re.IGNORECASE)
+    css_like = re.search(r"(^|\n)\s*[.#][\w-]+\s*\{[^}]*$", stripped)
+    html_like = re.search(r"<(div|main|section|header|footer|canvas|svg)(\s+[^>]*)?>", stripped, re.IGNORECASE)
     return bool(css_like or html_like)
 
 
@@ -363,7 +358,9 @@ def should_use_browser(text: str, agent_id: str) -> tuple[bool, str]:
 
 
 async def _auto_debug_code(code, task, llm_client, max_retries=2):
-    """Auto-debug: sandbox run -> error analysis -> fix -> verify. Returns dict."""
+    """Auto-debug simple Python snippets in SafeASTInterpreter; skip full module/class scripts."""
+    if re.search(r"(^|\n)\s*(import\s+|from\s+\S+\s+import\s+|def\s+|async\s+def\s+|class\s+)", code):
+        return {"fixed": False, "code": code, "report": "skipped_module_syntax", "attempts": 0}
     from app.core.ast_interpreter import SafeASTInterpreter
     current = code
     interp = SafeASTInterpreter()
@@ -398,6 +395,7 @@ async def _auto_debug_code(code, task, llm_client, max_retries=2):
 async def stream_agent_reply(
     conversation_id: str, agent, user_text: str,
     stop_event: asyncio.Event | None = None, context: str = "",
+    attachments: list | None = None,
 ) -> tuple[list[str], str]:
     """Stream agent reply. Returns (assigned_agent_ids, response_text)."""
     full_text = ""
@@ -499,7 +497,14 @@ async def stream_agent_reply(
                 buffer = buffer[:code_match.start()] + buffer[code_match.end():]
 
         if _use_stream:
-            async for chunk in agent.stream_reply(effective_text, history=history, conversation_id=conversation_id):
+            stream_kwargs: dict[str, Any] = {"history": history, "conversation_id": conversation_id}
+            if attachments:
+                stream_kwargs["attachments"] = attachments
+            try:
+                reply_stream = agent.stream_reply(effective_text, **stream_kwargs)
+            except TypeError:
+                reply_stream = agent.stream_reply(effective_text, history=history, conversation_id=conversation_id)
+            async for chunk in reply_stream:
                 if stop_event and stop_event.is_set():
                     break
 
@@ -625,9 +630,11 @@ async def stream_agent_reply(
                     # Auto-debug: run Python code in sandbox, fix errors automatically
                     if lang == "python" and agent.agent_id in ("agent_frontend", "agent_backend", "agent_tester"):
                         try:
+                            original_code = code
                             _debug = await _auto_debug_code(code, effective_text, llm_client, max_retries=2)
-                            if _debug.get("fixed"):
+                            if _debug.get("fixed") and _debug.get("code"):
                                 code = _debug["code"]
+                                raw_text = raw_text.replace(original_code, code, 1)
                                 logger.info(f"Auto-debug fixed code for {agent.agent_id}")
                         except Exception as _de:
                             logger.debug(f"Auto-debug skipped: {_de}")
@@ -681,38 +688,43 @@ async def stream_agent_reply(
                 r'图片|海报|插画|视觉|页面|网页|前端|html|image|poster|screenshot',
                 effective_text, re.IGNORECASE,
             ))
-            if _image_capability_error(raw_text) and (visual_agent or visual_request):
-                if has_html_output:
-                    full_text = (
-                        "截图或图片验证不可用，但 HTML 已成功生成并保留在右侧预览面板。"
-                        "任务已结束；你可以继续要求我修改 HTML/CSS。"
-                    )
-                    raw_text = full_text
+            if _image_capability_error(raw_text):
+                if visual_agent or visual_request:
+                    if has_html_output:
+                        full_text = (
+                            "截图或图片验证不可用，但 HTML 已成功生成并保留在右侧预览面板。"
+                            "任务已结束；你可以继续要求我修改 HTML/CSS。"
+                        )
+                        raw_text = full_text
+                    else:
+                        fallback_html = _html_fallback_for_visual_task(user_text)
+                        artifact = await asyncio.to_thread(
+                            save_artifact, conversation_id, agent.agent_id, "html", fallback_html
+                        )
+                        await manager.broadcast(conversation_id, {
+                            "type": "code", "conversation_id": conversation_id,
+                            "agent_id": agent.agent_id, "language": "html",
+                            "code": fallback_html, "artifact_id": artifact["id"],
+                            "artifact_name": artifact["name"],
+                        })
+                        await manager.broadcast(conversation_id, {
+                            "type": "preview", "conversation_id": conversation_id,
+                            "agent_id": agent.agent_id, "html": fallback_html,
+                        })
+                        full_text = (
+                            "当前模型不支持图片生成或截图审查，已自动切换为可运行的 HTML 方案。"
+                            "任务已结束，HTML 已放到右侧预览面板；你可以继续要求我修改版式、文案或配色。"
+                        )
+                        raw_text = full_text
                 else:
-                    fallback_html = _html_fallback_for_visual_task(user_text)
-                    artifact = await asyncio.to_thread(
-                        save_artifact, conversation_id, agent.agent_id, "html", fallback_html
-                    )
-                    await manager.broadcast(conversation_id, {
-                        "type": "code", "conversation_id": conversation_id,
-                        "agent_id": agent.agent_id, "language": "html",
-                        "code": fallback_html, "artifact_id": artifact["id"],
-                        "artifact_name": artifact["name"],
-                    })
-                    await manager.broadcast(conversation_id, {
-                        "type": "preview", "conversation_id": conversation_id,
-                        "agent_id": agent.agent_id, "html": fallback_html,
-                    })
                     full_text = (
-                        "当前模型不支持图片生成或截图审查，已自动切换为可运行的 HTML 方案。"
-                        "任务已结束，HTML 已放到右侧预览面板；你可以继续要求我修改版式、文案或配色。"
+                        "本次任务未完成：当前模型或工具不支持所需的图片能力。"
+                        "任务已结束，没有继续重试。请切换支持图片的模型，或让我改用 HTML/CSS 方案。"
                     )
                     raw_text = full_text
             else:
-                full_text = (
-                    "本次任务未完成：当前模型或工具不支持所需的图片能力。"
-                    "任务已结束，没有继续重试。请切换支持图片的模型，或让我改用 HTML/CSS 方案。"
-                )
+                detail = raw_text.strip()[:300]
+                full_text = f"本次任务未完成（模型调用出错）：{detail}"
                 raw_text = full_text
 
         # Bare HTML fallback
@@ -876,7 +888,12 @@ async def stream_agent_reply(
 # Targeted agent flow
 # ============================================================
 
-async def run_target_agent_flow(conversation_id: str, agent, text: str):
+async def run_target_agent_flow(
+    conversation_id: str,
+    agent,
+    text: str,
+    attachments: list | None = None,
+):
     """Background generation flow when user targets a specific agent."""
     logger.info(f"run_target_agent_flow: conv={conversation_id}, agent={agent.agent_id}")
     AGENTS = get_agents(conversation_user_id(conversation_id))
@@ -889,7 +906,7 @@ async def run_target_agent_flow(conversation_id: str, agent, text: str):
             "is_generating": True,
         })
         assigned_agent_ids, pm_response = await stream_agent_reply(
-            conversation_id, agent, text, stop_event
+            conversation_id, agent, text, stop_event, attachments=attachments
         )
 
         if assigned_agent_ids and not stop_event.is_set():
@@ -1220,7 +1237,34 @@ async def resume_graph_from_checkpoint(conversation_id: str, action: str):
 # User message flow (group or auto-routed)
 # ============================================================
 
-async def run_user_message_flow(conversation_id: str, text: str, target_agent: str | None):
+def _resolve_mentioned_agents(agents_map: dict, mentioned: list[str] | None) -> list:
+    if not mentioned:
+        return []
+    resolved = []
+    seen_ids: set[str] = set()
+    for raw in mentioned:
+        token = str(raw or "").strip().lstrip("@")
+        if not token:
+            continue
+        matched = agents_map.get(token)
+        if matched is None:
+            for candidate in agents_map.values():
+                if getattr(candidate, "name", "") == token:
+                    matched = candidate
+                    break
+        if matched is not None and matched.agent_id not in seen_ids:
+            seen_ids.add(matched.agent_id)
+            resolved.append(matched)
+    return resolved
+
+
+async def run_user_message_flow(
+    conversation_id: str,
+    text: str,
+    target_agent: str | None,
+    attachments: list | None = None,
+    mentioned_agents: list[str] | None = None,
+):
     """Background generation flow for a plain user message (group or auto-routed)."""
     from app.routers.harness_handler import try_intercept_with_harness
 
@@ -1249,6 +1293,29 @@ async def run_user_message_flow(conversation_id: str, text: str, target_agent: s
 
         if stop_event.is_set():
             return
+
+        # Direct @mention routing in group chat
+        if mentioned_agents and not target_agent:
+            agents_map = get_agents(conversation_user_id(conversation_id))
+            direct_targets = _resolve_mentioned_agents(agents_map, mentioned_agents)
+            if direct_targets:
+                first_context = ""
+                for idx, agent in enumerate(direct_targets):
+                    if stop_event.is_set():
+                        break
+                    step = trace.add_step(agent.agent_id, agent.name)
+                    _, reply_res = await stream_agent_reply(
+                        conversation_id,
+                        agent,
+                        text,
+                        stop_event,
+                        context=first_context if idx > 0 else "",
+                        attachments=attachments if idx == 0 else None,
+                    )
+                    step.finish(status="success", tokens=len(reply_res) // 3)
+                    if idx == 0:
+                        first_context = reply_res
+                return
 
         is_group = not target_agent
         if is_group and not stop_event.is_set():

@@ -58,6 +58,16 @@ async def _register_runtime(job: DeploymentJob, result: DeploymentResult) -> Non
         previous = await deployment_queue.get(previous_job_id)
         if previous:
             await deployment_queue.update(previous, lifecycle="superseded")
+        prev_raw = await client.get(f"agenthub:published:{previous_job_id}")
+        if prev_raw:
+            prev_container = json.loads(prev_raw).get("container_name", "")
+            if prev_container and prev_container != result.container_name:
+                from app.services.deployment import _container_exists, _run_docker_command
+                try:
+                    if await _container_exists(prev_container):
+                        await _run_docker_command(["docker", "stop", prev_container], 30, "停止已替代旧容器")
+                except Exception as stop_exc:
+                    logger.warning("Failed to stop superseded container %s: %s", prev_container, stop_exc)
 
 
 async def _run_lifecycle_action(job: DeploymentJob) -> DeploymentResult:
@@ -144,6 +154,12 @@ async def cleanup_deployments(user_id: str | None = None) -> int:
     per_user = {}
     remove = []
     for job in jobs:
+        if (
+            job.status == "success"
+            and getattr(job, "provider", "") == "docker-runtime"
+            and getattr(job, "lifecycle", "") == "active"
+        ):
+            continue
         bucket = per_user.setdefault(job.user_id, [])
         bucket.append(job)
         created = datetime.fromisoformat(job.created_at).timestamp()

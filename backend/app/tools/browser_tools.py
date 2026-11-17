@@ -4,8 +4,12 @@ import base64
 import json
 import logging
 import os
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from app.core.websocket import manager
+from app.core.workspace import resolve_workspace
+from app.tools.http_request import _validate_url_against_ssrf
 
 from .registry import AgentTool, ToolResult, register_tool
 
@@ -82,6 +86,53 @@ DOM_MINIMIZER_JS = """
 """
 
 
+def _sandbox_root_for(conv_id: str) -> str | None:
+    ws = resolve_workspace(conv_id)
+    if ws is not None:
+        return os.path.realpath(str(ws))
+    if not conv_id or ".." in conv_id or "/" in conv_id or "\\" in conv_id:
+        return None
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    return os.path.realpath(os.path.join(repo_root, "agenthub_export", conv_id))
+
+
+def _resolve_browser_target_url(raw_url: str, conv_id: str) -> tuple[str | None, str | None]:
+    """Validate and normalize browser target URL against LFI, path traversal, and SSRF."""
+    candidate = (raw_url or "").strip()
+    if not candidate:
+        return None, "目标网址不能为空"
+
+    lowered = candidate.lower()
+    if lowered.startswith("file:"):
+        return None, "安全策略禁止直接访问 file:// 协议路径，请传入沙盒相对文件名或公网 HTTP(S) URL"
+
+    if lowered.startswith(("http://", "https://")):
+        ssrf_err = _validate_url_against_ssrf(candidate)
+        if ssrf_err:
+            return None, ssrf_err
+        return candidate, None
+
+    first_segment = candidate.split("/", 1)[0]
+    if ":" in first_segment:
+        return None, "安全策略禁止该协议类型，仅支持 http(s) 或沙盒内相对路径"
+
+    real_sandbox = _sandbox_root_for(conv_id)
+    if not real_sandbox:
+        return None, "无效的会话沙盒目录"
+
+    candidate_abs = os.path.abspath(os.path.join(real_sandbox, candidate))
+    try:
+        if os.path.commonpath([real_sandbox, candidate_abs]) != real_sandbox:
+            return None, "路径越权：只允许加载当前沙盒目录内的文件"
+        real_target = os.path.realpath(candidate_abs)
+        if os.path.commonpath([real_sandbox, real_target]) != real_sandbox:
+            return None, "路径越权：禁止通过符号链接访问沙盒目录外文件"
+    except ValueError:
+        return None, "路径越权：只允许加载当前沙盒目录内的文件"
+
+    return Path(real_target).as_uri(), None
+
+
 class BrowserSessionManager:
     """Manages persistent Playwright browser instances and conversation-level contexts."""
 
@@ -117,6 +168,37 @@ class BrowserSessionManager:
                 viewport={"width": 1280, "height": 800},
                 device_scale_factor=1
             )
+            real_sandbox = _sandbox_root_for(conversation_id)
+
+            async def _guard_route(route):
+                req_url = route.request.url
+                low = req_url.lower()
+                if low in ("about:blank",) or low.startswith(("data:", "blob:")):
+                    await route.continue_()
+                    return
+                if low.startswith("file:"):
+                    parsed_path = unquote(urlparse(req_url).path or "")
+                    if os.name == "nt" and parsed_path.startswith("/") and len(parsed_path) > 2 and parsed_path[2] == ":":
+                        parsed_path = parsed_path[1:]
+                    real_file = os.path.realpath(parsed_path)
+                    if real_sandbox:
+                        try:
+                            if os.path.commonpath([real_sandbox, real_file]) == real_sandbox:
+                                await route.continue_()
+                                return
+                        except ValueError:
+                            pass
+                    await route.abort("accessdenied")
+                    return
+                if low.startswith(("http://", "https://")):
+                    if _validate_url_against_ssrf(req_url) is None:
+                        await route.continue_()
+                        return
+                    await route.abort("accessdenied")
+                    return
+                await route.abort("accessdenied")
+
+            await context.route("**/*", _guard_route)
             page = await context.new_page()
             self.pages[conversation_id] = page
         return self.pages[conversation_id]
@@ -203,22 +285,16 @@ class BrowserActionTool(AgentTool):
         try:
             # 1. Dispatch action
             if action == "goto":
-                url = params.get("url", "").strip()
-                if not url:
-                    return ToolResult(success=False, error=" goto 操作必须提供 url 参数")
+                raw_url = params.get("url", "").strip()
+                if not raw_url:
+                    return ToolResult(success=False, error="goto 操作必须提供 url 参数")
 
-                # Check for sandboxed local file resolution: e.g. "index.html" -> resolve to absolute file:/// path
-                if not url.startswith(("http://", "https://", "file://")):
-                    # Assume relative file in sandboxed workspace
-                    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-                    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conv_id)
-                    abs_path = os.path.abspath(os.path.join(sandbox_dir, url))
-                    if not abs_path.startswith(sandbox_dir):
-                        return ToolResult(success=False, error="路径越权：只允许加载当前沙盒目录内的文件")
-                    url = "file:///" + abs_path.replace(os.sep, "/")
+                resolved_url, url_err = _resolve_browser_target_url(raw_url, conv_id)
+                if url_err or not resolved_url:
+                    return ToolResult(success=False, error=url_err or "无效的目标网址")
 
-                logger.info(f"[CyberBrowser] Navigating to: {url}")
-                await page.goto(url, wait_until="load", timeout=15000)
+                logger.info(f"[CyberBrowser] Navigating to: {resolved_url}")
+                await page.goto(resolved_url, wait_until="load", timeout=15000)
 
             elif action in ("click", "type"):
                 text = params.get("text", "")
@@ -450,21 +526,15 @@ class WorkspaceCaptureScreenshotTool(AgentTool):
 
         try:
             if url:
-                # Check for sandboxed local file resolution
-                if not url.startswith(("http://", "https://", "file://")):
-                    workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-                    sandbox_dir = os.path.join(workspace_dir, "agenthub_export", conv_id)
-                    abs_path = os.path.abspath(os.path.join(sandbox_dir, url))
-                    if abs_path.startswith(sandbox_dir) and os.path.exists(abs_path):
-                        url = "file:///" + abs_path.replace(os.sep, "/")
-                    else:
-                        url = f"http://localhost:5173/{url.lstrip('/')}"
+                resolved_url, url_err = _resolve_browser_target_url(url, conv_id)
+                if url_err or not resolved_url:
+                    return ToolResult(success=False, error=url_err or "无效的目标网址")
 
-                logger.info(f"[CyberBrowser] Navigating to target URL for screenshot: {url}")
+                logger.info(f"[CyberBrowser] Navigating to target URL for screenshot: {resolved_url}")
                 try:
-                    await page.goto(url, wait_until="load", timeout=10000)
+                    await page.goto(resolved_url, wait_until="load", timeout=10000)
                 except Exception as go_ex:
-                    logger.warning(f"[CyberBrowser] Failed navigating to {url}: {go_ex}. Capturing current state instead.")
+                    logger.warning(f"[CyberBrowser] Failed navigating to {resolved_url}: {go_ex}. Capturing current state instead.")
 
             # Capture screenshot
             screenshot_bytes = await page.screenshot(type="png")

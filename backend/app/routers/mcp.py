@@ -5,17 +5,20 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.core.mcp_bridge import mcp_bridge_manager
-from app.core.tenancy import request_user_id
+from app.core.tenancy import request_user_id, require_admin
 
 ALLOWED_MCP_COMMANDS = {"npx", "node", "python", "uvx"}
 
-# Dangerous args patterns that could enable code execution
+# Dangerous args patterns that could enable inline code execution
 _DANGEROUS_ARG_PATTERNS = [
-    re.compile(r'^-c$'),                          # python -c "code"
-    re.compile(r'^--command$'),                    # various --command flags
-    re.compile(r'^-e$'),                           # python -e / node -e
-    re.compile(r'^--eval$'),                       # node --eval
-    re.compile(r'^--require$'),                    # node -r / --require (preload modules)
+    re.compile(r"^-c$"),
+    re.compile(r"^--command([=].*)?$"),
+    re.compile(r"^-e$"),
+    re.compile(r"^--eval([=].*)?$"),
+    re.compile(r"^-r$"),
+    re.compile(r"^--require([=].*)?$"),
+    re.compile(r"^--import([=].*)?$"),
+    re.compile(r"^--inspect([-=].*)?$"),
 ]
 
 _MAX_ARG_LENGTH = 1024
@@ -37,7 +40,8 @@ async def list_mcp_servers(request: Request):
 
 @router.post("/mcp/servers")
 async def register_mcp_server(body: MCPServerRegister, request: Request):
-    """Dynamically launch and connect to a new stdio JSON-RPC MCP server."""
+    """Dynamically launch and connect to a new stdio JSON-RPC MCP server (admin only)."""
+    require_admin(request, "仅管理员可注册宿主级 MCP 服务")
     try:
         parts = shlex.split(body.command) if body.command.strip() else []
     except ValueError as exc:
@@ -79,7 +83,8 @@ async def register_mcp_server(body: MCPServerRegister, request: Request):
 
 @router.post("/mcp/servers/{server_name}/toggle")
 async def toggle_mcp_server(server_name: str, enabled: bool, request: Request):
-    """Temporarily suspend or reactivate an active MCP server."""
+    """Temporarily suspend or reactivate an active MCP server (admin only)."""
+    require_admin(request, "仅管理员可管理宿主级 MCP 服务")
     success = await mcp_bridge_manager.toggle_server(request_user_id(request), server_name, enabled)
     if success:
         return {"status": "ok", "message": "Server status updated."}
@@ -88,7 +93,8 @@ async def toggle_mcp_server(server_name: str, enabled: bool, request: Request):
 
 @router.delete("/mcp/servers/{server_name}")
 async def unregister_mcp_server(server_name: str, request: Request):
-    """Stop child stdio processes and permanently unregister MCP server."""
+    """Stop child stdio processes and permanently unregister MCP server (admin only)."""
+    require_admin(request, "仅管理员可移除宿主级 MCP 服务")
     success = await mcp_bridge_manager.unregister_server(request_user_id(request), server_name)
     if success:
         return {"status": "ok", "message": f"MCP Server '{server_name}' successfully stopped."}

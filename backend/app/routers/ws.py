@@ -2,11 +2,13 @@
 import asyncio
 import contextlib
 import json
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.async_wrappers import async_get_pending_hil_checkpoint, async_save_message
 from app.core.concurrency import generation_admission
+from app.core.config import settings
 from app.core.crud import create_conversation, initialize_conversation_goal
 from app.core.logging_config import get_logger
 from app.core.tenancy import (
@@ -94,8 +96,31 @@ async def _restore_review(websocket: WebSocket, conversation_id: str) -> None:
         await manager.send(websocket, prompt)
 
 
+def _is_ws_origin_allowed(websocket: WebSocket) -> bool:
+    origin = (websocket.headers.get("origin") or "").strip()
+    if not origin:
+        return True
+    if origin in settings.allowed_origins:
+        return True
+    parsed = urlparse(origin)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return False
+    host = (
+        websocket.headers.get("x-forwarded-host")
+        or websocket.headers.get("host")
+        or ""
+    ).split(",", 1)[0].strip()
+    if not host:
+        return False
+    return parsed.netloc.lower() == host.lower()
+
+
 @router.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
+    if not _is_ws_origin_allowed(websocket):
+        await websocket.accept()
+        await websocket.close(code=4003, reason="Forbidden origin")
+        return
     user_id = websocket_user_id(websocket)
     if not user_id:
         await websocket.accept()
@@ -124,16 +149,31 @@ async def _serve_authenticated_websocket(
         return
     # Direct WebSocket clients may connect before the REST conversation list
     # initializes this tenant's default rows.
-    await asyncio.to_thread(
-        create_conversation,
-        conversation_id,
-        "single",
-        public_conversation_id,
-        "",
-        public_conversation_id.replace("conv_", "agent_", 1),
-        None,
-        "",
-    )
+    if public_conversation_id == "conv_group_demo":
+        await asyncio.to_thread(
+            create_conversation,
+            conversation_id,
+            "group",
+            "研发小队 (Demo)",
+            "👥",
+            "",
+            [
+                "agent_pm", "agent_designer", "agent_frontend",
+                "agent_backend", "agent_tester", "agent_devops",
+            ],
+            "多人协作项目开发群",
+        )
+    else:
+        await asyncio.to_thread(
+            create_conversation,
+            conversation_id,
+            "single",
+            public_conversation_id,
+            "",
+            public_conversation_id.replace("conv_", "agent_", 1),
+            None,
+            "",
+        )
 
     await manager.connect(websocket, conversation_id)
 
@@ -210,10 +250,23 @@ async def _serve_authenticated_websocket(
                 await _protocol_error(conversation_id, "target_agent must be a string")
                 continue
 
-            # Only empty input is ignored. Single-character, numeric, and
-            # punctuation replies can carry valid conversational meaning.
-            if not text.strip():
+            raw_attachments = content.get("attachments")
+            attachments = (
+                [item for item in raw_attachments if isinstance(item, dict)][:10]
+                if isinstance(raw_attachments, list)
+                else []
+            )
+            raw_mentions = content.get("mentioned_agents")
+            mentioned_agents = (
+                [str(a).strip() for a in raw_mentions if isinstance(a, str) and a.strip()][:10]
+                if isinstance(raw_mentions, list)
+                else []
+            )
+
+            # Only empty input without attachments is ignored.
+            if not text.strip() and not attachments:
                 continue
+            effective_text = text if text.strip() else "请查看并分析所附文件。"
 
             pending = _pending_interactions.get(conversation_id)
             checkpoint = None
@@ -248,17 +301,22 @@ async def _serve_authenticated_websocket(
             task_started = False
             try:
                 if not checkpoint:
-                    await asyncio.to_thread(initialize_conversation_goal, conversation_id, text.strip())
-                await _record_user_message(conversation_id, content, text)
+                    await asyncio.to_thread(initialize_conversation_goal, conversation_id, effective_text.strip())
+                await _record_user_message(conversation_id, content, text, attachments=attachments)
 
                 if checkpoint:
                     flow = resume_graph_from_checkpoint(conversation_id, reply_text)
                 else:
+                    extra_kwargs: dict = {}
+                    if attachments:
+                        extra_kwargs["attachments"] = attachments
                     target = get_agents(user_id).get(target_agent) if target_agent else None
                     if target is not None:
-                        flow = run_target_agent_flow(conversation_id, target, text)
+                        flow = run_target_agent_flow(conversation_id, target, effective_text, **extra_kwargs)
                     else:
-                        flow = run_user_message_flow(conversation_id, text, target_agent)
+                        if mentioned_agents:
+                            extra_kwargs["mentioned_agents"] = mentioned_agents
+                        flow = run_user_message_flow(conversation_id, effective_text, target_agent, **extra_kwargs)
 
                 create_tracked_task(
                     _run_admitted_flow(user_id, conversation_id, flow),
@@ -284,12 +342,20 @@ async def _serve_authenticated_websocket(
         # The explicit "stop" message remains the only user cancellation path.
 
 
-async def _record_user_message(conversation_id: str, content: dict, text: str) -> None:
+async def _record_user_message(
+    conversation_id: str,
+    content: dict,
+    text: str,
+    attachments: list[dict] | None = None,
+) -> None:
     await async_save_message(conversation_id, "user", content, streaming=False)
+    broadcast_content: dict = {"text": text}
+    if attachments:
+        broadcast_content["attachments"] = attachments
     await manager.broadcast(conversation_id, {
         "type": "message",
         "conversation_id": conversation_id,
         "sender": "user",
-        "content": {"text": text},
+        "content": broadcast_content,
         "stream": False,
     })

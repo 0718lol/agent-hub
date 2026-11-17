@@ -86,6 +86,30 @@ async def get_uploaded_file(file_id: str, request: Request):
     return _file_response(path, file_id)
 
 
+_TEXT_EXTENSIONS = frozenset({
+    ".txt", ".md", ".markdown", ".json", ".csv", ".tsv", ".py", ".js", ".jsx",
+    ".ts", ".tsx", ".html", ".htm", ".css", ".scss", ".yaml", ".yml", ".toml",
+    ".ini", ".cfg", ".xml", ".sql", ".sh", ".log", ".rst",
+})
+_TEXT_MIME_PREFIXES = ("text/",)
+_TEXT_MIMES = frozenset({
+    "application/json",
+    "application/xml",
+    "application/javascript",
+    "application/x-javascript",
+    "application/sql",
+})
+
+
+def _extract_upload_text(content: bytes, content_type: str | None, ext: str) -> str:
+    mime = (content_type or "").split(";", 1)[0].strip().lower()
+    if not (mime.startswith(_TEXT_MIME_PREFIXES) or mime in _TEXT_MIMES or ext.lower() in _TEXT_EXTENSIONS):
+        return ""
+    if b"\x00" in content[:4096]:
+        return ""
+    return content[:16_000].decode("utf-8", errors="replace").strip()[:8000]
+
+
 @router.post("/upload")
 async def upload_file(request: Request, file: UploadFile = File(...)):
     """Upload a file to the server."""
@@ -101,7 +125,8 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
     with open(file_path, "wb") as f:
         f.write(content)
     is_image = (file.content_type or "").startswith("image/")
-    return {
+    extracted_text = "" if is_image else _extract_upload_text(content, file.content_type, ext)
+    payload = {
         "status": "uploaded",
         "original_name": file.filename,
         "stored_name": stored_name,
@@ -110,3 +135,6 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         "size": len(content),
         "is_image": is_image,
     }
+    if extracted_text:
+        payload["extracted_text"] = extracted_text
+    return payload

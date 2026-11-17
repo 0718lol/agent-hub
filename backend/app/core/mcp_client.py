@@ -40,8 +40,10 @@ class MCPClient:
         self.tools = []
 
     async def start(self):
-        full_env = os.environ.copy()
-        full_env.update(self.env)
+        base_keys = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT", "WINDIR")
+        full_env = {k: os.environ[k] for k in base_keys if os.environ.get(k)}
+        full_env["PYTHONIOENCODING"] = "utf-8"
+        full_env.update({str(k): str(v) for k, v in (self.env or {}).items()})
         try:
             self.process = await asyncio.create_subprocess_exec(
                 self.command,
@@ -404,8 +406,9 @@ class SystemMCPServer:
                             # 🐧 Unix/Linux OS 级 CPU 耗时与虚拟内存 ulimit 配额限制
                             memory_kb = settings.shell_memory_limit_mb * 1024
                             cpu_limit_secs = int(settings.shell_timeout) + 2
+                            vmem_line = f"ulimit -v {memory_kb}\n" if sys.platform.startswith("linux") else ""
                             with open(script_path, "w", encoding="utf-8") as f:
-                                f.write(f"#!/bin/bash\nulimit -t {cpu_limit_secs}\nulimit -v {memory_kb}\ncd \"$(dirname \"$0\")\"\n{cmd}\n")
+                                f.write(f"#!/bin/bash\nulimit -t {cpu_limit_secs}\n{vmem_line}cd \"$(dirname \"$0\")\"\n{cmd}\n")
                             try:
                                 os.chmod(script_path, 0o700)  # owner-only rwx; avoid world-executable script
                             except Exception as e:

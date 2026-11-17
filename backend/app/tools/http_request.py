@@ -12,9 +12,19 @@ logger = logging.getLogger("tool_http_request")
 
 # Maximum response body size to return (prevent huge payloads)
 _MAX_BODY_SIZE = 8000
+_MAX_STREAM_BYTES = 128 * 1024
 
 # Maximum redirects to follow manually (SSRF-safe)
 _MAX_REDIRECTS = 5
+
+_LOOPBACK_HOSTS = frozenset({
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "[::1]",
+    "[0:0:0:0:0:0:0:1]",
+    "[::ffff:127.0.0.1]",
+})
 
 # Hosts that are always blocked (even if not in private IP ranges)
 _BLOCKED_HOSTS = frozenset({
@@ -69,50 +79,85 @@ def _try_parse_decimal_ip(hostname: str):
     return None
 
 
+def validate_outbound_url(
+    url: str,
+    *,
+    allow_loopback: bool = False,
+    resolve_dns: bool = True,
+) -> str | None:
+    """Validate an outbound HTTP(S) URL against SSRF policies.
+
+    When allow_loopback=True (e.g. administrator configuring local Ollama/OpenCode),
+    loopback addresses (localhost / 127.0.0.1 / ::1) are permitted, while cloud
+    metadata (169.254.169.254), 0.0.0.0, and RFC1918 LAN addresses remain blocked.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return "URL 必须以 http:// 或 https:// 开头"
+    raw_host = (parsed.hostname or "").strip()
+    hostname = raw_host.strip("[]")
+
+    if not hostname:
+        return "URL has no hostname"
+
+    lowered = hostname.lower()
+    if allow_loopback and lowered in _LOOPBACK_HOSTS:
+        return None
+
+    if lowered in _BLOCKED_HOSTS or lowered.endswith((".internal", ".local")):
+        return "安全策略禁止访问内部地址: " + hostname
+
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if allow_loopback and ip.is_loopback:
+            return None
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified:
+            return "安全策略禁止访问私有/保留 IP: " + hostname
+    except ValueError:
+        pass
+
+    parsed_ip = _try_parse_decimal_ip(hostname)
+    if parsed_ip:
+        try:
+            ip = ipaddress.ip_address(parsed_ip)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified:
+                return "安全策略禁止访问十进制 IP 绕过: " + hostname + " -> " + parsed_ip
+        except ValueError:
+            pass
+
+    if not resolve_dns:
+        return None
+
+    try:
+        resolved = socket.getaddrinfo(hostname, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
+        for _, _, _, _, sockaddr in resolved:
+            resolved_ip = sockaddr[0]
+            if allow_loopback:
+                try:
+                    if ipaddress.ip_address(resolved_ip).is_loopback:
+                        continue
+                except ValueError:
+                    pass
+            if _is_private_ip(resolved_ip):
+                return "安全策略禁止访问解析到私有 IP 的域名: " + hostname + " -> " + resolved_ip
+    except (socket.gaierror, OSError):
+        pass  # DNS failure, let request fail naturally
+
+    return None
+
+
 def _validate_url_against_ssrf(url: str):
     """Validate a URL against SSRF policies.
 
     Returns None if the URL is safe, or an error message string if blocked.
     """
     parsed = urlparse(url)
-    hostname = (parsed.hostname or "").strip("[]")  # strip IPv6 brackets for parsing
-
-    if not hostname:
-        return "URL has no hostname"
-
-    # 1. Check blocked hostnames (case-insensitive)
-    if hostname.lower() in _BLOCKED_HOSTS:
-        return "安全策略禁止访问内部地址: " + hostname
-
-    # 2. Try parsing as literal IP (IPv4 or IPv6)
-    try:
-        ip = ipaddress.ip_address(hostname)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-            return "安全策略禁止访问私有/保留 IP: " + hostname
-    except ValueError:
-        pass  # not a literal IP, continue
-
-    # 3. Try parsing as decimal/binary integer IP (e.g. 2130706433 = 127.0.0.1)
-    parsed_ip = _try_parse_decimal_ip(hostname)
-    if parsed_ip:
-        try:
-            ip = ipaddress.ip_address(parsed_ip)
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return "安全策略禁止访问十进制 IP 绕过: " + hostname + " -> " + parsed_ip
-        except ValueError:
-            pass
-
-    # 4. DNS resolution check: verify all resolved IPs are public
-    try:
-        resolved = socket.getaddrinfo(hostname, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
-        for _, _, _, _, sockaddr in resolved:
-            resolved_ip = sockaddr[0]
-            if _is_private_ip(resolved_ip):
-                return "安全策略禁止访问解析到私有 IP 的域名: " + hostname + " -> " + resolved_ip
-    except (socket.gaierror, OSError):
-        pass  # DNS failure, let request fail naturally
-
-    return None  # safe
+    if parsed.scheme and parsed.scheme not in ("http", "https"):
+        return "URL 必须以 http:// 或 https:// 开头"
+    return validate_outbound_url(
+        url if parsed.scheme else f"http://{url}",
+        allow_loopback=False,
+    )
 
 
 class HttpRequestTool(AgentTool):
@@ -173,12 +218,15 @@ class HttpRequestTool(AgentTool):
             # Manual redirect handling: follow_redirects=False, validate each Location
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                 current_url = url
-                resp = None
+                status_code = 0
+                resp_headers: dict = {}
+                raw_chunks: list[bytes] = []
+                bytes_read = 0
+                stream_capped = False
 
                 for _ in range(_MAX_REDIRECTS + 1):
                     kwargs = {"headers": headers}
                     if body and method in ("POST", "PUT", "PATCH") and current_url == url:
-                        # Only send body on the initial request, not on redirects
                         try:
                             import json
                             json_body = json.loads(body)
@@ -186,43 +234,56 @@ class HttpRequestTool(AgentTool):
                         except (json.JSONDecodeError, TypeError):
                             kwargs["content"] = body
 
-                    resp = await client.request(method, current_url, **kwargs)
+                    async with client.stream(method, current_url, **kwargs) as resp:
+                        status_code = resp.status_code
+                        resp_headers = dict(resp.headers)
 
-                    # Follow redirects manually with SSRF validation
-                    if resp.status_code in (301, 302, 303, 307, 308):
-                        location = resp.headers.get("location")
-                        if not location:
-                            break
-                        # Resolve relative redirect URLs
-                        redirect_url = urljoin(current_url, location)
-                        ssrf_error = _validate_url_against_ssrf(redirect_url)
-                        if ssrf_error:
-                            return ToolResult(
-                                success=False,
-                                error="重定向目标被安全策略拦截: " + redirect_url + " (" + ssrf_error + ")"
-                            )
-                        # 303 redirects change method to GET
-                        if resp.status_code == 303:
-                            method = "GET"
-                        current_url = redirect_url
-                        continue
+                        if status_code in (301, 302, 303, 307, 308):
+                            location = resp.headers.get("location")
+                            if not location:
+                                break
+                            redirect_url = urljoin(current_url, location)
+                            ssrf_error = _validate_url_against_ssrf(redirect_url)
+                            if ssrf_error:
+                                return ToolResult(
+                                    success=False,
+                                    error="重定向目标被安全策略拦截: " + redirect_url + " (" + ssrf_error + ")"
+                                )
+                            if status_code == 303:
+                                method = "GET"
+                            current_url = redirect_url
+                            continue
 
-                    break  # not a redirect, we are done
+                        raw_chunks.clear()
+                        bytes_read = 0
+                        stream_capped = False
+                        async for chunk in resp.aiter_bytes():
+                            remaining = _MAX_STREAM_BYTES - bytes_read
+                            if remaining <= 0:
+                                stream_capped = True
+                                break
+                            if len(chunk) > remaining:
+                                raw_chunks.append(chunk[:remaining])
+                                bytes_read += remaining
+                                stream_capped = True
+                                break
+                            raw_chunks.append(chunk)
+                            bytes_read += len(chunk)
+                        break
 
                 elapsed = int((time.time() - start) * 1000)
-
-                # Truncate body if too large
-                resp_body = resp.text[:_MAX_BODY_SIZE]
-                truncated = len(resp.text) > _MAX_BODY_SIZE
+                decoded_text = b"".join(raw_chunks).decode("utf-8", errors="replace")
+                resp_body = decoded_text[:_MAX_BODY_SIZE]
+                truncated = stream_capped or len(decoded_text) > _MAX_BODY_SIZE
 
                 return ToolResult(
                     success=True,
                     data={
-                        "status_code": resp.status_code,
-                        "headers": dict(resp.headers),
+                        "status_code": status_code,
+                        "headers": resp_headers,
                         "body": resp_body,
                         "truncated": truncated,
-                        "content_length": len(resp.text),
+                        "content_length": len(decoded_text),
                     },
                     usage={"time_ms": elapsed},
                 )

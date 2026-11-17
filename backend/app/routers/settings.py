@@ -1,14 +1,15 @@
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.config_persistence import get_hil_settings, save_hil_settings, save_llm_config
 from app.core.llm_client import llm_client
-from app.core.tenancy import current_tenant_id
+from app.core.tenancy import current_tenant_id, is_request_admin
 from app.core.tenant_config import delete_tenant_config
+from app.tools.http_request import validate_outbound_url
 
 router = APIRouter(tags=["settings"])
 from app.core.logging_config import get_logger
@@ -48,7 +49,18 @@ async def get_llm_settings():
 
 
 @router.post("/settings/llm")
-async def update_llm_settings(s: LLMSettings):
+async def update_llm_settings(s: LLMSettings, request: Request):
+    admin_caller = is_request_admin(request)
+    if s.provider in ("opencode", "claude_code", "ollama") and not admin_caller:
+        raise HTTPException(status_code=403, detail="仅管理员可配置宿主级本地模型或 CLI 提供商")
+    if s.base_url.strip():
+        ssrf_err = validate_outbound_url(
+            s.base_url.strip(),
+            allow_loopback=admin_caller,
+            resolve_dns=False,
+        )
+        if ssrf_err:
+            raise HTTPException(status_code=422, detail=ssrf_err)
     thinking_enabled = s.thinking_enabled
     thinking_mode = s.thinking_mode
     if thinking_mode is None and thinking_enabled is not None:
@@ -102,9 +114,24 @@ async def test_llm_connection():
             system="Reply with only 'ok'.",
         ):
             response_text += chunk
-            if len(response_text) > 20:
+            if len(response_text) > 120:
                 break
-        return {"success": True, "response": response_text.strip()[:50]}
+        cleaned = response_text.strip()
+        lowered = cleaned.lower()
+        if not cleaned or any(
+            marker in lowered
+            for marker in (
+                "[llm 终端错误",
+                "[llm 调用出错",
+                "[llm 故障已触发熔断保护",
+                "llm api error",
+                "❌ [所有 llm 服务",
+                "[ollama 本地降级",
+                "[云端备份提供商",
+            )
+        ):
+            return {"success": False, "error": cleaned[:500] or "模型未返回有效响应"}
+        return {"success": True, "response": cleaned[:50]}
     except Exception as e:
         return {"success": False, "error": str(e)[:500]}
 
@@ -125,15 +152,22 @@ async def update_hil_settings_api(s: HILSettings):
 
 
 @router.get("/ollama/models")
-async def list_ollama_models():
-    """Fetch installed models from local Ollama instance."""
+async def list_ollama_models(request: Request):
+    """Fetch installed models from local Ollama instance (admin only in multi-tenant mode)."""
+    if not is_request_admin(request):
+        return {
+            "status": "error",
+            "models": [],
+            "message": "仅管理员可访问服务器本机 Ollama 模型列表",
+        }
     url = "http://127.0.0.1:11434/api/tags"
     try:
-        async with httpx.AsyncClient(timeout=1.0) as client:
+        async with httpx.AsyncClient(timeout=1.5, trust_env=False) as client:
             r = await client.get(url)
             if r.status_code == 200:
                 data = r.json()
-                return [m["name"] for m in data.get("models", [])]
+                models = [m["name"] for m in data.get("models", []) if isinstance(m, dict) and m.get("name")]
+                return {"status": "ok", "models": models}
     except Exception as e:
         logger.debug(f"Failed to fetch Ollama models: {e}")
-    return []
+    return {"status": "error", "models": [], "message": "未检测到正在运行的本地 Ollama 服务 (127.0.0.1:11434)"}

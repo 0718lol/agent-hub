@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import shutil
 import sys
 from typing import Any
 
@@ -47,32 +48,20 @@ class MCPServerProcess:
         """Start the MCP Server process and set up communication pipes."""
         logger.info(f"Starting MCP Server process [{self.name}]: {self.command} {' '.join(self.args)}")
 
-        # Ensure executable resolution is robust on Windows
+        # Resolve executable safely without invoking a shell (prevents quote injection on Windows)
         cmd = self.command
-        if sys.platform == "win32" and cmd in ("npm", "npx", "npx.cmd", "npm.cmd"):
-            shell = True
-        else:
-            shell = False
+        if sys.platform == "win32" and cmd in ("npm", "npx"):
+            cmd = shutil.which(f"{cmd}.cmd") or shutil.which(cmd) or f"{cmd}.cmd"
 
         try:
-            if shell:
-                full_cmd = f"{cmd} " + " ".join(f'"{a}"' for a in self.args)
-                self.process = await asyncio.create_subprocess_shell(
-                    full_cmd,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=self.env
-                )
-            else:
-                self.process = await asyncio.create_subprocess_exec(
-                    cmd,
-                    *self.args,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=self.env
-                )
+            self.process = await asyncio.create_subprocess_exec(
+                cmd,
+                *self.args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self.env,
+            )
         except Exception as e:
             logger.error(f"Failed to launch MCP Server process [{self.name}]: {e}")
             raise e
@@ -265,15 +254,18 @@ class BuiltinMCPServer:
         """Standard synchronous implementation to read the content of the specified workspace resource URI."""
         if uri == "workspace://repomap":
             from app.core.repo_map import codebase_map_scanner
-            # Pick workspace sandbox directory safely
-            workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-            if conversation_id:
-                if ".." in conversation_id or "/" in conversation_id or "\\" in conversation_id:
-                    raise ValueError("Invalid conversation_id")
-                sandbox_dir = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")), "agenthub_export", conversation_id)
-                if os.path.exists(sandbox_dir):
-                    workspace_dir = sandbox_dir
+            from app.core.workspace import resolve_workspace
 
+            if not conversation_id:
+                return "# Workspace is empty (conversation_id is required)."
+            if ".." in conversation_id or "/" in conversation_id or "\\" in conversation_id:
+                raise ValueError("Invalid conversation_id")
+
+            resolved = resolve_workspace(conversation_id)
+            if resolved is None or not os.path.isdir(str(resolved)):
+                return "# Workspace is empty (no files generated yet)."
+
+            workspace_dir = str(resolved)
             logger.info(f"MCP Resource workspace://repomap called (Sync). Scanning workspace path: {workspace_dir}")
             return codebase_map_scanner.scan_directory(workspace_dir)
 

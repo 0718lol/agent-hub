@@ -8,11 +8,19 @@ services:
       - AGENTHUB_API_SECRET=${AGENTHUB_API_SECRET:?Error: Set AGENTHUB_API_SECRET in .env}
       - AGENTHUB_ENCRYPT_KEY=${AGENTHUB_ENCRYPT_KEY:?Error: Set AGENTHUB_ENCRYPT_KEY in .env}
       - AGENTHUB_REDIS_URL=redis://:${REDIS_PASSWORD:?Error: Set REDIS_PASSWORD in .env}@redis:6379/0
+      - DATABASE_URL=postgresql+psycopg://agenthub:${POSTGRES_PASSWORD:?Error: Set POSTGRES_PASSWORD in .env}@postgres:5432/agenthub
     deploy:
       resources:
         limits:
           memory: 2G
           cpus: "2.0"
+
+  postgres:
+    restart: always
+    environment:
+      - POSTGRES_DB=agenthub
+      - POSTGRES_USER=agenthub
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Error: Set POSTGRES_PASSWORD in .env}
 
   redis:
     command: >
@@ -21,7 +29,7 @@ services:
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
       --save 60 1000
-    ports: []  # Don't expose Redis port in production
+    ports: !reset []  # Clear Redis host port binding in production
 
   frontend:
     ports:

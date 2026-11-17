@@ -137,6 +137,13 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
     }
   }, [isActive])
 
+  useEffect(() => {
+    if (!isGenerating && generationTimeoutRef.current) {
+      clearTimeout(generationTimeoutRef.current)
+      generationTimeoutRef.current = null
+    }
+  }, [isGenerating])
+
   const handleSend = useCallback((text, mentionedAgents, attachments = []) => {
     if (isGenerating) return
     initializeGoal(convId, text)
@@ -155,7 +162,7 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
     generationTimeoutRef.current = setTimeout(() => {
       useChatStore.getState().setGenerating(convId, false)
       generationTimeoutRef.current = null
-    }, 60000)
+    }, 180000)
   }, [convId, isGenerating, isGroup, conv?.agentId, addMessage, initializeGoal])
 
   const handleStop = useCallback(() => {

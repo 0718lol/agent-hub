@@ -14,10 +14,30 @@ def mcp_app():
     @app.middleware("http")
     async def inject_test_tenant(request, call_next):
         request.state.tenant_id = "tenant_test"
+        request.state.is_admin = True
         return await call_next(request)
 
     app.include_router(router, prefix="/api")
     return TestClient(app)
+
+
+def test_non_admin_cannot_register_mcp_server():
+    """Regular tenant members must not be allowed to launch host stdio MCP servers."""
+    from app.routers.mcp import router
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def inject_member(request, call_next):
+        request.state.tenant_id = "tenant_member"
+        request.state.is_admin = False
+        return await call_next(request)
+
+    app.include_router(router, prefix="/api")
+    client = TestClient(app)
+    resp = client.post("/api/mcp/servers", json={
+        "name": "test", "command": "npx", "args": ["-y", "@anthropic-ai/mcp-server"]
+    })
+    assert resp.status_code == 403
 
 
 def test_allowed_command_npx(mcp_app):

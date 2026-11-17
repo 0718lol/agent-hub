@@ -33,6 +33,14 @@ class ContinueException(Exception):
     """Exception raised to continue a loop in AST interpreter."""
     pass
 
+_MAX_EXPONENT = 1000
+_MAX_BIT_LENGTH = 100_000
+_MAX_SHIFT_BITS = 1000
+_MAX_SEQ_LENGTH = 100_000
+_MAX_STDOUT_CHARS = 100_000
+_BLOCKED_ATTR_NAMES = frozenset({"format", "format_map", "mro"})
+
+
 class SafeASTInterpreter:
     """A highly secure, zero-dependency asynchronous AST interpreter for Python."""
 
@@ -40,9 +48,12 @@ class SafeASTInterpreter:
         self.allowed_tools = allowed_tools or {}
         self.variables = {}
         self.iteration_count = 0
+        self.step_count = 0
         self.max_iterations = max_iterations
+        self.max_steps = max(max_iterations * 50, 50_000)
         self.stdout_buffer = io.StringIO()
         self._output_buffer = None
+        self._safe_print_fn = None
 
         # Secure binary operations map
         self.binops = {
@@ -69,7 +80,18 @@ class SafeASTInterpreter:
     async def execute(self, code_str: str) -> dict:
         """Executes code_str asynchronously and returns execution summary dictionary."""
         self.iteration_count = 0
-        self._output_buffer = io.StringIO()
+        self.step_count = 0
+        buf = io.StringIO()
+        self._output_buffer = buf
+
+        def _isolated_print(*args, sep=" ", end="\n", file=None, flush=False):
+            del file, flush
+            text = sep.join(str(a) for a in args) + end
+            if buf.tell() + len(text) > _MAX_STDOUT_CHARS:
+                raise MemoryError("🔒 输出安全限制: 标准输出内容超出上限")
+            buf.write(text)
+
+        self._safe_print_fn = _make_safe_builtin(_isolated_print)
         try:
             tree = ast.parse(code_str)
             result = None
@@ -77,23 +99,27 @@ class SafeASTInterpreter:
                 result = await self.visit(node)
             return {
                 "success": True,
-                "stdout": self._output_buffer.getvalue(),
+                "stdout": buf.getvalue(),
                 "result": result,
                 "error": ""
             }
         except Exception as e:
             return {
                 "success": False,
-                "stdout": self._output_buffer.getvalue(),
+                "stdout": buf.getvalue(),
                 "result": None,
                 "error": f"{type(e).__name__}: {e!s}"
             }
         finally:
             self._output_buffer = None
+            self._safe_print_fn = None
 
     async def visit(self, node: ast.AST) -> Any:
         if node is None:
             return None
+        self.step_count += 1
+        if self.step_count > self.max_steps:
+            raise RuntimeError(f"🔒 执行安全限制: AST 求值步数超过上限 {self.max_steps}")
         method_name = f"visit_{type(node).__name__}"
         visitor = getattr(self, method_name, None)
         if visitor is None:
@@ -120,16 +146,23 @@ class SafeASTInterpreter:
 
         # Inject standard whitelisted built-in functions/constants
         safe_builtins = {
-            "print": self._safe_print,
+            "print": self._safe_print_fn or self._safe_print,
             "len": _make_safe_builtin(len),
             "range": range,
             "abs": _make_safe_builtin(abs),
+            "round": _make_safe_builtin(round),
+            "bool": bool,
             "str": str,
             "int": int,
             "float": float,
             "list": list,
+            "tuple": tuple,
             "dict": dict,
             "set": set,
+            "sorted": _make_safe_builtin(sorted),
+            "reversed": reversed,
+            "any": _make_safe_builtin(any),
+            "all": _make_safe_builtin(all),
             "min": _make_safe_builtin(min),
             "max": _make_safe_builtin(max),
             "sum": _make_safe_builtin(sum),
@@ -160,6 +193,28 @@ class SafeASTInterpreter:
         left = await self.visit(node.left)
         right = await self.visit(node.right)
         op_type = type(node.op)
+        if op_type is ast.Pow:
+            if isinstance(right, (int, float)) and abs(right) > _MAX_EXPONENT:
+                raise ValueError(f"🔒 算术安全限制: 指数 {right} 超出安全上限 {_MAX_EXPONENT}")
+            if isinstance(left, int) and isinstance(right, int) and right > 0:
+                if max(left.bit_length(), 1) * right > _MAX_BIT_LENGTH:
+                    raise ValueError("🔒 算术安全限制: 幂运算结果位数超出安全上限")
+        elif op_type is ast.LShift:
+            if isinstance(right, int) and (right < 0 or right > _MAX_SHIFT_BITS):
+                raise ValueError(f"🔒 算术安全限制: 左移位数超出安全范围 [0, {_MAX_SHIFT_BITS}]")
+            if isinstance(left, int) and isinstance(right, int) and max(left.bit_length(), 1) + right > _MAX_BIT_LENGTH:
+                raise ValueError("🔒 算术安全限制: 位移结果超出安全上限")
+        elif op_type is ast.Mult:
+            if isinstance(left, (str, bytes, list, tuple)) and isinstance(right, int):
+                if right > 0 and len(left) * right > _MAX_SEQ_LENGTH:
+                    raise MemoryError(f"🔒 内存安全限制: 序列重复长度超过上限 {_MAX_SEQ_LENGTH}")
+            elif isinstance(right, (str, bytes, list, tuple)) and isinstance(left, int):
+                if left > 0 and len(right) * left > _MAX_SEQ_LENGTH:
+                    raise MemoryError(f"🔒 内存安全限制: 序列重复长度超过上限 {_MAX_SEQ_LENGTH}")
+        elif op_type is ast.Add:
+            if isinstance(left, (str, bytes, list, tuple)) and isinstance(right, (str, bytes, list, tuple)):
+                if len(left) + len(right) > _MAX_SEQ_LENGTH * 2:
+                    raise MemoryError("🔒 内存安全限制: 序列拼接长度超过安全上限")
         if op_type in self.binops:
             return self.binops[op_type](left, right)
         raise NotImplementedError(f"不支持的二进制算子: {op_type.__name__}")
@@ -280,8 +335,8 @@ class SafeASTInterpreter:
 
         # Block calling dangerous private built-in attributes
         func_name = getattr(func, "__name__", "")
-        if func_name and func_name.startswith("__"):
-            raise PermissionError(f"🔒 安全拦截: 严禁调用私有方法 '{func_name}'！")
+        if func_name and (func_name.startswith("_") or func_name in _BLOCKED_ATTR_NAMES):
+            raise PermissionError(f"🔒 安全拦截: 严禁调用受限方法 '{func_name}'！")
 
         if asyncio.iscoroutinefunction(func):
             return await func(*args, **kwargs)
@@ -294,8 +349,8 @@ class SafeASTInterpreter:
     async def visit_Attribute(self, node: ast.Attribute) -> Any:
         obj = await self.visit(node.value)
         attr = node.attr
-        if attr.startswith("__"):
-            raise PermissionError(f"🔒 安全拦截: 禁止访问私有属性/魔法方法 '{attr}' 以防沙盒突破！")
+        if attr.startswith("_") or attr in _BLOCKED_ATTR_NAMES:
+            raise PermissionError(f"🔒 安全拦截: 禁止访问受限属性或格式化逃逸方法 '{attr}'！")
         return getattr(obj, attr)
 
     async def visit_Subscript(self, node: ast.Subscript) -> Any:
@@ -318,6 +373,12 @@ class SafeASTInterpreter:
         for elt in node.elts:
             res.append(await self.visit(elt))
         return res
+
+    async def visit_Tuple(self, node: ast.Tuple) -> Any:
+        res = []
+        for elt in node.elts:
+            res.append(await self.visit(elt))
+        return tuple(res)
 
     async def visit_Dict(self, node: ast.Dict) -> Any:
         keys = []
