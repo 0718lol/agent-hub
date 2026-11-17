@@ -70,9 +70,29 @@ class WSClient {
    */
   syncConnections(conversationIds, activeConversationId) {
     const wanted = new Set((conversationIds || []).filter(Boolean))
+    const prevConvId = this.currentConvId
     if (activeConversationId) {
       wanted.add(activeConversationId)
       this.currentConvId = activeConversationId
+    }
+
+    // Adopt any pre-existing standalone socket (e.g. opened by an early send() before first sync)
+    if (
+      this.ws &&
+      prevConvId &&
+      !this.connections.has(prevConvId) &&
+      wanted.has(prevConvId) &&
+      (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)
+    ) {
+      const adoptedWs = this.ws
+      const entry = {
+        ws: adoptedWs,
+        reconnectAttempts: this.reconnectAttempts || 0,
+        reconnectTimer: null,
+        shouldReconnect: true,
+      }
+      this.connections.set(prevConvId, entry)
+      this._bindPooledHandlers(prevConvId, entry, adoptedWs)
     }
 
     // Close pooled sockets that are no longer open or generating
@@ -142,7 +162,11 @@ class WSClient {
       this.ws = ws
       this._setStatus('reconnecting')
     }
+    this._bindPooledHandlers(conversationId, entry, ws)
+    return ws
+  }
 
+  _bindPooledHandlers(conversationId, entry, ws) {
     ws.onopen = () => {
       if (entry.ws !== ws) return
       entry.reconnectAttempts = 0
@@ -184,8 +208,6 @@ class WSClient {
       if (entry.ws !== ws) return
       console.error('WS error:', err)
     }
-
-    return ws
   }
 
   connect(conversationId) {

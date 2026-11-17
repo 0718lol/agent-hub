@@ -43,9 +43,9 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
 
   useEffect(() => {
     // 如果当前会话正在生成中，延迟加载历史，避免覆盖流式消息
-    if (!ownerId || generatingConvs.has(activeId)) return
+    if (!ownerId || useChatStore.getState().generatingConvs.has(activeId)) return
     loadMessages(activeId)
-  }, [activeId, ownerId, generatingConvs, loadMessages])
+  }, [activeId, ownerId, loadMessages])
 
   // Hydrate canvas code & preview from finalized conversation messages into activeId's bucket
   useEffect(() => {
@@ -88,13 +88,13 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
     const trackedConvIds = [
       ...new Set([activeId, ...openTabs.map((t) => t.convId), ...generatingConvs].filter(Boolean)),
     ]
-    const rafId = requestAnimationFrame(() => {
-      wsClient.syncConnections(trackedConvIds, activeId)
-      markRead(activeId)
-      wsClient.send({ type: 'read', conversation_id: activeId, sender: 'user' })
-    })
-    return () => cancelAnimationFrame(rafId)
-  }, [activeId, openTabs, generatingConvs, markRead])
+    wsClient.syncConnections(trackedConvIds, activeId)
+  }, [activeId, openTabs, generatingConvs])
+
+  useEffect(() => {
+    markRead(activeId)
+    wsClient.send({ type: 'read', conversation_id: activeId, sender: 'user' })
+  }, [activeId, markRead])
 
   // Single multiplexed WS event router: routes events to each conversation's isolated bucket
   useEffect(() => {
