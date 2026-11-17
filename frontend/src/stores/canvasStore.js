@@ -27,138 +27,330 @@ const DEFAULT_DAG_EDGES = [
   { from: 'agent_pm', to: 'agent_devops' },
 ]
 
-export const useCanvasStore = create((set) => ({
-  _ownerId: null,
-  setOwner: (ownerId) => set((state) => {
-    if (!ownerId || state._ownerId === ownerId) return {}
-    return {
-      _ownerId: ownerId,
-      activeTab: 'dag',
-      slidePanelOpen: false,
-      slidePanelContent: 'code',
-      slidePanelTab: 'code',
-      previewHtml: null,
-      generatedCode: null,
-      previousCode: '',
-      isDeploying: false,
-      deployLogs: [],
-      deployedUrl: '',
-      deployResultType: 'site',
-      deployTarget: 'web',
-      deployJobId: '',
-      deployStatus: 'idle',
-      tasks: DEFAULT_TASKS.map((task) => ({ ...task })),
-      dagNodes: DEFAULT_DAG_NODES.map((node) => ({ ...node })),
-      dagEdges: DEFAULT_DAG_EDGES.map((edge) => ({ ...edge })),
-    }
-  }),
+const SESSION_KEYS = [
+  'previewHtml',
+  'streamingHtml',
+  'generatedCode',
+  'previousCode',
+  'isDeploying',
+  'deployLogs',
+  'deployedUrl',
+  'deployResultType',
+  'deployTarget',
+  'deployJobId',
+  'deployStatus',
+  'activeDeployJob',
+  'tasks',
+  'dagNodes',
+  'dagEdges',
+]
 
-  activeTab: 'dag',
-  setActiveTab: (tab) => set({ activeTab: tab }),
+function createDefaultSession(dagTemplate) {
+  return {
+    previewHtml: null,
+    streamingHtml: null,
+    generatedCode: null,
+    previousCode: '',
+    isDeploying: false,
+    deployLogs: [],
+    deployedUrl: '',
+    deployResultType: 'site',
+    deployTarget: 'web',
+    deployJobId: '',
+    deployStatus: 'idle',
+    activeDeployJob: null,
+    tasks: structuredClone(DEFAULT_TASKS),
+    dagNodes: structuredClone(dagTemplate?.nodes || DEFAULT_DAG_NODES),
+    dagEdges: structuredClone(dagTemplate?.edges || DEFAULT_DAG_EDGES),
+  }
+}
 
-  // Slide panel state
-  slidePanelOpen: false,
-  slidePanelContent: 'code', // 'code' | 'dag' | 'task' | 'tools' | 'knowledge'
-  slidePanelTab: 'code',
-  slidePanelWidth: (() => {
-    try { const v = localStorage.getItem('agent-hub-slide-panel-width'); return v ? parseInt(v) : 380 }
-    catch (_e) { return 380 }
-  })(),
-  toggleSlidePanel: (content) => set((s) => {
-    if (s.slidePanelOpen && s.slidePanelContent === content) {
-      return { slidePanelOpen: false }
-    }
-    return { slidePanelOpen: true, slidePanelContent: content }
-  }),
-  setSlidePanelTab: (tab) => set({ slidePanelTab: tab }),
-  setSlidePanelWidth: (width) => {
-    try { localStorage.setItem('agent-hub-slide-panel-width', String(width)) } catch (_e) { /* ignore */ }
-    set({ slidePanelWidth: width })
-  },
+function projectActiveFields(state) {
+  const projected = {}
+  for (const key of SESSION_KEYS) {
+    projected[key] = state[key]
+  }
+  return projected
+}
 
-  previewHtml: null,
-  setPreviewHtml: (html) => set({ previewHtml: html }),
+function updateSession(state, targetConvId, updater) {
+  const activeId = state.activeConversationId || 'conv_pm'
+  const convId = targetConvId || activeId
+  const isTargetActive = convId === activeId
 
-  streamingHtml: null,
-  setStreamingHtml: (html) => set({ streamingHtml: html }),
-  clearStreamingHtml: () => set({ streamingHtml: null }),
+  const currentSnapshot = isTargetActive
+    ? { ...createDefaultSession(state._dagTemplate), ...(state.sessions[convId] || {}), ...projectActiveFields(state) }
+    : { ...createDefaultSession(state._dagTemplate), ...(state.sessions[convId] || {}) }
 
-  generatedCode: null,
-  previousCode: '',
-  setGeneratedCode: (language, code) =>
-    set((state) => {
-      const normalizedLanguage = String(language || '').toLowerCase()
-      const next = {
-        previousCode: state.generatedCode?.code || '',
-        generatedCode: { language, code },
+  const patch = updater(currentSnapshot)
+  if (!patch || Object.keys(patch).length === 0) return {}
+
+  const nextSession = { ...currentSnapshot, ...patch }
+  const nextSessions = { ...state.sessions, [convId]: nextSession }
+
+  if (isTargetActive) {
+    return { ...patch, sessions: nextSessions }
+  }
+  return { sessions: nextSessions }
+}
+
+export const useCanvasStore = create((set, get) => {
+  const initialTemplate = {
+    nodes: structuredClone(DEFAULT_DAG_NODES),
+    edges: structuredClone(DEFAULT_DAG_EDGES),
+  }
+  const initialSession = createDefaultSession(initialTemplate)
+
+  return {
+    _ownerId: null,
+    _dagTemplate: initialTemplate,
+    activeConversationId: 'conv_pm',
+    sessions: { conv_pm: initialSession },
+
+    setOwner: (ownerId) => set((state) => {
+      if (!ownerId || state._ownerId === ownerId) return {}
+      const freshSession = createDefaultSession(state._dagTemplate)
+      return {
+        _ownerId: ownerId,
+        activeConversationId: 'conv_pm',
+        sessions: { conv_pm: freshSession },
+        activeTab: 'dag',
+        slidePanelOpen: false,
+        slidePanelContent: 'code',
+        slidePanelTab: 'code',
+        ...freshSession,
       }
-      // Keep the code and preview panes on the same artifact.
-      if (normalizedLanguage === 'html' || normalizedLanguage === 'htm') {
-        next.previewHtml = code
-      }
-      return next
     }),
 
-  isDeploying: false,
-  deployLogs: [],
-  deployedUrl: '',
-  deployResultType: 'site',
-  deployTarget: 'web',
-  deployJobId: '',
-  deployStatus: 'idle',
+    setActiveConversation: (conversationId) => set((state) => {
+      if (!conversationId) return {}
+      const prevId = state.activeConversationId || 'conv_pm'
+      const savedPrev = {
+        ...createDefaultSession(state._dagTemplate),
+        ...(state.sessions[prevId] || {}),
+        ...projectActiveFields(state),
+      }
+      if (conversationId === prevId) {
+        return { sessions: { ...state.sessions, [prevId]: savedPrev } }
+      }
+      const nextSession = state.sessions[conversationId]
+        ? { ...createDefaultSession(state._dagTemplate), ...state.sessions[conversationId] }
+        : createDefaultSession(state._dagTemplate)
+      return {
+        activeConversationId: conversationId,
+        sessions: {
+          ...state.sessions,
+          [prevId]: savedPrev,
+          [conversationId]: nextSession,
+        },
+        ...nextSession,
+      }
+    }),
 
-  startDeploy: () =>
-    set({ isDeploying: true, deployStatus: 'running', deployLogs: [], deployedUrl: '', deployResultType: 'site', deployJobId: '' }),
-  markDeployRunning: () => set({ isDeploying: true, deployStatus: 'running' }),
-  setDeployJobId: (jobId) => set({ deployJobId: jobId }),
-  appendDeployLog: (log) =>
-    set((state) => ({ deployLogs: [...state.deployLogs, log] })),
-  finishDeploy: (url, resultType = 'site', target = 'web') =>
-    set({ isDeploying: false, deployStatus: 'success', deployedUrl: url, deployResultType: resultType, deployTarget: target }),
-  failDeploy: () =>
-    set({ isDeploying: false, deployStatus: 'failed' }),
-  cancelDeploy: () =>
-    set({ isDeploying: false, deployStatus: 'cancelled' }),
-  resetDeploy: () =>
-    set({ isDeploying: false, deployStatus: 'idle', deployLogs: [], deployedUrl: '', deployResultType: 'site', deployJobId: '' }),
+    getSession: (conversationId) => {
+      const state = get()
+      const convId = conversationId || state.activeConversationId || 'conv_pm'
+      if (convId === state.activeConversationId) {
+        return projectActiveFields(state)
+      }
+      return state.sessions[convId] || createDefaultSession(state._dagTemplate)
+    },
 
-  tasks: DEFAULT_TASKS.map((task) => ({ ...task })),
-  moveTask: (taskId, newStatus) =>
-    set((state) => ({ tasks: state.tasks.map((t) => t.id === taskId ? { ...t, status: newStatus } : t) })),
-  addTask: (task) =>
-    set((state) => ({ tasks: [...state.tasks, { ...task, id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2) }] })),
-  deleteTask: (taskId) =>
-    set((state) => ({ tasks: state.tasks.filter((t) => t.id !== taskId) })),
-  changeTaskStatus: (taskId, newStatus) =>
-    set((state) => ({ tasks: state.tasks.map((t) => t.id === taskId ? { ...t, status: newStatus } : t) })),
-  updateTaskByAgent: (agentId, status) =>
-    set((state) => ({ tasks: state.tasks.map((t) => t.assignee === agentId ? { ...t, status } : t) })),
+    activeTab: 'dag',
+    setActiveTab: (tab) => set({ activeTab: tab }),
 
-  dagNodes: DEFAULT_DAG_NODES.map((node) => ({ ...node })),
-  dagEdges: DEFAULT_DAG_EDGES.map((edge) => ({ ...edge })),
-  setNodeStatus: (nodeId, status) =>
-    set((state) => ({ dagNodes: state.dagNodes.map((n) => n.id === nodeId ? { ...n, status } : n) })),
+    // Slide panel state (workspace UI layout preference)
+    slidePanelOpen: false,
+    slidePanelContent: 'code', // 'code' | 'dag' | 'task' | 'tools' | 'knowledge'
+    slidePanelTab: 'code',
+    slidePanelWidth: (() => {
+      try { const v = localStorage.getItem('agent-hub-slide-panel-width'); return v ? parseInt(v, 10) : 380 }
+      catch (_e) { return 380 }
+    })(),
+    toggleSlidePanel: (content) => set((s) => {
+      if (s.slidePanelOpen && s.slidePanelContent === content) {
+        return { slidePanelOpen: false }
+      }
+      return { slidePanelOpen: true, slidePanelContent: content }
+    }),
+    setSlidePanelTab: (tab) => set({ slidePanelTab: tab }),
+    setSlidePanelWidth: (width) => {
+      try { localStorage.setItem('agent-hub-slide-panel-width', String(width)) } catch (_e) { /* ignore */ }
+      set({ slidePanelWidth: width })
+    },
 
-  // Fetch DAG topology from backend agents list
-  fetchDAGFromBackend: async () => {
-    try {
-      const resp = await fetch('/api/health')
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      const data = await resp.json()
-      if (!data.agents || data.agents.length === 0) return
-      const agentIds = data.agents
-      // Build DAG nodes from backend agents
-      const newNodes = [
-        { id: 'user', label: '用户', iconKey: 'user', x: 200, y: 30, status: 'idle' },
-        ...agentIds.map((id, i) => ({
-          id, label: id.replace('agent_', '').toUpperCase(), iconKey: id,
-          x: 60 + (i % 5) * 100, y: 130 + Math.floor(i / 5) * 120, status: 'idle'
-        }))
-      ]
-      const newEdges = agentIds.map((id) => ({ from: 'agent_pm', to: id }))
-      set({ dagNodes: newNodes, dagEdges: newEdges })
-    } catch (e) {
-      console.warn('Failed to fetch DAG from backend:', e)
-    }
-  },
-}))
+    ...initialSession,
+
+    setPreviewHtml: (html, conversationId) =>
+      set((state) => updateSession(state, conversationId, () => ({ previewHtml: html }))),
+
+    setStreamingHtml: (html, conversationId) =>
+      set((state) => updateSession(state, conversationId, () => ({ streamingHtml: html }))),
+
+    clearStreamingHtml: (conversationId) =>
+      set((state) => updateSession(state, conversationId, () => ({ streamingHtml: null }))),
+
+    setGeneratedCode: (language, code, conversationId) =>
+      set((state) => updateSession(state, conversationId, (session) => {
+        const normalizedLanguage = String(language || '').toLowerCase()
+        const next = {
+          previousCode: session.generatedCode?.code || '',
+          generatedCode: language == null && code == null ? null : { language, code },
+        }
+        if (normalizedLanguage === 'html' || normalizedLanguage === 'htm') {
+          next.previewHtml = code
+        }
+        return next
+      })),
+
+    startDeploy: (conversationId) =>
+      set((state) => updateSession(state, conversationId, () => ({
+        isDeploying: true,
+        deployStatus: 'running',
+        deployLogs: [],
+        deployedUrl: '',
+        deployResultType: 'site',
+        deployJobId: '',
+        activeDeployJob: null,
+      }))),
+
+    markDeployRunning: (conversationId) =>
+      set((state) => updateSession(state, conversationId, () => ({
+        isDeploying: true,
+        deployStatus: 'running',
+      }))),
+
+    setDeployJobId: (jobId, conversationId) =>
+      set((state) => updateSession(state, conversationId, () => ({ deployJobId: jobId }))),
+
+    setActiveDeployJob: (job, conversationId) =>
+      set((state) => updateSession(state, conversationId, (session) => ({
+        activeDeployJob: typeof job === 'function' ? job(session.activeDeployJob) : job,
+      }))),
+
+    appendDeployLog: (log, conversationId) =>
+      set((state) => updateSession(state, conversationId, (session) => ({
+        deployLogs: [...session.deployLogs, log],
+      }))),
+
+    finishDeploy: (url, resultType = 'site', target = 'web', conversationId) =>
+      set((state) => updateSession(state, conversationId, () => ({
+        isDeploying: false,
+        deployStatus: 'success',
+        deployedUrl: url,
+        deployResultType: resultType,
+        deployTarget: target,
+      }))),
+
+    failDeploy: (conversationId) =>
+      set((state) => updateSession(state, conversationId, () => ({
+        isDeploying: false,
+        deployStatus: 'failed',
+      }))),
+
+    cancelDeploy: (conversationId) =>
+      set((state) => updateSession(state, conversationId, () => ({
+        isDeploying: false,
+        deployStatus: 'cancelled',
+      }))),
+
+    resetDeploy: (conversationId) =>
+      set((state) => updateSession(state, conversationId, () => ({
+        isDeploying: false,
+        deployStatus: 'idle',
+        deployLogs: [],
+        deployedUrl: '',
+        deployResultType: 'site',
+        deployJobId: '',
+        activeDeployJob: null,
+      }))),
+
+    moveTask: (taskId, newStatus, conversationId) =>
+      set((state) => updateSession(state, conversationId, (session) => ({
+        tasks: session.tasks.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)),
+      }))),
+
+    addTask: (task, conversationId) =>
+      set((state) => updateSession(state, conversationId, (session) => ({
+        tasks: [
+          ...session.tasks,
+          {
+            ...task,
+            id:
+              typeof crypto !== 'undefined' && crypto.randomUUID
+                ? crypto.randomUUID()
+                : Date.now().toString(36) + Math.random().toString(36).slice(2),
+          },
+        ],
+      }))),
+
+    deleteTask: (taskId, conversationId) =>
+      set((state) => updateSession(state, conversationId, (session) => ({
+        tasks: session.tasks.filter((t) => t.id !== taskId),
+      }))),
+
+    changeTaskStatus: (taskId, newStatus, conversationId) =>
+      set((state) => updateSession(state, conversationId, (session) => ({
+        tasks: session.tasks.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)),
+      }))),
+
+    updateTaskByAgent: (agentId, status, conversationId) =>
+      set((state) => updateSession(state, conversationId, (session) => ({
+        tasks: session.tasks.map((t) => (t.assignee === agentId ? { ...t, status } : t)),
+      }))),
+
+    setNodeStatus: (nodeId, status, conversationId) =>
+      set((state) => updateSession(state, conversationId, (session) => ({
+        dagNodes: session.dagNodes.map((n) => (n.id === nodeId ? { ...n, status } : n)),
+      }))),
+
+    // Fetch DAG topology from backend agents list and update template + active/background sessions
+    fetchDAGFromBackend: async () => {
+      try {
+        const resp = await fetch('/api/health')
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        const data = await resp.json()
+        if (!data.agents || data.agents.length === 0) return
+        const agentIds = data.agents
+        const newNodes = [
+          { id: 'user', label: '用户', iconKey: 'user', x: 200, y: 30, status: 'idle' },
+          ...agentIds.map((id, i) => ({
+            id,
+            label: id.replace('agent_', '').toUpperCase(),
+            iconKey: id,
+            x: 60 + (i % 5) * 100,
+            y: 130 + Math.floor(i / 5) * 120,
+            status: 'idle',
+          })),
+        ]
+        const newEdges = agentIds.map((id) => ({ from: 'agent_pm', to: id }))
+        set((state) => {
+          const nextTemplate = {
+            nodes: structuredClone(newNodes),
+            edges: structuredClone(newEdges),
+          }
+          const mergeNodes = (prevNodes) => {
+            const statusById = new Map((prevNodes || []).map((n) => [n.id, n.status]))
+            return newNodes.map((n) => ({ ...n, status: statusById.get(n.id) || 'idle' }))
+          }
+          const updatedSessions = {}
+          for (const [cid, sess] of Object.entries(state.sessions)) {
+            updatedSessions[cid] = {
+              ...sess,
+              dagNodes: mergeNodes(sess.dagNodes),
+              dagEdges: structuredClone(newEdges),
+            }
+          }
+          return {
+            _dagTemplate: nextTemplate,
+            sessions: updatedSessions,
+            dagNodes: mergeNodes(state.dagNodes),
+            dagEdges: structuredClone(newEdges),
+          }
+        })
+      } catch (e) {
+        console.warn('Failed to fetch DAG from backend:', e)
+      }
+    },
+  }
+})

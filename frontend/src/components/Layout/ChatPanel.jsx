@@ -1,12 +1,9 @@
-import React, { lazy, Suspense, useRef, useEffect, useState, useCallback } from 'react'
-import { MessageSquare, Code2, GitBranch, LayoutList, Menu, X, Search, Building2 } from 'lucide-react'
+import React, { lazy, Suspense, useRef, useEffect, useState } from 'react'
+import { MessageSquare, X } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAgentStore } from '../../stores/agentStore'
 import { useCanvasStore } from '../../stores/canvasStore'
 import { useTabStore } from '../../stores/tabStore'
-import MessageBubble from '../Chat/MessageBubble'
-import InputBar from '../Chat/InputBar'
-import InlineDeployCard from '../Chat/InlineDeployCard'
 import ChatPanelHeader from './ChatPanelHeader'
 import ChatPanelContent from './ChatPanelContent'
 import TabBar from './TabBar'
@@ -14,7 +11,6 @@ import TaskBoard from '../Canvas/TaskBoard'
 import { wsClient } from '../../utils/websocket'
 import { PREVIEW_HTML } from '../Canvas/previewHtml'
 import { buildPromoPreviewHtml, extractPromoSubject } from '../Canvas/promoPreview'
-import IconAvatar from '../IconAvatar'
 
 const AgentFlow = lazy(() => import('../Canvas/AgentFlow'))
 
@@ -26,53 +22,39 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
 
   const conversations = useChatStore((s) => s.conversations)
   const ownerId = useChatStore((s) => s._ownerId)
-  const addMessage = useChatStore((s) => s.addMessage)
-  const updateLastAgentMessage = useChatStore((s) => s.updateLastAgentMessage)
+  const generatingConvs = useChatStore((s) => s.generatingConvs)
   const loadMessages = useChatStore((s) => s.loadMessages)
   const clearMessages = useChatStore((s) => s.clearMessages)
-  const setAgentStatus = useAgentStore((s) => s.setAgentStatus)
-  const setTyping = useChatStore((s) => s.setTyping)
-  const setThinking = useChatStore((s) => s.setThinking)
   const setGenerating = useChatStore((s) => s.setGenerating)
   const markRead = useChatStore((s) => s.markRead)
-  const typingAgents = useChatStore((s) => s.typingAgents)
-  const thinkingAgents = useChatStore((s) => s.thinkingAgents)
-  const pinnedMessages = useChatStore((s) => s.pinnedMessages)
-  const messagesRef = useRef(null)
-  const generationTimeoutRef = useRef(null)
-  const deployTimeoutRef = useRef(null)
 
-  const slidePanelOpen = useCanvasStore((s) => s.slidePanelOpen)
-  const slidePanelContent = useCanvasStore((s) => s.slidePanelContent)
-  const toggleSlidePanel = useCanvasStore((s) => s.toggleSlidePanel)
+  const deployTimeoutsRef = useRef(new Map())
+  const typingTimeoutsRef = useRef(new Map())
+
   const [taskPopup, setTaskPopup] = useState(false)
   const [dagPopup, setDagPopup] = useState(false)
-  const setGeneratedCode = useCanvasStore((s) => s.setGeneratedCode)
-  const setPreviewHtml = useCanvasStore((s) => s.setPreviewHtml)
-  const updateTaskByAgent = useCanvasStore((s) => s.updateTaskByAgent)
 
   const conv = conversations.find((c) => c.id === activeId)
-  const agents = useAgentStore((s) => s.agents)
-  const typingSet = typingAgents[activeId] || new Set()
-  const typingAgentIds = [...typingSet]
-  const thinkingMap = thinkingAgents[activeId] || {}
-  const thinkingEntries = Object.entries(thinkingMap)
-  const generatingConvs = useChatStore((s) => s.generatingConvs)
-  const isGenerating = generatingConvs.has(activeId)
-  const isGroup = conv?.type === 'group'
-  const currentPinned = pinnedMessages[activeId] || []
+
+  // Keep canvasStore's active session bucket synchronized with the active tab
+  useEffect(() => {
+    useCanvasStore.getState().setActiveConversation(activeId)
+  }, [activeId])
 
   useEffect(() => {
     // 如果当前会话正在生成中，延迟加载历史，避免覆盖流式消息
     if (!ownerId || generatingConvs.has(activeId)) return
     loadMessages(activeId)
-  }, [activeId, ownerId])
+  }, [activeId, ownerId, generatingConvs, loadMessages])
 
-  // Sync canvas code & preview from messages
+  // Hydrate canvas code & preview from finalized conversation messages into activeId's bucket
   useEffect(() => {
-    if (!conv?.messages) return
-    let foundCode = false
-    let foundPreview = false
+    if (!conv?.messages || conv.messages.length === 0) return
+    const session = useCanvasStore.getState().getSession(activeId)
+    let foundCode = Boolean(session?.generatedCode)
+    let foundPreview = Boolean(session?.previewHtml)
+    if (foundCode && foundPreview) return
+
     for (let i = conv.messages.length - 1; i >= 0; i--) {
       const msg = conv.messages[i]
       if (msg.streaming) continue
@@ -82,109 +64,52 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
         const code = previewMatch[1] === 'promo'
           ? buildPromoPreviewHtml(extractPromoSubject(text))
           : PREVIEW_HTML[previewMatch[1]]
-        if (!foundCode) { setGeneratedCode('html', code); foundCode = true }
-        if (!foundPreview) { useCanvasStore.getState().setPreviewHtml(code); foundPreview = true }
+        if (!foundCode) { useCanvasStore.getState().setGeneratedCode('html', code, activeId); foundCode = true }
+        if (!foundPreview) { useCanvasStore.getState().setPreviewHtml(code, activeId); foundPreview = true }
       }
       const codeMatch = text.match(/```(\w*)\n([\s\S]*?)```/)
       if (codeMatch) {
         const lang = codeMatch[1] || 'text'
         const code = codeMatch[2]
-        if (!foundCode) { setGeneratedCode(lang, code); foundCode = true }
-        if (lang === 'html' && !foundPreview) { useCanvasStore.getState().setPreviewHtml(code); foundPreview = true }
+        if (!foundCode) { useCanvasStore.getState().setGeneratedCode(lang, code, activeId); foundCode = true }
+        if (lang === 'html' && !foundPreview) { useCanvasStore.getState().setPreviewHtml(code, activeId); foundPreview = true }
       }
       const mockupMatch = text.match(/\[mockup:(\w+)\]/)
       if (mockupMatch?.[1] === 'promo' && !foundPreview) {
-        useCanvasStore.getState().setPreviewHtml(buildPromoPreviewHtml(extractPromoSubject(text)))
+        useCanvasStore.getState().setPreviewHtml(buildPromoPreviewHtml(extractPromoSubject(text)), activeId)
         foundPreview = true
       }
       if (foundCode && foundPreview) break
     }
   }, [conv?.messages, activeId])
 
-  // WS connection — 延迟到下一帧，不阻塞 UI 更新
+  // Multi-tab WebSocket pool: keep connections alive across all open & generating tabs
   useEffect(() => {
-    markRead(activeId)
-    wsClient.send({ type: 'read', conversation_id: activeId, sender: 'user' })
-  }, [activeId])
-
-  useEffect(() => {
-    // 使用 requestAnimationFrame 延迟 WebSocket 连接，让 UI 先更新
+    const trackedConvIds = [
+      ...new Set([activeId, ...openTabs.map((t) => t.convId), ...generatingConvs].filter(Boolean)),
+    ]
     const rafId = requestAnimationFrame(() => {
-      wsClient.connect(activeId)
+      wsClient.syncConnections(trackedConvIds, activeId)
+      markRead(activeId)
+      wsClient.send({ type: 'read', conversation_id: activeId, sender: 'user' })
     })
+    return () => cancelAnimationFrame(rafId)
+  }, [activeId, openTabs, generatingConvs, markRead])
+
+  // Single multiplexed WS event router: routes events to each conversation's isolated bucket
+  useEffect(() => {
+    const deployTimeouts = deployTimeoutsRef.current
+    const typingTimeouts = typingTimeoutsRef.current
+
+    const clearDeployWatchdog = (convId) => {
+      const timer = deployTimeouts.get(convId)
+      if (timer) {
+        clearTimeout(timer)
+        deployTimeouts.delete(convId)
+      }
+    }
 
     const unsub = wsClient.onMessage((data) => {
-      if (data.conversation_id !== activeId) return
-      if (data.type === 'typing') {
-        setTyping(activeId, data.agent_id, data.is_typing)
-        // 超时保护：15 秒后自动清除 typing 状态，防止卡死
-        if (data.is_typing) {
-          setTimeout(() => {
-            const convNow = useChatStore.getState().conversations.find((c) => c.id === activeId)
-            const stillTyping = convNow?.messages?.some((m) => m.sender === data.agent_id && m.streaming)
-            if (!stillTyping) setTyping(activeId, data.agent_id, false)
-          }, 15000)
-        }
-        return
-      }
-      if (data.type === 'thinking') { setThinking(activeId, data.agent_id, data.text); return }
-      if (data.type === 'code') {
-        useCanvasStore.getState().setGeneratedCode(data.language, data.code)
-        if (data.artifact_id) {
-          const current = useChatStore.getState().conversations.find((item) => item.id === activeId)?.goal || {}
-          useChatStore.getState().updateConversation(activeId, {
-            goal: {
-              ...current,
-              stage: 'validating',
-              latestDeliverable: data.artifact_name || current.latestDeliverable,
-              latestArtifactId: data.artifact_id,
-              nextAction: '审阅并验证最新产物',
-            },
-          })
-        }
-        return
-      }
-      if (data.type === 'preview') { useCanvasStore.getState().setPreviewHtml(data.html); return }
-      if (data.type === 'generating') {
-        setGenerating(activeId, data.is_generating)
-        if (!data.is_generating && generationTimeoutRef.current) {
-          clearTimeout(generationTimeoutRef.current)
-          generationTimeoutRef.current = null
-        }
-        return
-      }
-      if (data.type === 'task_status') {
-        useCanvasStore.getState().updateTaskByAgent(data.agent_id, data.status === 'doing' ? 'doing' : data.status)
-        useCanvasStore.getState().setNodeStatus(data.agent_id, data.status === 'doing' ? 'working' : data.status)
-        return
-      }
-      if (data.type === 'deploy_status') {
-        const { status, log, url, result_type: resultType, target } = data
-        // 清除旧超时，重置 30s 看门狗
-        if (deployTimeoutRef.current) clearTimeout(deployTimeoutRef.current)
-        deployTimeoutRef.current = setTimeout(() => {
-          useCanvasStore.getState().failDeploy()
-          deployTimeoutRef.current = null
-        }, 12 * 60 * 1000)
-
-        if (useCanvasStore.getState().deployStatus === 'idle') {
-          useCanvasStore.getState().startDeploy()
-        }
-        if (log) useCanvasStore.getState().appendDeployLog(log)
-        if (status === 'success' && url) {
-          useCanvasStore.getState().finishDeploy(url, resultType, target)
-          if (deployTimeoutRef.current) { clearTimeout(deployTimeoutRef.current); deployTimeoutRef.current = null }
-        }
-        if (status === 'failed') {
-          useCanvasStore.getState().failDeploy()
-          if (deployTimeoutRef.current) { clearTimeout(deployTimeoutRef.current); deployTimeoutRef.current = null }
-        }
-        if (status === 'cancelled') {
-          useCanvasStore.getState().cancelDeploy()
-          if (deployTimeoutRef.current) { clearTimeout(deployTimeoutRef.current); deployTimeoutRef.current = null }
-        }
-        return
-      }
       if (data.type === 'agent_created') {
         const agent = data.agent
         if (agent) {
@@ -206,45 +131,165 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
         useChatStore.getState().removeConversation(`conv_${data.agent_id}`)
         return
       }
-      if (data.type === 'read') { markRead(activeId); return }
+
+      const targetConvId = data.conversation_id || wsClient.currentConvId || 'conv_pm'
+      const chatState = useChatStore.getState()
+      const canvasState = useCanvasStore.getState()
+
+      if (data.type === 'typing') {
+        chatState.setTyping(targetConvId, data.agent_id, data.is_typing)
+        const typingKey = `${targetConvId}:${data.agent_id}`
+        if (typingTimeouts.has(typingKey)) {
+          clearTimeout(typingTimeouts.get(typingKey))
+          typingTimeouts.delete(typingKey)
+        }
+        if (data.is_typing) {
+          const timer = setTimeout(() => {
+            typingTimeouts.delete(typingKey)
+            const convNow = useChatStore.getState().conversations.find((c) => c.id === targetConvId)
+            const stillTyping = convNow?.messages?.some((m) => m.sender === data.agent_id && m.streaming)
+            if (!stillTyping) useChatStore.getState().setTyping(targetConvId, data.agent_id, false)
+          }, 15000)
+          typingTimeouts.set(typingKey, timer)
+        }
+        return
+      }
+
+      if (data.type === 'thinking') {
+        chatState.setThinking(targetConvId, data.agent_id, data.text)
+        return
+      }
+
+      if (data.type === 'code') {
+        canvasState.setGeneratedCode(data.language, data.code, targetConvId)
+        if (data.artifact_id) {
+          const current = chatState.conversations.find((item) => item.id === targetConvId)?.goal || {}
+          chatState.updateConversation(targetConvId, {
+            goal: {
+              ...current,
+              stage: 'validating',
+              latestDeliverable: data.artifact_name || current.latestDeliverable,
+              latestArtifactId: data.artifact_id,
+              nextAction: '审阅并验证最新产物',
+            },
+          })
+        }
+        return
+      }
+
+      if (data.type === 'preview') {
+        canvasState.setPreviewHtml(data.html, targetConvId)
+        return
+      }
+
+      if (data.type === 'generating') {
+        chatState.setGenerating(targetConvId, data.is_generating)
+        return
+      }
+
+      if (data.type === 'task_status') {
+        canvasState.updateTaskByAgent(
+          data.agent_id,
+          data.status === 'doing' ? 'doing' : data.status,
+          targetConvId
+        )
+        canvasState.setNodeStatus(
+          data.agent_id,
+          data.status === 'doing' ? 'working' : data.status,
+          targetConvId
+        )
+        return
+      }
+
+      if (data.type === 'deploy_status') {
+        const { status, log, url, result_type: resultType, target } = data
+        clearDeployWatchdog(targetConvId)
+        deployTimeouts.set(
+          targetConvId,
+          setTimeout(() => {
+            useCanvasStore.getState().failDeploy(targetConvId)
+            deployTimeouts.delete(targetConvId)
+          }, 12 * 60 * 1000)
+        )
+
+        const targetSession = canvasState.getSession(targetConvId)
+        if (targetSession.deployStatus === 'idle') {
+          canvasState.startDeploy(targetConvId)
+        }
+        if (log) useCanvasStore.getState().appendDeployLog(log, targetConvId)
+        if (status === 'success' && url) {
+          useCanvasStore.getState().finishDeploy(url, resultType, target, targetConvId)
+          clearDeployWatchdog(targetConvId)
+        }
+        if (status === 'failed') {
+          useCanvasStore.getState().failDeploy(targetConvId)
+          clearDeployWatchdog(targetConvId)
+        }
+        if (status === 'cancelled') {
+          useCanvasStore.getState().cancelDeploy(targetConvId)
+          clearDeployWatchdog(targetConvId)
+        }
+        return
+      }
+
+      if (data.type === 'read') {
+        chatState.markRead(targetConvId)
+        return
+      }
+
       if (data.type === 'message') {
-        // User messages are added locally in handleSend; the backend echoes them
-        // back over WS, which would otherwise duplicate every user bubble.
         if (data.sender === 'user') return
 
         if (data.sender === 'user_interaction_judge' && data.id) {
-          addMessage(activeId, { id: data.id, sender: data.sender, content: data.content, streaming: false })
+          chatState.addMessage(targetConvId, {
+            id: data.id,
+            sender: data.sender,
+            content: data.content,
+            streaming: false,
+          })
           return
         }
 
-        // 收到 Agent 消息时自动清除该 Agent 的 typing 状态
-        setTyping(activeId, data.sender, false)
+        chatState.setTyping(targetConvId, data.sender, false)
+        const setAgentStatus = useAgentStore.getState().setAgentStatus
 
         if (data.stream) {
-          const convNow = useChatStore.getState().conversations.find((c) => c.id === activeId)
+          const convNow = useChatStore.getState().conversations.find((c) => c.id === targetConvId)
           const hasStreaming = convNow?.messages?.some((m) => m.sender === data.sender && m.streaming)
           if (hasStreaming) {
-            updateLastAgentMessage(activeId, data.sender, data.content.text, true)
+            useChatStore.getState().updateLastAgentMessage(targetConvId, data.sender, data.content.text, true)
           } else {
-            // 检查是否有同名 agent 的最终消息刚完成（防止创建重复气泡）
-            const lastMsg = convNow?.messages?.[convNow.messages.length - 1]
+            const lastMsg = convNow?.messages?.at(-1)
             const isDuplicate = lastMsg && lastMsg.sender === data.sender && !lastMsg.streaming
             if (!isDuplicate) {
-              addMessage(activeId, { id: `${data.sender}-stream-${Date.now()}`, sender: data.sender, content: data.content, streaming: true })
+              useChatStore.getState().addMessage(targetConvId, {
+                id: `${data.sender}-stream-${Date.now()}`,
+                sender: data.sender,
+                content: data.content,
+                streaming: true,
+              })
             }
           }
           setAgentStatus(data.sender, 'working')
         } else {
-          const convNow = useChatStore.getState().conversations.find((c) => c.id === activeId)
+          const convNow = useChatStore.getState().conversations.find((c) => c.id === targetConvId)
           const hasStreaming = convNow?.messages?.some((m) => m.sender === data.sender && m.streaming)
           if (hasStreaming) {
-            updateLastAgentMessage(activeId, data.sender, data.content.text, false)
+            useChatStore.getState().updateLastAgentMessage(targetConvId, data.sender, data.content.text, false)
           } else {
-            // 检查是否已有该 agent 的非流式消息（避免重复）
-            const lastMsg = convNow?.messages?.[convNow.messages.length - 1]
-            const isDuplicate = lastMsg && lastMsg.sender === data.sender && !lastMsg.streaming && lastMsg.content?.text === data.content?.text
+            const lastMsg = convNow?.messages?.at(-1)
+            const isDuplicate =
+              lastMsg &&
+              lastMsg.sender === data.sender &&
+              !lastMsg.streaming &&
+              lastMsg.content?.text === data.content?.text
             if (!isDuplicate) {
-              addMessage(activeId, { id: `${data.sender}-final-${Date.now()}`, sender: data.sender, content: data.content, streaming: false })
+              useChatStore.getState().addMessage(targetConvId, {
+                id: `${data.sender}-final-${Date.now()}`,
+                sender: data.sender,
+                content: data.content,
+                streaming: false,
+              })
             }
           }
           setAgentStatus(data.sender, 'done')
@@ -252,51 +297,16 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
         }
       }
     })
+
     return () => {
-      cancelAnimationFrame(rafId)
-      unsub(); wsClient.disconnect()
-      if (generationTimeoutRef.current) {
-        clearTimeout(generationTimeoutRef.current)
-        generationTimeoutRef.current = null
-      }
-      if (deployTimeoutRef.current) {
-        clearTimeout(deployTimeoutRef.current)
-        deployTimeoutRef.current = null
-      }
+      unsub()
+      wsClient.disconnect()
+      for (const timer of deployTimeouts.values()) clearTimeout(timer)
+      deployTimeouts.clear()
+      for (const timer of typingTimeouts.values()) clearTimeout(timer)
+      typingTimeouts.clear()
     }
-  }, [activeId])
-
-  // Auto scroll
-  useEffect(() => {
-    if (messagesRef.current) {
-      messagesRef.current.scrollTop = messagesRef.current.scrollHeight
-    }
-  }, [conv?.messages])
-
-  const handleSend = (text, mentionedAgents, attachments = []) => {
-    if (isGenerating) return // 双重保险：生成中禁止发送
-    const msgId = `user-${Date.now()}`
-    const content = { text }
-    if (attachments.length > 0) content.attachments = attachments
-    addMessage(activeId, { id: msgId, sender: 'user', content, streaming: false })
-    const targetAgent = !isGroup ? conv?.agentId : undefined
-    wsClient.send({
-      type: 'message',
-      conversation_id: activeId,
-      sender: 'user',
-      content: { text, target_agent: targetAgent, mentioned_agents: mentionedAgents, attachments },
-    })
-    // 启动超时清理（60 秒无响应则强制解锁生成状态）
-    if (generationTimeoutRef.current) clearTimeout(generationTimeoutRef.current)
-    generationTimeoutRef.current = setTimeout(() => {
-      setGenerating(activeId, false)
-      generationTimeoutRef.current = null
-    }, 60000)
-  }
-
-  const handleStop = () => {
-    wsClient.send({ type: 'stop', conversation_id: activeId })
-  }
+  }, [])
 
   const handleClearHistory = async () => {
     if (!activeId) return
@@ -305,8 +315,8 @@ export default function ChatPanel({ onToggleSidebar, readiness }) {
       const response = await fetch(`/api/conversations/${activeId}/messages`, { method: 'DELETE' })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       clearMessages(activeId)
-      useCanvasStore.getState().setPreviewHtml('')
-      useCanvasStore.getState().setGeneratedCode('text', '')
+      useCanvasStore.getState().setPreviewHtml(null, activeId)
+      useCanvasStore.getState().setGeneratedCode(null, null, activeId)
       setGenerating(activeId, false)
     } catch (err) {
       console.error('Clear history failed:', err)

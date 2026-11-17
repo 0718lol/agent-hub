@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 import app.core._engine as engine_module
 from app.core.crud.artifacts import get_artifacts
 from app.core.crud.utils import db_write_transaction
-from app.core.models import Conversation, DeliveryRecord, Message
+from app.core.models import Conversation, DeliveryRecord, DeploymentRecord, Message
 from app.core.runtime_mode import require_workbench_mode
 from app.core.tenancy import request_user_id, scope_conversation_id
 from app.core.workspace import validate_local_workspace_path
@@ -116,6 +116,7 @@ def _store_task(
         session.add(
             Conversation(
                 id=scoped,
+                tenant_id=user,
                 type="single",
                 name=payload.project.name,
                 avatar="📂",
@@ -130,6 +131,7 @@ def _store_task(
         session.flush()
         session.add(
             Message(
+                tenant_id=user,
                 conversation_id=scoped,
                 sender="user",
                 content=json.dumps({"text": "\n".join(lines)}, ensure_ascii=False),
@@ -138,6 +140,7 @@ def _store_task(
         session.add(
             DeliveryRecord(
                 id="handoff:" + scoped,
+                tenant_id=user,
                 user_id=user,
                 conversation_id=scoped,
                 payload=json.dumps(
@@ -177,16 +180,40 @@ def build_receipt_sync(user: str, conversation_id: str) -> tuple[dict, str]:
         source_project_id = str(metadata.get("project_id") or conv.source_project_id or "")
         records = session.exec(
             select(DeliveryRecord)
-            .where(DeliveryRecord.user_id == user, DeliveryRecord.conversation_id == scoped)
+            .where(DeliveryRecord.tenant_id == user, DeliveryRecord.conversation_id == scoped)
             .order_by(DeliveryRecord.created_at.desc())
         ).all()
         deployments = []
+        seen_deploy_ids: set[str] = set()
         for record in records:
             job = json.loads(record.payload)
             if job.get("action") == "deploy":
+                jid = str(job.get("id") or "")
+                if jid:
+                    seen_deploy_ids.add(jid)
                 deployments.append(
                     {k: job.get(k) for k in ("id", "status", "target", "input_hash", "artifact_id", "url")}
                 )
+        sql_deploys = session.exec(
+            select(DeploymentRecord)
+            .where(
+                DeploymentRecord.tenant_id == user,
+                DeploymentRecord.conversation_id == scoped,
+                DeploymentRecord.action == "deploy",
+            )
+            .order_by(DeploymentRecord.created_at.desc())
+        ).all()
+        for dep in sql_deploys:
+            if dep.id in seen_deploy_ids:
+                continue
+            deployments.append({
+                "id": dep.id,
+                "status": dep.status,
+                "target": dep.target,
+                "input_hash": None,
+                "artifact_id": None,
+                "url": dep.url,
+            })
 
     artifacts = get_artifacts(scoped, 20)
     receipt = {

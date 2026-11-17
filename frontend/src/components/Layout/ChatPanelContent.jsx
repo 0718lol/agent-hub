@@ -176,12 +176,10 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
   const visibleMessages = (conv?.messages || []).filter((message) => !isInternalNoiseMessage(message))
 
   // 最后一条 AI 消息的 id（用于控制重新生成按钮只在最新 AI 消息上显示）
-  const lastAgentMsgId = useMemo(() => {
-    for (let i = visibleMessages.length - 1; i >= 0; i--) {
-      if (visibleMessages[i].sender !== 'user') return visibleMessages[i].id
-    }
-    return null
-  }, [visibleMessages])
+  const lastAgentMsgId = useMemo(
+    () => visibleMessages.findLast((msg) => msg.sender !== 'user')?.id ?? null,
+    [visibleMessages]
+  )
 
   if (!conv) {
     return (
@@ -285,10 +283,10 @@ const ChatPanelContent = memo(function ChatPanelContent({ convId, isActive, read
       )}
 
       {/* Deploy progress card */}
-      {visibleMessages.length > 0 && <DeployProgressCard />}
+      {visibleMessages.length > 0 && <DeployProgressCard convId={convId} />}
 
       {/* Deploy inline card */}
-      {visibleMessages.length > 0 && <InlineDeployCard />}
+      {visibleMessages.length > 0 && <InlineDeployCard convId={convId} />}
 
       {/* Input */}
       <InputBar

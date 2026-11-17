@@ -2,10 +2,22 @@ import React, { useState } from 'react'
 import { Terminal, ExternalLink, ChevronRight, X } from 'lucide-react'
 import { useCanvasStore } from '../../stores/canvasStore'
 
-export default function InlineDeployCard() {
-  const logs = useCanvasStore((s) => s.deployLogs)
-  const status = useCanvasStore((s) => s.deployStatus)
-  const url = useCanvasStore((s) => s.deployedUrl)
+export default function InlineDeployCard({ convId }) {
+  const logs = useCanvasStore((s) =>
+    convId && convId !== s.activeConversationId
+      ? (s.sessions[convId]?.deployLogs ?? [])
+      : s.deployLogs
+  )
+  const status = useCanvasStore((s) =>
+    convId && convId !== s.activeConversationId
+      ? (s.sessions[convId]?.deployStatus ?? 'idle')
+      : s.deployStatus
+  )
+  const url = useCanvasStore((s) =>
+    convId && convId !== s.activeConversationId
+      ? (s.sessions[convId]?.deployedUrl ?? '')
+      : s.deployedUrl
+  )
   const resetDeploy = useCanvasStore((s) => s.resetDeploy)
   const [expanded, setExpanded] = useState(true)
 
@@ -27,7 +39,7 @@ export default function InlineDeployCard() {
           {statusLabel}
         </span>
         <button
-          onClick={(e) => { e.stopPropagation(); resetDeploy() }}
+          onClick={(e) => { e.stopPropagation(); resetDeploy(convId) }}
           title="关闭"
           style={{
             background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',

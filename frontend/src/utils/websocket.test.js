@@ -296,4 +296,45 @@ describe("WSClient (websocket.js)", () => {
     expect(ws.sentMessages.length).toBe(1)
     expect(JSON.parse(ws.sentMessages[0]).type).toBe("ping")
   })
+
+  it("syncConnections keeps multiple tab sockets open simultaneously and routes frames with conversation_id", async () => {
+    const received = []
+    const unsub = wsClient.onMessage((data) => received.push(data))
+
+    wsClient.syncConnections(["conv_pm", "conv_frontend"], "conv_pm")
+    expect(MockWebSocket.instances.length).toBe(2)
+
+    await vi.waitFor(() => {
+      expect(MockWebSocket.instances[0].readyState).toBe(MockWebSocket.OPEN)
+      expect(MockWebSocket.instances[1].readyState).toBe(MockWebSocket.OPEN)
+    })
+
+    // Switching active tab in pool does NOT close background tab socket
+    wsClient.syncConnections(["conv_pm", "conv_frontend"], "conv_frontend")
+    expect(MockWebSocket.instances[0].readyState).toBe(MockWebSocket.OPEN)
+    expect(MockWebSocket.instances[1].readyState).toBe(MockWebSocket.OPEN)
+    expect(wsClient.currentConvId).toBe("conv_frontend")
+
+    // Background tab socket emits a streaming message without explicit conversation_id
+    MockWebSocket.instances[0].onmessage({
+      data: JSON.stringify({ type: "preview", html: "<h1>Background PM</h1>" }),
+    })
+    expect(received.at(-1)).toEqual({
+      type: "preview",
+      conversation_id: "conv_pm",
+      html: "<h1>Background PM</h1>",
+    })
+
+    // Sending to conv_pm uses conv_pm's open socket directly
+    wsClient.send({ type: "stop", conversation_id: "conv_pm" })
+    expect(MockWebSocket.instances[0].sentMessages).toHaveLength(1)
+    expect(MockWebSocket.instances[1].sentMessages).toHaveLength(0)
+
+    // Closing conv_pm tab removes only conv_pm's socket
+    wsClient.syncConnections(["conv_frontend"], "conv_frontend")
+    expect(MockWebSocket.instances[0].readyState).toBe(MockWebSocket.CLOSED)
+    expect(MockWebSocket.instances[1].readyState).toBe(MockWebSocket.OPEN)
+
+    unsub()
+  })
 })

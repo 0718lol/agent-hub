@@ -96,7 +96,7 @@ def init_db() -> None:
 
 
 def _ensure_workbench_schema() -> None:
-    """Idempotently ensure workbench/handoff tables and columns exist across SQLite & PostgreSQL."""
+    """Idempotently ensure workbench/handoff/tenant_id tables and columns exist across SQLite & PostgreSQL."""
     from sqlalchemy import inspect as sa_inspect
 
     SQLModel.metadata.create_all(engine)
@@ -114,6 +114,24 @@ def _ensure_workbench_schema() -> None:
             conn.execute(text("ALTER TABLE artifacts ADD COLUMN parent_id INTEGER"))
         if "content_hash" not in art_cols:
             conn.execute(text("ALTER TABLE artifacts ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"))
+        existing_tables = set(insp.get_table_names())
+        for tbl in (
+            "conversations",
+            "messages",
+            "artifacts",
+            "cron_tasks",
+            "uploaded_files",
+            "delivery_records",
+        ):
+            if tbl not in existing_tables:
+                continue
+            cols = {col["name"] for col in insp.get_columns(tbl)}
+            if "tenant_id" not in cols:
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local'"))
+            idxs = {idx["name"] for idx in insp.get_indexes(tbl)}
+            idx_name = f"ix_{tbl}_tenant_id"
+            if idx_name not in idxs:
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {tbl} (tenant_id)"))
 
 
 def populate_database_defaults() -> None:
@@ -183,15 +201,16 @@ async def async_get_messages_cached(conversation_id, limit=100, before_id=None):
     return result
 
 
-async def async_get_conversations_cached():
+async def async_get_conversations_cached(tenant_id: str | None = None):
     from app.core.cache import cache
     from app.core.tenancy import current_tenant_id
 
-    cache_key = f"conv:list:{current_tenant_id() or 'global'}"
+    effective_tenant = tenant_id if tenant_id is not None else current_tenant_id()
+    cache_key = f"conv:list:{effective_tenant or 'global'}"
     cached = await cache.get_json(cache_key)
     if cached is not None:
         return cached
-    result = await asyncio.to_thread(get_conversations)  # noqa: F405
+    result = await asyncio.to_thread(get_conversations, effective_tenant)  # noqa: F405
     if result:
         await cache.set_json(cache_key, result, ttl=60)
     return result

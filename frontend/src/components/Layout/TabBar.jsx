@@ -51,9 +51,7 @@ export default function TabBar() {
   useEffect(() => {
     if (!scrollRef.current) return
     const activeEl = scrollRef.current.querySelector('.tab-item.active')
-    if (activeEl) {
-      activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
-    }
+    activeEl?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
   }, [activeTabId])
 
   const handleNewTab = () => {

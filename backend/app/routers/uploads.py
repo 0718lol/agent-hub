@@ -126,6 +126,21 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         f.write(content)
     is_image = (file.content_type or "").startswith("image/")
     extracted_text = "" if is_image else _extract_upload_text(content, file.content_type, ext)
+    try:
+        from app.core.async_wrappers import async_save_uploaded_file
+
+        await async_save_uploaded_file(
+            file_id=stored_name,
+            original_name=file.filename or stored_name,
+            stored_name=stored_name,
+            file_path=file_path,
+            content_type=file.content_type or "",
+            size=len(content),
+            extracted_text=extracted_text,
+            tenant_id=request_user_id(request),
+        )
+    except Exception:
+        pass
     payload = {
         "status": "uploaded",
         "original_name": file.filename,

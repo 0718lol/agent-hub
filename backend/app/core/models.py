@@ -33,6 +33,7 @@ class User(SQLModel, table=True):
 class Conversation(SQLModel, table=True):
     __tablename__ = "conversations"
     id: str = Field(primary_key=True)
+    tenant_id: str = Field(default="local", index=True, sa_column_kwargs={"server_default": "local"})
     type: str
     name: str
     avatar: str | None = None
@@ -57,6 +58,7 @@ class Conversation(SQLModel, table=True):
 class Message(SQLModel, table=True):
     __tablename__ = "messages"
     id: int | None = Field(default=None, primary_key=True)
+    tenant_id: str = Field(default="local", index=True, sa_column_kwargs={"server_default": "local"})
     conversation_id: str = Field(foreign_key="conversations.id")
     sender: str
     content: str
@@ -92,6 +94,7 @@ class ProjectMemory(SQLModel, table=True):
 class UploadedFile(SQLModel, table=True):
     __tablename__ = "uploaded_files"
     id: str = Field(primary_key=True)
+    tenant_id: str = Field(default="local", index=True, sa_column_kwargs={"server_default": "local"})
     original_name: str
     stored_name: str
     file_path: str
@@ -114,6 +117,7 @@ class TenantConfig(SQLModel, table=True):
 class CronTask(SQLModel, table=True):
     __tablename__ = "cron_tasks"
     id: str = Field(primary_key=True)
+    tenant_id: str = Field(default="local", index=True, sa_column_kwargs={"server_default": "local"})
     conversation_id: str = Field(foreign_key="conversations.id")
     agent_id: str
     task_prompt: str
@@ -173,6 +177,7 @@ class PendingHil(SQLModel, table=True):
 class Artifact(SQLModel, table=True):
     __tablename__ = "artifacts"
     id: int | None = Field(default=None, primary_key=True)
+    tenant_id: str = Field(default="local", index=True, sa_column_kwargs={"server_default": "local"})
     conversation_id: str = Field(foreign_key="conversations.id")
     agent_id: str
     name: str
@@ -190,7 +195,30 @@ class Artifact(SQLModel, table=True):
 class DeliveryRecord(SQLModel, table=True):
     __tablename__ = "delivery_records"
     id: str = Field(primary_key=True)
+    tenant_id: str = Field(default="local", index=True, sa_column_kwargs={"server_default": "local"})
     user_id: str = Field(index=True)
     conversation_id: str = Field(index=True)
     payload: str
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(), index=True)
+
+
+class DeploymentRecord(SQLModel, table=True):
+    __tablename__ = "deployment_records"
+    id: str = Field(primary_key=True)
+    tenant_id: str = Field(default="local", index=True, sa_column_kwargs={"server_default": "local"})
+    user_id: str = Field(default="local", index=True, sa_column_kwargs={"server_default": "local"})
+    conversation_id: str = Field(index=True)
+    target: str
+    action: str = Field(default="deploy")
+    source_job_id: str = Field(default="")
+    status: str = Field(default="queued", index=True)
+    stage: str = Field(default="queued")
+    progress: int = Field(default=5)
+    url: str = Field(default="")
+    result_type: str = Field(default="")
+    provider: str = Field(default="")
+    published: bool = Field(default=False)
+    lifecycle: str = Field(default="active")
+    log: str = Field(default="")
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(), index=True)
+    updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())

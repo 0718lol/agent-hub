@@ -14,6 +14,7 @@ from app.core.crud import (
     delete_hil_checkpoint,
     delete_memory_item,
     get_artifacts,
+    get_conversation,
     get_conversations,
     get_cron_tasks,
     get_custom_agents,
@@ -45,8 +46,12 @@ async def async_get_messages(conversation_id, limit=100, before_id=None):
     return await asyncio.to_thread(get_messages, conversation_id, limit, before_id)
 
 
-async def async_get_conversations():
-    return await asyncio.to_thread(get_conversations)
+async def async_get_conversation(conversation_id: str, tenant_id: str | None = None):
+    return await asyncio.to_thread(get_conversation, conversation_id, tenant_id)
+
+
+async def async_get_conversations(tenant_id: str | None = None):
+    return await asyncio.to_thread(get_conversations, tenant_id)
 
 
 async def async_clear_messages(conversation_id):
@@ -67,24 +72,83 @@ async def async_delete_custom_agent(agent_id, user_id=None):
     return await asyncio.to_thread(delete_custom_agent, agent_id, user_id)
 
 
-async def async_create_conversation(conv_id, conv_type, name, avatar, agent_id=None, agents=None, preview=""):
-    return await asyncio.to_thread(create_conversation, conv_id, conv_type, name, avatar, agent_id, agents, preview)
+async def async_create_conversation(
+    conv_id,
+    conv_type,
+    name,
+    avatar,
+    agent_id=None,
+    agents=None,
+    preview="",
+    tenant_id=None,
+):
+    return await asyncio.to_thread(
+        create_conversation,
+        conv_id,
+        conv_type,
+        name,
+        avatar,
+        agent_id,
+        agents,
+        preview,
+        tenant_id,
+    )
 
 
-async def async_save_uploaded_file(file_id, original_name, stored_name, file_path, content_type="", size=0, extracted_text=""):
-    return await asyncio.to_thread(save_uploaded_file, file_id, original_name, stored_name, file_path, content_type, size, extracted_text)
+async def async_save_uploaded_file(
+    file_id,
+    original_name,
+    stored_name,
+    file_path,
+    content_type="",
+    size=0,
+    extracted_text="",
+    tenant_id=None,
+):
+    return await asyncio.to_thread(
+        save_uploaded_file,
+        file_id,
+        original_name,
+        stored_name,
+        file_path,
+        content_type,
+        size,
+        extracted_text,
+        tenant_id,
+    )
 
 
-async def async_get_uploaded_file(file_id):
-    return await asyncio.to_thread(get_uploaded_file, file_id)
+async def async_get_uploaded_file(file_id, tenant_id=None):
+    return await asyncio.to_thread(get_uploaded_file, file_id, tenant_id)
 
 
-async def async_save_cron_task(task_id, conversation_id, agent_id, task_prompt, interval_seconds, status="active", last_run=None, next_run=None):
-    return await asyncio.to_thread(save_cron_task, task_id, conversation_id, agent_id, task_prompt, interval_seconds, status, last_run, next_run)
+async def async_save_cron_task(
+    task_id,
+    conversation_id,
+    agent_id,
+    task_prompt,
+    interval_seconds,
+    status="active",
+    last_run=None,
+    next_run=None,
+    tenant_id=None,
+):
+    return await asyncio.to_thread(
+        save_cron_task,
+        task_id,
+        conversation_id,
+        agent_id,
+        task_prompt,
+        interval_seconds,
+        status,
+        last_run,
+        next_run,
+        tenant_id,
+    )
 
 
-async def async_get_cron_tasks(conversation_id=None):
-    return await asyncio.to_thread(get_cron_tasks, conversation_id)
+async def async_get_cron_tasks(conversation_id=None, tenant_id=None):
+    return await asyncio.to_thread(get_cron_tasks, conversation_id, tenant_id)
 
 
 async def async_get_due_cron_tasks(now_str):

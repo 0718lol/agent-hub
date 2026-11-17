@@ -507,9 +507,24 @@ async def download_deployment_logs(job_id: str, request: Request):
 
 
 @app.get("/api/deployments")
-async def deployment_history(request: Request, limit: int = 30):
+async def deployment_history(
+    request: Request,
+    limit: int = 30,
+    conversation_id: str | None = None,
+):
+    user_id = request_user_id(request)
+    scoped_conv_id = None
+    if conversation_id:
+        try:
+            scoped_conv_id = scope_conversation_id(user_id, conversation_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        jobs = await deployment_queue.list_for_user(request_user_id(request), min(max(limit, 1), 100))
+        jobs = await deployment_queue.list_for_user(
+            user_id,
+            min(max(limit, 1), 100),
+            conversation_id=scoped_conv_id,
+        )
     except DeploymentQueueUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"deployments": [job.public_dict(include_logs=False) for job in jobs]}

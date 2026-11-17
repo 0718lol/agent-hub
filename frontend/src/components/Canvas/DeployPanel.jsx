@@ -28,6 +28,8 @@ export default function DeployPanel() {
   const finishDeploy = useCanvasStore((s) => s.finishDeploy)
   const markDeployRunning = useCanvasStore((s) => s.markDeployRunning)
   const setDeployJobId = useCanvasStore((s) => s.setDeployJobId)
+  const activeJob = useCanvasStore((s) => s.activeDeployJob)
+  const setActiveJob = useCanvasStore((s) => s.setActiveDeployJob)
 
   const activeId = useChatStore((s) => s.activeConversationId)
   const terminalEndRef = useRef(null)
@@ -42,8 +44,11 @@ export default function DeployPanel() {
   const [version, setVersion] = useState('1.0.0')
   const [history, setHistory] = useState([])
   const [historyMessage, setHistoryMessage] = useState('')
-  const [activeJob, setActiveJob] = useState(null)
   const [cancelling, setCancelling] = useState(false)
+
+  useEffect(() => {
+    setCancelling(false)
+  }, [activeId])
 
   const targets = [
     { value: 'auto', label: '自动识别', icon: Boxes },
@@ -75,24 +80,25 @@ export default function DeployPanel() {
 
   useEffect(() => {
     if (!deployJobId || (activeJob?.id === deployJobId && ['success', 'failed', 'cancelled'].includes(activeJob.status))) return undefined
+    const targetConvId = activeId
     let cancelled = false
     const poll = async () => {
       try {
         const response = await fetch(`/api/deployments/${deployJobId}`)
         if (!response.ok || cancelled) return
         const job = await response.json()
-        setActiveJob(job)
+        setActiveJob(job, targetConvId)
         if (job.status === 'queued' || job.status === 'running') {
-          markDeployRunning()
+          markDeployRunning(targetConvId)
         } else if (job.status === 'success' && job.url) {
-          finishDeploy(job.url, job.result_type, job.target)
+          finishDeploy(job.url, job.result_type, job.target, targetConvId)
         } else if (job.status === 'failed') {
-          if (job.log) appendDeployLog(job.log)
-          failDeploy()
+          if (job.log) appendDeployLog(job.log, targetConvId)
+          failDeploy(targetConvId)
         } else if (job.status === 'cancelled') {
-          if (job.log) appendDeployLog(job.log)
+          if (job.log) appendDeployLog(job.log, targetConvId)
           setCancelling(false)
-          cancelDeploy()
+          cancelDeploy(targetConvId)
         }
       } catch (_error) {
         // WebSocket remains the primary channel; the next poll retries recovery.
@@ -104,15 +110,16 @@ export default function DeployPanel() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [activeJob?.id, activeJob?.status, appendDeployLog, cancelDeploy, deployJobId, failDeploy, finishDeploy, markDeployRunning])
+  }, [activeId, activeJob?.id, activeJob?.status, appendDeployLog, cancelDeploy, deployJobId, failDeploy, finishDeploy, markDeployRunning, setActiveJob])
 
   const handleDeploy = async () => {
     if (isDeploying || !activeId) return
-    startDeploy()
+    const targetConvId = activeId
+    startDeploy(targetConvId)
     setCancelling(false)
-    setActiveJob(null)
+    setActiveJob(null, targetConvId)
     try {
-      const resp = await fetch(`/api/deploy/${activeId}`, {
+      const resp = await fetch(`/api/deploy/${targetConvId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -130,44 +137,45 @@ export default function DeployPanel() {
       })
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
-        appendDeployLog(data.detail || '发布失败：未配置发布服务。')
-        failDeploy()
+        appendDeployLog(data.detail || '发布失败：未配置发布服务。', targetConvId)
+        failDeploy(targetConvId)
       } else {
         const data = await resp.json()
-        setDeployJobId(data.job_id)
+        setDeployJobId(data.job_id, targetConvId)
         setActiveJob({
           id: data.job_id,
           status: 'queued',
           stage: 'queued',
           progress: 5,
           log_entries: [{ stage: 'queued', level: 'info', message: '任务已进入持久化队列，等待构建 Worker。' }],
-        })
-        appendDeployLog(`任务已进入持久化队列：${data.job_id}`)
+        }, targetConvId)
+        appendDeployLog(`任务已进入持久化队列：${data.job_id}`, targetConvId)
       }
-    } catch (e) {
-      appendDeployLog('发布请求失败，请检查网络和部署服务配置。')
-      failDeploy()
+    } catch (_e) {
+      appendDeployLog('发布请求失败，请检查网络和部署服务配置。', targetConvId)
+      failDeploy(targetConvId)
     }
   }
 
   const handleCancel = async () => {
     if (!deployJobId || cancelling) return
     if (!window.confirm('确定取消当前构建吗？正在运行的构建进程会被终止。')) return
+    const targetConvId = activeId
     setCancelling(true)
-    appendDeployLog('正在向构建 Worker 发送取消请求...')
+    appendDeployLog('正在向构建 Worker 发送取消请求...', targetConvId)
     try {
       const response = await fetch(`/api/deployments/${deployJobId}/cancel`, { method: 'POST' })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
         setCancelling(false)
-        appendDeployLog(data.detail || '取消失败，请稍后重试。')
+        appendDeployLog(data.detail || '取消失败，请稍后重试。', targetConvId)
         return
       }
-      setActiveJob((job) => job ? { ...job, cancel_requested: true } : job)
-      appendDeployLog('取消请求已提交，正在安全停止构建进程...')
+      setActiveJob((job) => (job ? { ...job, cancel_requested: true } : job), targetConvId)
+      appendDeployLog('取消请求已提交，正在安全停止构建进程...', targetConvId)
     } catch (_error) {
       setCancelling(false)
-      appendDeployLog('取消请求发送失败，请检查网络连接。')
+      appendDeployLog('取消请求发送失败，请检查网络连接。', targetConvId)
     }
   }
 
@@ -198,25 +206,26 @@ export default function DeployPanel() {
   }
 
   const retryHistory = async (job) => {
-    startDeploy()
+    const targetConvId = activeId
+    startDeploy(targetConvId)
     setCancelling(false)
-    setActiveJob(null)
+    setActiveJob(null, targetConvId)
     const response = await fetch(`/api/deployments/${job.id}/retry`, { method: 'POST' })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      appendDeployLog(data.detail || '重试失败')
-      failDeploy()
+      appendDeployLog(data.detail || '重试失败', targetConvId)
+      failDeploy(targetConvId)
       return
     }
-    setDeployJobId(data.job_id)
+    setDeployJobId(data.job_id, targetConvId)
     setActiveJob({
       id: data.job_id,
       status: 'queued',
       stage: 'queued',
       progress: 5,
       log_entries: [{ stage: 'queued', level: 'info', message: '历史版本已重新进入队列。' }],
-    })
-    appendDeployLog(`历史版本已重新进入队列：${data.job_id}`)
+    }, targetConvId)
+    appendDeployLog(`历史版本已重新进入队列：${data.job_id}`, targetConvId)
   }
 
   const cleanupHistory = async () => {

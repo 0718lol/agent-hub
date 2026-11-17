@@ -5,6 +5,8 @@ describe('canvasStore', () => {
   beforeEach(() => {
     useCanvasStore.setState({
       _ownerId: null,
+      activeConversationId: 'conv_pm',
+      sessions: {},
       activeTab: 'dag',
       slidePanelOpen: false,
       slidePanelContent: 'code',
@@ -17,6 +19,7 @@ describe('canvasStore', () => {
       deployLogs: [],
       deployedUrl: '',
       deployJobId: '',
+      activeDeployJob: null,
       deployResultType: 'site',
       deployTarget: 'web',
       deployStatus: 'idle',
@@ -217,5 +220,47 @@ describe('canvasStore', () => {
     useCanvasStore.getState().setNodeStatus('agent_pm', 'running')
     const userNode = useCanvasStore.getState().dagNodes.find(n => n.id === 'user')
     expect(userNode.status).toBe('idle')
+  })
+
+  // ---------- Per-conversation multi-session isolation ----------
+
+  it('isolates preview, code, deploy, and tasks across concurrent conversations', () => {
+    const store = useCanvasStore.getState()
+    store.setActiveConversation('conv_pm')
+    store.setGeneratedCode('html', '<h1>PM Dashboard</h1>')
+    store.startDeploy()
+    store.appendDeployLog('Building PM...')
+    store.moveTask(1, 'doing')
+
+    // Switch to conv_frontend: must see clean isolated state, no bleed from conv_pm
+    store.setActiveConversation('conv_frontend')
+    let state = useCanvasStore.getState()
+    expect(state.activeConversationId).toBe('conv_frontend')
+    expect(state.previewHtml).toBeNull()
+    expect(state.generatedCode).toBeNull()
+    expect(state.isDeploying).toBe(false)
+    expect(state.deployStatus).toBe('idle')
+    expect(state.deployLogs).toEqual([])
+    expect(state.tasks.find((t) => t.id === 1).status).toBe('todo')
+
+    // Background WebSocket event arrives for conv_pm while user stays on conv_frontend
+    store.appendDeployLog('PM deploy succeeded!', 'conv_pm')
+    store.finishDeploy('/published/pm/', 'site', 'web', 'conv_pm')
+    store.setGeneratedCode('html', '<h1>PM Dashboard V2</h1>', 'conv_pm')
+
+    // Active conv_frontend remains completely untouched
+    state = useCanvasStore.getState()
+    expect(state.previewHtml).toBeNull()
+    expect(state.deployStatus).toBe('idle')
+
+    // Switch back to conv_pm: background updates are immediately visible
+    store.setActiveConversation('conv_pm')
+    state = useCanvasStore.getState()
+    expect(state.previewHtml).toBe('<h1>PM Dashboard V2</h1>')
+    expect(state.previousCode).toBe('<h1>PM Dashboard</h1>')
+    expect(state.deployStatus).toBe('success')
+    expect(state.deployedUrl).toBe('/published/pm/')
+    expect(state.deployLogs).toEqual(['Building PM...', 'PM deploy succeeded!'])
+    expect(state.tasks.find((t) => t.id === 1).status).toBe('doing')
   })
 })

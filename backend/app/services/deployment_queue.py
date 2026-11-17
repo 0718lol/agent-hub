@@ -1,5 +1,6 @@
 """Redis Streams-backed persistent deployment queue."""
 
+import asyncio
 import json
 import socket
 import uuid
@@ -27,6 +28,7 @@ class DeploymentJob:
     conversation_id: str
     user_id: str
     target: str
+    tenant_id: str = ""
     action: str = "deploy"
     source_job_id: str = ""
     options: dict | None = None
@@ -47,6 +49,7 @@ class DeploymentJob:
 
     def __post_init__(self):
         now = datetime.now(UTC).isoformat()
+        self.tenant_id = self.tenant_id or self.user_id
         self.created_at = self.created_at or now
         self.updated_at = self.updated_at or now
         self.options = self.options or {}
@@ -58,6 +61,24 @@ class DeploymentJob:
         if not include_logs:
             data.pop("log_entries", None)
         return data
+
+
+async def _mirror_job_to_sql(job: DeploymentJob) -> None:
+    try:
+        from app.core.crud.deployments import sync_deployment_record
+
+        await asyncio.to_thread(sync_deployment_record, asdict(job))
+    except Exception:
+        pass
+
+
+async def _delete_job_from_sql(job_id: str) -> None:
+    try:
+        from app.core.crud.deployments import delete_deployment_record
+
+        await asyncio.to_thread(delete_deployment_record, job_id)
+    except Exception:
+        pass
 
 
 class DeploymentQueue:
@@ -139,16 +160,72 @@ class DeploymentQueue:
         except Exception:
             await client.delete(self._lock_key(conversation_id))
             raise
+        await _mirror_job_to_sql(job)
         return job
 
-    async def list_for_user(self, user_id: str, limit: int = 50) -> list[DeploymentJob]:
+    async def list_for_user(
+        self,
+        user_id: str,
+        limit: int = 50,
+        conversation_id: str | None = None,
+    ) -> list[DeploymentJob]:
         client = await self.ensure_available()
         ids = await client.zrevrange(self._user_index(user_id), 0, max(0, limit - 1))
-        if not ids:
-            return []
-        values = await client.mget([self._status_key(job_id) for job_id in ids])
-        jobs = [DeploymentJob(**json.loads(raw)) for raw in values if raw]
-        return [job for job in jobs if job.action == "deploy"]
+        jobs: list[DeploymentJob] = []
+        seen_ids: set[str] = set()
+        if ids:
+            values = await client.mget([self._status_key(job_id) for job_id in ids])
+            for raw in values:
+                if not raw:
+                    continue
+                job = DeploymentJob(**json.loads(raw))
+                if job.action != "deploy":
+                    continue
+                if conversation_id and job.conversation_id != conversation_id:
+                    continue
+                seen_ids.add(job.id)
+                jobs.append(job)
+        if len(jobs) < limit:
+            try:
+                from app.core.crud.deployments import list_deployment_records
+
+                sql_rows = await asyncio.to_thread(
+                    list_deployment_records,
+                    user_id,
+                    conversation_id,
+                    limit,
+                    "deploy",
+                )
+                for row in sql_rows:
+                    if row["id"] in seen_ids:
+                        continue
+                    jobs.append(
+                        DeploymentJob(
+                            id=row["id"],
+                            conversation_id=row["conversation_id"],
+                            user_id=row["user_id"],
+                            tenant_id=row["tenant_id"],
+                            target=row["target"],
+                            action=row["action"],
+                            source_job_id=row["source_job_id"],
+                            status=row["status"],
+                            stage=row["stage"],
+                            progress=row["progress"],
+                            url=row["url"],
+                            result_type=row["result_type"],
+                            provider=row["provider"],
+                            published=row["published"],
+                            lifecycle=row["lifecycle"],
+                            log=row["log"],
+                            created_at=row["created_at"],
+                            updated_at=row["updated_at"],
+                        )
+                    )
+                    if len(jobs) >= limit:
+                        break
+            except Exception:
+                pass
+        return jobs[:limit]
 
     async def indexed_job_ids(self) -> list[str]:
         client = await self.ensure_available()
@@ -159,6 +236,7 @@ class DeploymentQueue:
         await client.delete(self._status_key(job.id))
         await client.zrem(self._user_index(job.user_id), job.id)
         await client.zrem(self._global_index(), job.id)
+        await _delete_job_from_sql(job.id)
 
     async def heartbeat(self) -> None:
         client = await self.ensure_available()
@@ -183,6 +261,7 @@ class DeploymentQueue:
             json.dumps(asdict(job), ensure_ascii=False),
             ex=settings.deployment_status_ttl,
         )
+        await _mirror_job_to_sql(job)
         return job
 
     async def update_progress(
@@ -286,6 +365,7 @@ class DeploymentQueue:
         await client.set(self._status_key(job.id), payload, ex=settings.deployment_status_ttl)
         await client.xadd(self.stream, {"payload": payload}, maxlen=10_000, approximate=True)
         await client.xack(self.stream, GROUP, message_id)
+        await _mirror_job_to_sql(job)
 
 
 deployment_queue = DeploymentQueue()

@@ -117,7 +117,12 @@ class DaemonScheduler:
     async def _run_task(self, task: dict):
         from app.core.tenancy import conversation_user_id, reset_current_tenant, set_current_tenant
 
-        tenant_id = conversation_user_id(task.get("conversation_id", ""))
+        explicit_tid = task.get("tenant_id")
+        tenant_id = (
+            explicit_tid
+            if explicit_tid and explicit_tid != "local"
+            else (conversation_user_id(task.get("conversation_id", "")) or explicit_tid)
+        )
         token = set_current_tenant(tenant_id) if tenant_id else None
         try:
             await self._run_task_for_tenant(task, tenant_id)

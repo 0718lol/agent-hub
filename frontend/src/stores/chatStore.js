@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useTabStore } from './tabStore'
+import { useCanvasStore } from './canvasStore'
 import { isInternalNoiseMessage } from '../utils/internalMessages'
 
 function generateConvName(text) {
@@ -83,7 +84,10 @@ export const useChatStore = create((set, get) => ({
     })
   },
 
-  setActiveConversation: (id) => set({ activeConversationId: id }),
+  setActiveConversation: (id) => {
+    set({ activeConversationId: id })
+    useCanvasStore.getState().setActiveConversation(id)
+  },
 
   togglePin: async (conversationId) => {
     const conversation = get().conversations.find((item) => item.id === conversationId)
@@ -297,16 +301,12 @@ export const useChatStore = create((set, get) => ({
   updateLastAgentMessage: (conversationId, senderId, text, streaming) => set((state) => ({
     conversations: state.conversations.map((conversation) => {
       if (conversation.id !== conversationId) return conversation
-      const messages = [...conversation.messages]
-      let targetIndex = -1
-      for (let index = messages.length - 1; index >= 0; index--) {
-        if (messages[index].sender === senderId && messages[index].streaming) {
-          targetIndex = index
-          break
-        }
-      }
-      if (targetIndex >= 0) messages[targetIndex] = { ...messages[targetIndex], content: { text }, streaming }
-      return { ...conversation, messages }
+      const targetIndex = conversation.messages.findLastIndex(
+        (msg) => msg.sender === senderId && msg.streaming
+      )
+      if (targetIndex < 0) return conversation
+      const updated = { ...conversation.messages[targetIndex], content: { text }, streaming }
+      return { ...conversation, messages: conversation.messages.with(targetIndex, updated) }
     }),
   })),
 

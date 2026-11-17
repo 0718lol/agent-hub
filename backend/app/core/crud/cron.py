@@ -9,37 +9,48 @@ from sqlmodel import Session, select
 
 import app.core._engine as _engine_mod
 from app.core.crud.utils import db_write_transaction
-from app.core.models import CronTask
+from app.core.models import Conversation, CronTask
+from app.core.tenancy import infer_tenant_id
 
 
 @db_write_transaction
 def save_cron_task(task_id: str, conversation_id: str, agent_id: str,
                    task_prompt: str, interval_seconds: int,
                    status: str = "active", last_run: str | None = None,
-                   next_run: str | None = None):
+                   next_run: str | None = None, tenant_id: str | None = None):
     with Session(_engine_mod.engine) as session:
+        conv = session.get(Conversation, conversation_id)
+        resolved_tenant = (
+            conv.tenant_id
+            if conv is not None and conv.tenant_id
+            else infer_tenant_id(conversation_id, tenant_id)
+        )
         task = CronTask(
             id=task_id,
+            tenant_id=resolved_tenant,
             conversation_id=conversation_id,
             agent_id=agent_id,
             task_prompt=task_prompt,
             interval_seconds=interval_seconds,
             status=status,
             last_run=last_run,
-            next_run=next_run
+            next_run=next_run,
         )
         session.merge(task)
         session.commit()
 
 
-def get_cron_tasks(conversation_id: str | None = None) -> list[dict]:
+def get_cron_tasks(
+    conversation_id: str | None = None,
+    tenant_id: str | None = None,
+) -> list[dict]:
     with Session(_engine_mod.engine) as session:
+        statement = select(CronTask)
         if conversation_id:
-            statement = select(CronTask).where(
-                CronTask.conversation_id == conversation_id
-            ).order_by(CronTask.created_at.desc())
-        else:
-            statement = select(CronTask).order_by(CronTask.created_at.desc())
+            statement = statement.where(CronTask.conversation_id == conversation_id)
+        if tenant_id is not None:
+            statement = statement.where(CronTask.tenant_id == tenant_id)
+        statement = statement.order_by(CronTask.created_at.desc())
         results = session.exec(statement).all()
         return [row.model_dump() for row in results]
 

@@ -13,11 +13,13 @@ from sqlmodel import Session, select
 import app.core._engine as _engine_mod
 from app.core.crud.utils import db_write_transaction
 from app.core.models import Artifact, Conversation
+from app.core.tenancy import infer_tenant_id
 
 
 @db_write_transaction
 def save_artifact(conversation_id: str, agent_id: str, language: str,
-                  code: str, name: str | None = None) -> dict:
+                  code: str, name: str | None = None,
+                  tenant_id: str | None = None) -> dict:
     if not name:
         if language.lower() in ("python", "py"):
             class_match = re.search(r"class\s+(\w+)", code)
@@ -54,12 +56,19 @@ def save_artifact(conversation_id: str, agent_id: str, language: str,
             name = f"code_snippet.{language}"
 
     with Session(_engine_mod.engine) as session:
+        conversation = session.get(Conversation, conversation_id)
+        resolved_tenant = (
+            conversation.tenant_id
+            if conversation is not None and conversation.tenant_id
+            else infer_tenant_id(conversation_id, tenant_id)
+        )
         previous = session.exec(
             select(Artifact)
             .where(Artifact.conversation_id == conversation_id, Artifact.name == name)
             .order_by(Artifact.id.desc())
         ).first()
         art = Artifact(
+            tenant_id=resolved_tenant,
             conversation_id=conversation_id,
             agent_id=agent_id,
             name=name,
@@ -73,7 +82,6 @@ def save_artifact(conversation_id: str, agent_id: str, language: str,
         session.commit()
         session.refresh(art)
         artifact_data = art.model_dump()
-        conversation = session.get(Conversation, conversation_id)
         if conversation is not None:
             conversation.goal_latest_deliverable = art.name
             conversation.goal_latest_artifact_id = art.id
@@ -85,17 +93,18 @@ def save_artifact(conversation_id: str, agent_id: str, language: str,
         return artifact_data
 
 
-def get_artifacts(conversation_id: str | None = None,
-                  limit: int = 50) -> list[dict]:
+def get_artifacts(
+    conversation_id: str | None = None,
+    limit: int = 50,
+    tenant_id: str | None = None,
+) -> list[dict]:
     with Session(_engine_mod.engine) as session:
+        statement = select(Artifact)
         if conversation_id:
-            statement = select(Artifact).where(
-                Artifact.conversation_id == conversation_id
-            ).order_by(Artifact.created_at.desc()).limit(limit)
-        else:
-            statement = select(Artifact).order_by(
-                Artifact.created_at.desc()
-            ).limit(limit)
+            statement = statement.where(Artifact.conversation_id == conversation_id)
+        if tenant_id is not None:
+            statement = statement.where(Artifact.tenant_id == tenant_id)
+        statement = statement.order_by(Artifact.created_at.desc()).limit(limit)
         results = session.exec(statement).all()
         return [row.model_dump() for row in results]
 
@@ -126,19 +135,13 @@ def get_artifacts_grouped(
     user_id: str | None = None,
 ) -> list[dict]:
     with Session(_engine_mod.engine) as session:
+        statement = select(Artifact)
         if conversation_id:
-            statement = select(Artifact).where(
-                Artifact.conversation_id == conversation_id
-            ).order_by(Artifact.created_at.asc())
-            rows = session.exec(statement).all()
-        elif user_id:
-            from app.core.tenancy import belongs_to_user
-
-            statement = select(Artifact).order_by(Artifact.created_at.asc())
-            rows = [row for row in session.exec(statement).all() if belongs_to_user(row.conversation_id, user_id)]
-        else:
-            statement = select(Artifact).order_by(Artifact.created_at.asc())
-            rows = session.exec(statement).all()
+            statement = statement.where(Artifact.conversation_id == conversation_id)
+        if user_id:
+            statement = statement.where(Artifact.tenant_id == user_id)
+        statement = statement.order_by(Artifact.created_at.asc())
+        rows = session.exec(statement).all()
 
     grouped = {}
     for row in rows:

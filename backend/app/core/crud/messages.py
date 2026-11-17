@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 import app.core._engine as _engine_mod
 from app.core.crud.utils import _safe_json_loads, db_write_transaction
 from app.core.models import Conversation, Message
+from app.core.tenancy import infer_tenant_id
 
 _INTERNAL_NOISE_PATTERNS = (
     re.compile(r"输出格式不符合要求", re.IGNORECASE),
@@ -60,18 +61,30 @@ def purge_internal_noise_messages(conversation_id: str | None = None) -> int:
 
 
 @db_write_transaction
-def save_message(conversation_id: str, sender: str, content: dict, streaming: bool = False):
+def save_message(
+    conversation_id: str,
+    sender: str,
+    content: dict,
+    streaming: bool = False,
+    tenant_id: str | None = None,
+):
     if is_internal_noise_message(sender, content):
         return
     with Session(_engine_mod.engine) as session:
+        conversation = session.get(Conversation, conversation_id)
+        resolved_tenant = (
+            conversation.tenant_id
+            if conversation is not None and conversation.tenant_id
+            else infer_tenant_id(conversation_id, tenant_id)
+        )
         msg = Message(
+            tenant_id=resolved_tenant,
             conversation_id=conversation_id,
             sender=sender,
             content=json.dumps(content, ensure_ascii=False),
-            streaming=int(streaming)
+            streaming=int(streaming),
         )
         session.add(msg)
-        conversation = session.get(Conversation, conversation_id)
         if conversation is not None:
             conversation.updated_at = datetime.now(UTC).isoformat()
             session.add(conversation)
@@ -136,12 +149,12 @@ def search_messages(
                     "m.streaming, m.created_at, rank "
                     "FROM messages m JOIN messages_fts f ON m.id = f.rowid "
                     "WHERE messages_fts MATCH :query "
-                    "AND m.conversation_id LIKE :tenant_prefix "
+                    "AND m.tenant_id = :tenant_id "
                     "ORDER BY rank LIMIT :lim"
                 )
                 rows = conn.execute(sql, {
                     "query": query,
-                    "tenant_prefix": f"tenant__{tenant_id}__conv__%",
+                    "tenant_id": tenant_id,
                     "lim": limit,
                 }).fetchall()
             else:
@@ -154,7 +167,7 @@ def search_messages(
                 )
                 rows = conn.execute(sql, {"query": query, "lim": limit}).fetchall()
 
-            return [
+            fts_results = [
                 {
                     "id": row[0],
                     "conversation_id": row[1],
@@ -167,36 +180,39 @@ def search_messages(
                 for row in rows
                 if not is_internal_noise_message(row[2], _safe_json_loads(row[3]))
             ]
+            if fts_results or any(op in query for op in ("*", '"', " AND ", " OR ", " NOT ")):
+                return fts_results
     except Exception as e:
         logging.getLogger("database").warning(
             f"FTS5 search failed, falling back to LIKE: {e}"
         )
-        with Session(_engine_mod.engine) as session:
-            statement = select(Message)
-            if conversation_id:
-                statement = statement.where(
-                    Message.conversation_id == conversation_id
-                )
-            elif tenant_id:
-                statement = statement.where(
-                    Message.conversation_id.startswith(f"tenant__{tenant_id}__conv__")
-                )
+
+    with Session(_engine_mod.engine) as session:
+        statement = select(Message)
+        if conversation_id:
             statement = statement.where(
-                Message.content.contains(query)
-            ).limit(limit)
-            results = session.exec(statement).all()
-            return [
-                {
-                    "id": msg.id,
-                    "conversation_id": msg.conversation_id,
-                    "sender": msg.sender,
-                    "content": _safe_json_loads(msg.content),
-                    "streaming": bool(msg.streaming),
-                    "timestamp": msg.created_at,
-                }
-                for msg in results
-                if not is_internal_noise_message(msg.sender, _safe_json_loads(msg.content))
-            ]
+                Message.conversation_id == conversation_id
+            )
+        elif tenant_id:
+            statement = statement.where(
+                Message.tenant_id == tenant_id
+            )
+        statement = statement.where(
+            Message.content.contains(query)
+        ).limit(limit)
+        results = session.exec(statement).all()
+        return [
+            {
+                "id": msg.id,
+                "conversation_id": msg.conversation_id,
+                "sender": msg.sender,
+                "content": _safe_json_loads(msg.content),
+                "streaming": bool(msg.streaming),
+                "timestamp": msg.created_at,
+            }
+            for msg in results
+            if not is_internal_noise_message(msg.sender, _safe_json_loads(msg.content))
+        ]
 
 
 @db_write_transaction

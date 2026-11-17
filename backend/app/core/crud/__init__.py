@@ -23,6 +23,7 @@ from app.core.crud.artifacts import (
 # Conversations
 from app.core.crud.conversations import (
     create_conversation,
+    get_conversation,
     get_conversations,
     initialize_conversation_goal,
     reorder_conversations,
@@ -39,6 +40,14 @@ from app.core.crud.cron import (
     save_cron_task,
     update_cron_task_run_time,
     update_cron_task_status,
+)
+
+# Deployment Records
+from app.core.crud.deployments import (
+    delete_deployment_record,
+    get_deployment_record,
+    list_deployment_records,
+    sync_deployment_record,
 )
 
 # Events, HIL Checkpoints, and Project Memory
@@ -86,10 +95,16 @@ __all__ = [
     "db_write_transaction",
     # Conversations
     "create_conversation",
+    "get_conversation",
     "get_conversations",
     "initialize_conversation_goal",
     "reorder_conversations",
     "update_conversation",
+    # Deployment Records
+    "delete_deployment_record",
+    "get_deployment_record",
+    "list_deployment_records",
+    "sync_deployment_record",
     # Messages
     "clear_messages",
     "delete_message",

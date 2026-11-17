@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.core.crud.artifacts import get_artifacts_grouped
-from app.core.tenancy import request_user_id, scope_conversation_id
+from app.core.tenancy import public_conversation_id, request_user_id, scope_conversation_id
 
 router = APIRouter(tags=["artifacts"])
 
@@ -23,8 +23,12 @@ async def list_artifacts(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return get_artifacts_grouped(
+    rows = get_artifacts_grouped(
         conversation_id=scoped_conversation_id,
         limit=limit,
-        user_id=user_id if scoped_conversation_id is None else None,
+        user_id=user_id,
     )
+    return [
+        {**row, "conversation_id": public_conversation_id(row["conversation_id"])}
+        for row in rows
+    ]

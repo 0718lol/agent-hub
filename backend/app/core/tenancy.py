@@ -149,3 +149,17 @@ def belongs_to_user(conversation_id: str, user_id: str) -> bool:
             f"{_PREFIX}{LOCAL_TENANT_ID}{_SEPARATOR}"
         )
     return conversation_id.startswith(f"{_PREFIX}{user_id}{_SEPARATOR}")
+
+
+def infer_tenant_id(conversation_id: str | None = None, explicit_tenant_id: str | None = None) -> str:
+    """Resolve explicit tenant_id column value from explicit input, scoped conv_id, or active context."""
+    if explicit_tenant_id and explicit_tenant_id.strip():
+        return explicit_tenant_id.strip()
+    if conversation_id:
+        extracted = conversation_user_id(conversation_id)
+        if extracted:
+            return extracted
+    active = current_tenant_id()
+    if active:
+        return active
+    return LOCAL_TENANT_ID

@@ -13,10 +13,22 @@ const DEPLOY_STEPS = [
   '部署完成，服务上线',
 ]
 
-export default function DeployProgressCard() {
-  const logs = useCanvasStore((s) => s.deployLogs)
-  const status = useCanvasStore((s) => s.deployStatus)
-  const url = useCanvasStore((s) => s.deployedUrl)
+export default function DeployProgressCard({ convId }) {
+  const logs = useCanvasStore((s) =>
+    convId && convId !== s.activeConversationId
+      ? (s.sessions[convId]?.deployLogs ?? [])
+      : s.deployLogs
+  )
+  const status = useCanvasStore((s) =>
+    convId && convId !== s.activeConversationId
+      ? (s.sessions[convId]?.deployStatus ?? 'idle')
+      : s.deployStatus
+  )
+  const url = useCanvasStore((s) =>
+    convId && convId !== s.activeConversationId
+      ? (s.sessions[convId]?.deployedUrl ?? '')
+      : s.deployedUrl
+  )
   const resetDeploy = useCanvasStore((s) => s.resetDeploy)
   const [displayPercent, setDisplayPercent] = useState(0)
 
@@ -82,7 +94,7 @@ export default function DeployProgressCard() {
         </div>
         {!isRunning && (
           <button
-            onClick={resetDeploy}
+            onClick={() => resetDeploy(convId)}
             className="deploy-progress-close"
             title="关闭"
           >

@@ -11,42 +11,71 @@ from sqlmodel import Session, select
 import app.core._engine as _engine_mod
 from app.core.crud.utils import db_write_transaction
 from app.core.models import Conversation
+from app.core.tenancy import infer_tenant_id
+
+
+def _dump_conversation(row: Conversation) -> dict:
+    conv = row.model_dump()
+    if conv["agents"]:
+        conv["agents"] = json.loads(conv["agents"])
+    return conv
 
 
 @db_write_transaction
-def create_conversation(conv_id: str, conv_type: str, name: str, avatar: str,
-                        agent_id: str | None = None, agents: list[str] | None = None, preview: str = ""):
+def create_conversation(
+    conv_id: str,
+    conv_type: str,
+    name: str,
+    avatar: str,
+    agent_id: str | None = None,
+    agents: list[str] | None = None,
+    preview: str = "",
+    tenant_id: str | None = None,
+):
+    resolved_tenant = infer_tenant_id(conv_id, tenant_id)
     with Session(_engine_mod.engine) as session:
         existing = session.get(Conversation, conv_id)
         if not existing:
             conv = Conversation(
                 id=conv_id,
+                tenant_id=resolved_tenant,
                 type=conv_type,
                 name=name,
                 avatar=avatar,
                 agent_id=agent_id,
                 agents=json.dumps(agents, ensure_ascii=False) if agents else None,
-                preview=preview
+                preview=preview,
             )
             session.add(conv)
             session.commit()
+        elif existing.tenant_id == "local" and resolved_tenant != "local":
+            existing.tenant_id = resolved_tenant
+            session.add(existing)
+            session.commit()
 
 
-def get_conversations():
+def get_conversation(conversation_id: str, tenant_id: str | None = None) -> dict | None:
     with Session(_engine_mod.engine) as session:
-        statement = select(Conversation).order_by(
+        row = session.get(Conversation, conversation_id)
+        if row is None:
+            return None
+        if tenant_id is not None and row.tenant_id != tenant_id:
+            return None
+        return _dump_conversation(row)
+
+
+def get_conversations(tenant_id: str | None = None):
+    with Session(_engine_mod.engine) as session:
+        statement = select(Conversation)
+        if tenant_id is not None:
+            statement = statement.where(Conversation.tenant_id == tenant_id)
+        statement = statement.order_by(
             Conversation.pinned.desc(),
             Conversation.sort_order.asc(),
             Conversation.updated_at.desc(),
         )
         results = session.exec(statement).all()
-        result = []
-        for row in results:
-            conv = row.model_dump()
-            if conv["agents"]:
-                conv["agents"] = json.loads(conv["agents"])
-            result.append(conv)
-        return result
+        return [_dump_conversation(row) for row in results]
 
 
 @db_write_transaction

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.core.async_wrappers import (
     async_clear_messages,
+    async_get_conversation,
     async_get_conversations,
     async_get_messages,
     async_search_messages,
@@ -19,6 +20,7 @@ from app.core.database import (
     clear_messages,
     create_conversation,
     delete_message,
+    get_conversation,
     get_conversations,
     get_messages,
     reorder_conversations,
@@ -26,7 +28,7 @@ from app.core.database import (
     update_conversation,
     update_message_pin,
 )
-from app.core.tenancy import belongs_to_user, public_conversation_id, request_user_id, scope_conversation_id
+from app.core.tenancy import LOCAL_TENANT_ID, public_conversation_id, request_user_id, scope_conversation_id
 
 router = APIRouter(tags=["conversations"])
 
@@ -80,10 +82,10 @@ def _goal_snapshot(row: dict) -> dict:
 
 
 async def _tenant_conversations(user_id: str) -> list[dict]:
-    all_conversations = await async_get_conversations()
-    tenant_rows = [row for row in all_conversations if belongs_to_user(row["id"], user_id)]
-    if not tenant_rows:
-        templates = [row for row in all_conversations if row["id"] in DEFAULT_CONVERSATION_IDS]
+    tenant_rows = await async_get_conversations(tenant_id=user_id)
+    if not tenant_rows and user_id != LOCAL_TENANT_ID:
+        local_rows = await async_get_conversations(tenant_id=LOCAL_TENANT_ID)
+        templates = [row for row in local_rows if row["id"] in DEFAULT_CONVERSATION_IDS]
         for template in templates:
             await asyncio.to_thread(
                 create_conversation,
@@ -94,9 +96,9 @@ async def _tenant_conversations(user_id: str) -> list[dict]:
                 template.get("agent_id"),
                 template.get("agents"),
                 template.get("preview") or "",
+                user_id,
             )
-        all_conversations = await async_get_conversations()
-        tenant_rows = [row for row in all_conversations if belongs_to_user(row["id"], user_id)]
+        tenant_rows = await async_get_conversations(tenant_id=user_id)
     return [{**row, "id": public_conversation_id(row["id"])} for row in tenant_rows]
 
 
@@ -115,6 +117,7 @@ async def list_conversations(request: Request):
 @router.post("/conversations")
 async def create_conv(req: ConversationCreateRequest, request: Request):
     """创建新对话。"""
+    user_id = request_user_id(request)
     scoped = _scoped_id(request, req.id)
     resolved_ws: str | None = None
     if req.workspace_path and req.workspace_path.strip():
@@ -134,6 +137,7 @@ async def create_conv(req: ConversationCreateRequest, request: Request):
         agent_id=req.agent_id,
         agents=req.agents,
         preview=req.preview,
+        tenant_id=user_id,
     )
     if resolved_ws:
         update_conversation(scoped, {"workspace_path": resolved_ws})
@@ -151,9 +155,9 @@ async def update_conv(conversation_id: str, payload: ConversationUpdateRequest, 
 
 @router.get("/conversations/{conversation_id}/goal")
 async def get_conversation_goal(conversation_id: str, request: Request):
+    user_id = request_user_id(request)
     scoped_id = _scoped_id(request, conversation_id)
-    rows = await async_get_conversations()
-    row = next((item for item in rows if item["id"] == scoped_id), None)
+    row = await async_get_conversation(scoped_id, tenant_id=user_id)
     if row is None:
         raise HTTPException(status_code=404, detail="会话不存在")
     return _goal_snapshot(row)
@@ -165,15 +169,16 @@ async def update_conversation_goal(
     payload: ConversationGoalUpdateRequest,
     request: Request,
 ):
+    user_id = request_user_id(request)
+    scoped_id = _scoped_id(request, conversation_id)
     values = payload.model_dump(exclude_unset=True)
     if values.get("stage") is None:
         values.pop("stage", None)
     updates = {f"goal_{key}": value.strip() if isinstance(value, str) else value for key, value in values.items()}
-    updated = await asyncio.to_thread(update_conversation, _scoped_id(request, conversation_id), updates)
+    updated = await asyncio.to_thread(update_conversation, scoped_id, updates)
     if not updated:
         raise HTTPException(status_code=404, detail="会话不存在")
-    rows = await async_get_conversations()
-    row = next((item for item in rows if item["id"] == _scoped_id(request, conversation_id)), updates)
+    row = await async_get_conversation(scoped_id, tenant_id=user_id) or updates
     return {"status": "ok", "goal": _goal_snapshot(row)}
 
 

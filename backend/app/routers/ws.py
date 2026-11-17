@@ -171,6 +171,7 @@ async def _serve_authenticated_websocket(
                 "agent_backend", "agent_tester", "agent_devops",
             ],
             "多人协作项目开发群",
+            user_id,
         )
     else:
         await asyncio.to_thread(
@@ -182,6 +183,7 @@ async def _serve_authenticated_websocket(
             public_conversation_id.replace("conv_", "agent_", 1),
             None,
             "",
+            user_id,
         )
 
     await manager.connect(websocket, conversation_id)
